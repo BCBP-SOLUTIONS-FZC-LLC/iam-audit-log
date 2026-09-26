@@ -1,0 +1,163 @@
+# Reusable workflow — quality gate.
+# fmt · tidy · vet · lint (golangci-lint) · vuln-check.
+# Called by ci.yml and release.yml. Must pass before push/release; does NOT
+# gate coverage, trivy, or smoke (those only need validate-test.yml).
+name: Validate / Quality
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+
+      - name: Download modules
+        env:
+          GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+          GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      # Workflow files must use literal operators, not HTML entity encodings.
+      - name: Reject HTML-escaped operators in workflow files
+        run: |
+          if grep -REn '&(gt|lt|amp)' .github/workflows/ .github/scripts/; then
+            echo "::error::Workflow or script files contain HTML entities. Use literal operators instead."
+            exit 1
+          fi
+
+      # RLS-6 CI gate (LLD §3.3.2, §4.3, AL-INV-3): reject any non-LOCAL
+      # SET app.tenant_id in Go/SQL source. The only legitimate way to
+      # bind the GUC is via pgcommon.WithGUCSet / GUCSetFromContext, which
+      # emits SET LOCAL inside a transaction. A session-scoped SET would
+      # persist across pooled backends and leak across tenants under
+      # PgBouncer — the exact breach RLS-6 exists to prevent.
+      - name: Reject non-LOCAL SET app.tenant_id (RLS-6)
+        run: |
+          hits=$(grep -REn '\bSET[[:space:]]+("?app\.tenant_id"?)[[:space:]]*=' \
+                   --include='*.go' --include='*.sql' \
+                   cmd/ internal/ | grep -v 'SET LOCAL' | grep -v 'set_config' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Non-LOCAL SET app.tenant_id detected (RLS-6). Use pgcommon.WithGUCSet + RunInTx which emits SET LOCAL inside a tx."
+            echo "$hits"
+            exit 1
+          fi
+          echo "RLS-6 non-LOCAL SET check passed."
+
+      # IAM Platform Observability Standard: every registered Prometheus
+      # collector must follow the platform_*/iam_*/iam_audit_log_*
+      # naming hierarchy, the _total/_seconds suffix rules, and the
+      # centrally-injected domain/service/environment label-set rules.
+      - name: Metric naming convention check
+        run: bash .github/scripts/check-metric-naming.sh
+
+      # Enterprise Platform Observability Standard governance rules 11/12:
+      # a Proposed (unratified) platform_* metric (PlatformRegistry,
+      # internal/adapter/outbound/metrics/registry.go) may never source a
+      # live alert/recording-rule/SLO expression — only its authoritative
+      # Tier-3 predecessor may.
+      - name: Metrics registry ratification check
+        run: bash .github/scripts/metrics-registry-lint.sh
+
+      # AL-INV-10 / AL-EVT-1: this service publishes nothing — no SNS
+      # publisher, no outbox, no publisher-side config helpers — and every
+      # SQS consume goes through platform-events
+      # (events.NewSQSConsumerWithClient), never a raw aws-sdk-go-v2 call or
+      # a hand-built events.Envelope{}.
+      - name: Events bypass check (AL-INV-10)
+        run: bash .github/scripts/check-forbidden-events-bypass.sh
+
+      # AL-INV-10: there is no outbox here at all, so any SQL against
+      # outbox_events (Go SQL literals or migrations) fails the build.
+      - name: Outbox access check (AL-INV-10)
+        run: bash .github/scripts/check-outbox-access.sh
+
+      # AL-EVT-1: api/asyncapi.yaml declares only `receive` operations.
+      - name: AsyncAPI receive-only check (AL-EVT-1)
+        run: bash .github/scripts/check-asyncapi-receive-only.sh
+
+      # AL-INV-1: audit_app is granted exactly INSERT, SELECT on
+      # audit_events — never UPDATE/DELETE (LLD §4.3, §10.4). Static half;
+      # the live half is the test/postgres grant test.
+      - name: Grant set check (AL-INV-1)
+        run: bash .github/scripts/check-grants.sh
+
+      - name: Format check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "${unformatted}" ]; then
+            echo "${unformatted}" | while IFS= read -r f; do
+              echo "::error file=${f},title=Format check::Not formatted — run 'make fmt'"
+            done
+            exit 1
+          fi
+
+      - name: Tidy check
+        run: |
+          make tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error file=go.mod,title=Module drift::go.mod or go.sum is stale — run 'go mod tidy' and commit the result."
+            exit 1
+          fi
+
+      - name: Vet
+        run: make vet
+
+      - name: Lint
+        run: make lint
+
+      - name: Vulnerability check
+        run: |
+          if ! make vuln-check; then
+            echo "::error file=go.mod,title=Vulnerability found::govulncheck detected vulnerabilities — run 'make vuln-check' locally to view details."
+            exit 1
+          fi
+
+      # Enforce digest-pinned FROM lines in the Dockerfile. Floating tags (e.g.
+      # golang:1.26.6-bookworm without @sha256:...) can be silently overwritten by
+      # upstream maintainers, breaking supply-chain guarantees. Run
+      # `make pin-base-images` (requires docker) to update the pinned digests.
+      - name: Dockerfile base image digest check
+        run: |
+          if grep -E '^FROM [^ @]+:[^ @]+( AS .+)?$' Dockerfile; then
+            echo "::error file=Dockerfile,title=Unpinned base image::Dockerfile FROM lines must use digest-pinned references (e.g. golang:1.26.6-bookworm@sha256:...). Run 'make pin-base-images' to update."
+            exit 1
+          fi
+          echo "Dockerfile base images are digest-pinned."

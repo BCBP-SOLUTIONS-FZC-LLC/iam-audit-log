@@ -1,0 +1,38 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "iam-audit-log.fullname" . }}
+  labels:
+    {{- include "iam-audit-log.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "iam-audit-log.selectorLabels" . | nindent 6 }}
+  endpoints:
+    # Metrics are served on the dedicated "metrics" port (9090), separate
+    # from the "http" API port — scraping never touches the API surface.
+    # Covers the iam_audit_log_* (Tier 3, authoritative) business
+    # metrics (§14), this service's three shadow-emitted Tier 1 platform_*
+    # candidates pending Platform Observability Registry ratification
+    # (platform_dependency_request_seconds, platform_duplicate_messages_total,
+    # platform_rls_violations_total — Status: Proposed, see
+    # internal/adapter/outbound/metrics/registry.go), and the passthrough
+    # http_*/events_*/sqs_* metrics platform-gincommon/platform-events
+    # already emit.
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+      {{- with .Values.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- with .Values.serviceMonitor.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

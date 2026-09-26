@@ -1,0 +1,15 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "iam-audit-log.fullname" . }}
+  labels:
+    {{- include "iam-audit-log.labels" . | nindent 4 }}
+spec:
+  # 3 replicas with minAvailable=2: a single node drain keeps the consumer
+  # fleet and API up (LLD §13).
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "iam-audit-log.selectorLabels" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,18 @@
+apiVersion: v2
+name: iam-audit-log
+description: IAM Audit Log Service — the platform compliance system-of-record (append-only audit_events, admin query/export API AL-1..AL-4, mesh-only ingest AL-5..AL-7, 11 inbound SQS consumers, archival reconciler CronJobs)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.28.0"
+keywords:
+  - iam
+  - audit-log
+  - compliance
+  - audit
+home: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log
+sources:
+  - https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log
+maintainers:
+  - name: BCBP Solutions IAM Team
+    email: platform@bcbpsolutions.com

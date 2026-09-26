@@ -1,0 +1,463 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Audit Log Service — the platform compliance system-of-record (LLD §1). Append-only, tenant-scoped audit trail.\n\n**Public** `/api/v1/audit/*` (AL-1..AL-4): tenant_admin / tenant_owner only; RLS-scoped to x-tenant-id; plan-gated query window.\n**Internal** `/api/v1/internal/*` (AL-5..AL-7): mesh-only, iam-system peers; direct-write ingest requires `Idempotency-Key`.",
+        "title": "IAM Audit Log API",
+        "contact": {
+            "name": "BCBP Solutions",
+            "email": "indhu@bcbpsolutions.com"
+        },
+        "license": {
+            "name": "Proprietary"
+        },
+        "version": "0.1"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api/v1",
+    "paths": {
+        "/internal/audit-entries": {
+            "post": {
+                "security": [
+                    {
+                        "TenantRoles": []
+                    },
+                    {
+                        "TenantID": []
+                    },
+                    {
+                        "UserID": []
+                    },
+                    {
+                        "IdempotencyKey": []
+                    }
+                ],
+                "description": "Mesh-only ingest for non-bus audit entries (LLD §5.4, AL-D1). The Idempotency-Key header becomes the entry's source_event_id; a retry with the same key returns 200 with the already-persisted entry. retention_tier is derived from entry_type — a caller-supplied value is ignored (AL-INV-11). Only direct-write entry types are accepted (decision D-6).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingest"
+                ],
+                "summary": "Direct-write one audit entry (AL-5)",
+                "parameters": [
+                    {
+                        "description": "Audit entry",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.DirectWriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "idempotent replay",
+                        "schema": {
+                            "$ref": "#/definitions/http.EntryResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "created",
+                        "schema": {
+                            "$ref": "#/definitions/http.EntryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden_peer",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "unknown_entry_type | invalid_actor | metadata_too_large",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "dependency_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/audit-entries:batch": {
+            "post": {
+                "security": [
+                    {
+                        "TenantRoles": []
+                    },
+                    {
+                        "TenantID": []
+                    },
+                    {
+                        "UserID": []
+                    },
+                    {
+                        "IdempotencyKey": []
+                    }
+                ],
+                "description": "Up to MAX_INGEST_BATCH entries, each with its own idempotency_key (decision D-4). Always 207: per-index status 201 (created), 200 (replay) or the §17 error; a bad entry never rejects the batch. Rate-limited per tenant (429, §10.5).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Ingest"
+                ],
+                "summary": "Direct-write a batch of audit entries (AL-6)",
+                "parameters": [
+                    {
+                        "description": "Entries",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.BatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "207": {
+                        "description": "per-entry results",
+                        "schema": {
+                            "$ref": "#/definitions/http.BatchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden_peer",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "batch_too_large",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "http.ActorDTO": {
+            "type": "object",
+            "properties": {
+                "display": {
+                    "type": "string",
+                    "example": "asha@acme.example"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "7f3c2d1e-9a8b-4c5d-8e7f-0a1b2c3d4e5f"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "service_account",
+                        "iam_system",
+                        "anonymous"
+                    ],
+                    "example": "user"
+                }
+            }
+        },
+        "http.BatchEntryRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "update"
+                },
+                "actor": {
+                    "$ref": "#/definitions/http.ActorDTO"
+                },
+                "entry_type": {
+                    "type": "string",
+                    "example": "config.tenant_setting.changed"
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "example": "4b1f0f8e-2c1d-5e3a-9f0b-7c6d5e4f3a21"
+                },
+                "ip_address": {
+                    "type": "string",
+                    "example": "203.0.113.7"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "example": "2026-03-14T09:12:04Z"
+                },
+                "source_event_type": {
+                    "type": "string",
+                    "example": "TenantSettingChanged"
+                },
+                "source_service": {
+                    "type": "string",
+                    "example": "iam-org-membership"
+                },
+                "target": {
+                    "$ref": "#/definitions/http.TargetDTO"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "example": "00000000-0000-0000-0000-0000000000b1"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "user_agent": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.BatchRequest": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.BatchEntryRequest"
+                    }
+                }
+            }
+        },
+        "http.BatchResponse": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.BatchResultItem"
+                    }
+                }
+            }
+        },
+        "http.BatchResultItem": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "unknown_entry_type"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer",
+                    "example": 201
+                }
+            }
+        },
+        "http.DirectWriteRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "update"
+                },
+                "actor": {
+                    "$ref": "#/definitions/http.ActorDTO"
+                },
+                "entry_type": {
+                    "type": "string",
+                    "example": "config.tenant_setting.changed"
+                },
+                "ip_address": {
+                    "type": "string",
+                    "example": "203.0.113.7"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "example": "2026-03-14T09:12:04Z"
+                },
+                "source_event_type": {
+                    "type": "string",
+                    "example": "TenantSettingChanged"
+                },
+                "source_service": {
+                    "type": "string",
+                    "example": "iam-org-membership"
+                },
+                "target": {
+                    "$ref": "#/definitions/http.TargetDTO"
+                },
+                "tenant_id": {
+                    "type": "string",
+                    "example": "00000000-0000-0000-0000-0000000000b1"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "user_agent": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.EntryResponse": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "actor": {
+                    "$ref": "#/definitions/http.ActorDTO"
+                },
+                "entry_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "ingest_mode": {
+                    "type": "string"
+                },
+                "ip_address": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "recorded_at": {
+                    "type": "string"
+                },
+                "retention_tier": {
+                    "type": "string"
+                },
+                "source_event_id": {
+                    "type": "string"
+                },
+                "source_event_type": {
+                    "type": "string"
+                },
+                "source_service": {
+                    "type": "string"
+                },
+                "source_topic": {
+                    "type": "string"
+                },
+                "target": {
+                    "$ref": "#/definitions/http.TargetDTO"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                },
+                "user_agent": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "details": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.TargetDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "mfa_freshness_seconds"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "tenant_setting"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "IdempotencyKey": {
+            "description": "Required on AL-5/AL-6; becomes the entry's source_event_id (LLD §5.4).",
+            "type": "apiKey",
+            "name": "Idempotency-Key",
+            "in": "header"
+        },
+        "TenantID": {
+            "description": "Tenant UUID injected by the gateway / mesh caller.",
+            "type": "apiKey",
+            "name": "x-tenant-id",
+            "in": "header"
+        },
+        "TenantRoles": {
+            "description": "Gateway/mesh-injected roles: tenant_admin|tenant_owner (public) or iam-system (internal).",
+            "type": "apiKey",
+            "name": "x-tenant-roles",
+            "in": "header"
+        },
+        "UserID": {
+            "description": "Caller subject (or the iam-system sentinel …00a1).",
+            "type": "apiKey",
+            "name": "x-user-id",
+            "in": "header"
+        }
+    }
+}

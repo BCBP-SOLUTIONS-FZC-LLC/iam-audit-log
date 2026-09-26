@@ -1,0 +1,154 @@
+# Reusable workflow — test gate.
+# Race detector (unit · postgres · integration) + coverage + e2e (real HTTP
+# router) + arch lint + Swagger staleness + consumed-event schema sync.
+# Called by ci.yml and release.yml. Gates trivy and smoke.
+name: Validate / Test
+
+"on":
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (leave empty to use the caller ref)'
+        type: string
+        required: false
+        default: ''
+    outputs:
+      pct:
+        description: 'Total statement coverage percentage'
+        value: ${{ jobs.test.outputs.pct }}
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Merged unit+postgres+integration coverage floor — 95%, matching
+  # iam-org-membership (coverage-gate.sh default). Measured 96.8% at
+  # Phase 0. Never lower it to make a failing PR pass.
+  COVERAGE_THRESHOLD: '95'
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    # Postgres/RLS/partition suites each spin their own testcontainers
+    # Postgres; e2e runs sequentially after (see iam-org-membership's
+    # sizing rationale for the same layout).
+    timeout-minutes: 40
+    outputs:
+      pct: ${{ steps.gate.outputs.pct }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      # Store credentials so go mod download can fetch private BCBP modules.
+      # Mirrors the pattern used in platform-events ci.yml (secrets.GO_PRIVATE_TOKEN).
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+
+      - name: Download modules
+        env:
+          GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+          GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+        run: go mod download
+
+      - name: Verify modules
+        run: go mod verify
+
+      # Mandatory blocking gate: runs the full test suite with -race and coverage.
+      # Any data race detected here blocks all downstream jobs (trivy, smoke,
+      # push, release). Do NOT remove or skip.
+      - name: Tests — unit · postgres · integration (race + coverage)
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'true'
+        # TEST_POSTGRES_PARALLEL lowered from the Makefile's dev-machine
+        # default (4): GitHub-hosted runners have far less CPU/RAM headroom,
+        # and concurrent testcontainers Postgres instances stall connection
+        # attempts (same setting as iam-org-membership).
+        run: make test-ci TEST_POSTGRES_PARALLEL=1
+
+      # make test-ci already merges all three coverage profiles into coverage.out
+      # via _merge-coverage. Assert the combined statement coverage meets
+      # COVERAGE_THRESHOLD (env above). Do not lower this threshold.
+      - name: Coverage threshold gate (≥ 95%)
+        id: gate
+        run: bash .github/scripts/coverage-gate.sh
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: coverage-report-${{ github.sha }}
+          path: coverage.out
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Mandatory blocking gate: real end-to-end tests (LLD §14 e2e row) —
+      # producer direct-write → query, bus event → query, export → signed URL
+      # → object contents. No coverage/-race here (mirrors `make test-e2e`);
+      # unit/postgres/integration above carry the coverage gate and race
+      # detector.
+      - name: Tests — e2e (real HTTP router)
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'true'
+        run: make test-e2e
+
+      # Enforces Clean Architecture dependency rules defined in .go-arch-lint.yml.
+      # Prevents adapter code from being imported by core/domain or core/service.
+      - name: Cache go-arch-lint binary
+        uses: actions/cache@v6.0.0
+        with:
+          path: ~/go/bin
+          key: go-arch-lint-${{ runner.os }}-v1.15.0
+
+      - name: Architecture lint
+        run: bash .github/scripts/arch-lint.sh
+
+      # Regenerates Swagger docs from handler annotations and fails if the
+      # committed artefacts (docs/swagger/) are stale.
+      - name: Swagger staleness check
+        run: bash .github/scripts/check-swagger-stale.sh
+
+      # api/asyncapi.yaml is the single source of truth for the CONSUMED
+      # message schemas; internal/eventschema/*.json are derived from it and
+      # embedded for validation on decode (LLD §7.3). --check exits 1 if any
+      # file would change. Skipped until the first consumed schema lands
+      # (Phase 3) — this service produces no schemas and registers nothing
+      # in Glue (LLD §7.3.1, AL-INV-10), so iam-org-membership's
+      # schema-registry / schema-prune / schema-health workflows do not apply.
+      - name: Log in to GHCR
+        if: hashFiles('internal/eventschema/*.json') != ''
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Event schema sync check (AsyncAPI → JSON)
+        if: hashFiles('internal/eventschema/*.json') != ''
+        env:
+          SCHEMA_GOV_IMAGE: ghcr.io/bcbp-solutions-fzc-llc/platform-schemagov:0.4
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}":/workspace \
+            -e GITHUB_ACTIONS \
+            "${SCHEMA_GOV_IMAGE}" extract \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir internal/eventschema \
+            --check

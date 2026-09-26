@@ -1,0 +1,90 @@
+{{- if .Values.networkPolicy.enabled }}
+# NetworkPolicy — the primary peer control for /api/v1/internal/* (LLD §10.2;
+# RequireSystemRole is defense-in-depth). Applies to the server pods and the
+# reconciler CronJob pods (same selector labels).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "iam-audit-log.fullname" . }}
+  labels:
+    {{- include "iam-audit-log.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "iam-audit-log.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Public /api/v1/audit/* (AL-1..AL-4) via the API gateway.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 14 }}
+          {{- with .Values.networkPolicy.ingressControllerPodSelector }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+
+    # Mesh-internal /api/v1/internal/* (AL-5..AL-7) from same-namespace IAM
+    # producers (Catalog, Realm Provisioner, O&M, Group Mapping, Tender ACL).
+    - from:
+        - podSelector: {}
+      ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+
+    {{- if .Values.networkPolicy.metricsIngress.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.metricsIngress.namespaceSelector | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.metricsIngress.podSelector | nindent 14 }}
+      ports:
+        - port: {{ .Values.service.metricsPort }}
+          protocol: TCP
+    {{- end }}
+
+    {{- with .Values.networkPolicy.additionalIngressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+
+  egress:
+    # DNS.
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # AWS APIs over HTTPS: SQS, S3, KMS, Glue, STS (IRSA).
+    - ports:
+        - port: 443
+          protocol: TCP
+    # Postgres / PgBouncer (`audit` DB).
+    - ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6432
+          protocol: TCP
+    # iam-catalog-admin CAT-I2 plans poller (AL-D15), same namespace.
+    - to:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+    # OTLP traces.
+    - ports:
+        - port: 4317
+          protocol: TCP
+
+    {{- with .Values.networkPolicy.additionalEgressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
