@@ -22,6 +22,13 @@ type ArchiveObject struct {
 	// an AL-2 lookup of an archived entry reads only the objects whose
 	// range contains the id.
 	MinID, MaxID string
+	// SHA256 is the hex checksum of the object body (verification, §15.4).
+	SHA256 string
+	// SubjectIDs are the distinct actor and user-target ids in the object
+	// (D-17: redaction's `missed` check).
+	SubjectIDs []string
+	// Sealed: the partition was dropped and the rows exist only in S3 (D-20).
+	Sealed bool
 }
 
 // ArchiveKey is the D-10 object key: tier prefix (Object Lock / lifecycle

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +27,17 @@ type API interface {
 	PutObject(ctx context.Context, in *awss3.PutObjectInput, opts ...func(*awss3.Options)) (*awss3.PutObjectOutput, error)
 }
 
+// ObjectLock configures archive writes (LLD §10.4, §15.4).
+type ObjectLock struct {
+	// Mode is AUDIT_ARCHIVE_OBJECT_LOCK_MODE (COMPLIANCE in every
+	// non-dev environment, enforced by config); "" sends no lock headers.
+	Mode string
+	// Verify requires ArchiveChecksum to see the object's lock mode and a
+	// retain-until at least the tier's. It is off only against an emulator
+	// that does not echo lock headers.
+	Verify bool
+}
+
 // Store reads archive objects and writes/presigns export objects in the
 // archive bucket (LLD §15.4, §5.4 AL-3/AL-4).
 type Store struct {
@@ -32,12 +45,75 @@ type Store struct {
 	presign func(ctx context.Context, in *awss3.GetObjectInput, ttl time.Duration) (string, error)
 	bucket  string
 	kmsKey  string
+	lock    ObjectLock
 }
 
 var (
 	_ port.ArchiveReader = (*Store)(nil)
 	_ port.ExportStore   = (*Store)(nil)
+	_ port.ArchiveStore  = (*Store)(nil)
 )
+
+// WithObjectLock returns s configured for archive writes.
+func (s *Store) WithObjectLock(l ObjectLock) *Store {
+	c := *s
+	c.lock = l
+	return &c
+}
+
+// Bucket implements port.ArchiveStore.
+func (s *Store) Bucket() string { return s.bucket }
+
+// PutArchive implements port.ArchiveStore: an SSE-KMS object with Object
+// Lock retained until retainUntil. The bucket is versioned (Object Lock
+// requires it), so re-archiving a key adds a version and never replaces a
+// locked one (D-20).
+func (s *Store) PutArchive(ctx context.Context, key string, body io.ReadSeeker, size int64, retainUntil time.Time) error {
+	in := &awss3.PutObjectInput{
+		Bucket:          aws.String(s.bucket),
+		Key:             aws.String(key),
+		Body:            body,
+		ContentLength:   aws.Int64(size),
+		ContentType:     aws.String("application/x-ndjson"),
+		ContentEncoding: aws.String("gzip"),
+	}
+	if s.kmsKey != "" {
+		in.ServerSideEncryption = types.ServerSideEncryptionAwsKms
+		in.SSEKMSKeyId = aws.String(s.kmsKey)
+	}
+	if s.lock.Mode != "" {
+		in.ObjectLockMode = types.ObjectLockMode(s.lock.Mode)
+		in.ObjectLockRetainUntilDate = aws.Time(retainUntil.UTC())
+	}
+	if _, err := s.api.PutObject(ctx, in); err != nil {
+		return classify(err)
+	}
+	return nil
+}
+
+// ArchiveChecksum implements port.ArchiveStore: it GETs the object's
+// current version, hashes the body, and (when Verify is set) checks the
+// Object Lock echoed back covers retainUntil.
+func (s *Store) ArchiveChecksum(ctx context.Context, key string, retainUntil time.Time) (sum string, err error) {
+	out, err := s.api.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		return "", classify(err)
+	}
+	defer func() { err = errors.Join(err, out.Body.Close()) }()
+	if s.lock.Verify {
+		if string(out.ObjectLockMode) != s.lock.Mode {
+			return "", fmt.Errorf("archive %s: object lock mode %q, want %q", key, out.ObjectLockMode, s.lock.Mode)
+		}
+		if out.ObjectLockRetainUntilDate == nil || out.ObjectLockRetainUntilDate.Before(retainUntil.Truncate(time.Second)) {
+			return "", fmt.Errorf("archive %s: object lock retain-until %v is before %v", key, out.ObjectLockRetainUntilDate, retainUntil)
+		}
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, out.Body); err != nil {
+		return "", classify(fmt.Errorf("archive %s: read: %w", key, err))
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 
 // New wires a Store over client. kmsKey "" omits SSE-KMS (dev/floci only;
 // config never defaults it empty).

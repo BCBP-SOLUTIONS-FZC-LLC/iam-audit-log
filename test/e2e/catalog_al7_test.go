@@ -99,9 +99,10 @@ func TestAL7_ArchivedRangeTooLarge_D14(t *testing.T) {
 	recent := e.ingestAt(t, tenantA, time.Now().UTC().Add(-10*time.Minute))
 	_, err := e.seed(t).Exec(context.Background(), `INSERT INTO audit_archive_objects
 		(partition_name, retention_tier, tenant_id, part, period_month, s3_bucket, s3_key, row_count, byte_size,
-		 min_occurred_at, max_occurred_at, min_id, max_id, sha256)
+		 min_occurred_at, max_occurred_at, min_id, max_id, sha256, sealed)
 		VALUES ('audit_events_2019_01', 'compliance_7y', $1, 0, '2019-01-01', $2, 'compliance_7y/k', 20000, 1000,
-		        '2019-01-01', '2019-01-31', '01685111-0000-7000-8000-000000000000', '01685111-ffff-7000-8000-000000000000', 'x')`,
+		        '2019-01-01', '2019-01-31', '01685111-0000-7000-8000-000000000000', '01685111-ffff-7000-8000-000000000000', 'x',
+		        true)`, // sealed: the partition was dropped, rows live only in S3 (D-20)
 		tenantA, e2eBucket)
 	require.NoError(t, err)
 

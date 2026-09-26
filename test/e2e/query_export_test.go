@@ -392,8 +392,8 @@ func TestAL2_ArchivedEntryReadable_Gap32(t *testing.T) {
 	require.NoError(t, err)
 	_, err = e.seed(t).Exec(ctx, `INSERT INTO audit_archive_objects
 		(partition_name, retention_tier, tenant_id, part, period_month, s3_bucket, s3_key, row_count, byte_size,
-		 min_occurred_at, max_occurred_at, min_id, max_id, sha256)
-		VALUES ('audit_events_2019_01', 'compliance_7y', $1, 0, $2, $3, $4, 1, $5, $6, $6, $7, $7, 'x')`,
+		 min_occurred_at, max_occurred_at, min_id, max_id, sha256, sealed)
+		VALUES ('audit_events_2019_01', 'compliance_7y', $1, 0, $2, $3, $4, 1, $5, $6, $6, $7, $7, 'x', true)`, // sealed (D-20)
 		tenantA, month, e2eBucket, key, buf.Len(), at, archived.ID)
 	require.NoError(t, err)
 	hot := e.ingestAt(t, tenantA, time.Now().UTC().Add(-time.Hour))

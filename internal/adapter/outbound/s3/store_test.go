@@ -30,6 +30,10 @@ type fakeAPI struct {
 	putB   []byte
 	putErr error
 	closed bool
+	// Object Lock headers echoed on GetObject (archive verify).
+	lockMode   types.ObjectLockMode
+	lockRetain *time.Time
+	readErr    error
 }
 
 type trackingBody struct {
@@ -39,12 +43,20 @@ type trackingBody struct {
 
 func (b trackingBody) Close() error { b.api.closed = true; return nil }
 
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
 func (f *fakeAPI) GetObject(_ context.Context, in *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
 	f.getIn = in
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
-	return &awss3.GetObjectOutput{Body: trackingBody{Reader: bytes.NewReader(f.body), api: f}}, nil
+	var r io.Reader = bytes.NewReader(f.body)
+	if f.readErr != nil {
+		r = io.MultiReader(r, errReader{f.readErr})
+	}
+	return &awss3.GetObjectOutput{Body: trackingBody{Reader: r, api: f}, ObjectLockMode: f.lockMode, ObjectLockRetainUntilDate: f.lockRetain}, nil
 }
 
 func (f *fakeAPI) PutObject(_ context.Context, in *awss3.PutObjectInput, _ ...func(*awss3.Options)) (*awss3.PutObjectOutput, error) {

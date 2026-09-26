@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,11 +85,20 @@ func TestWire_UnackedMessageRedrivesToDLQ_ALEVT4(t *testing.T) {
 	e := newEnv(t)
 	url := e.queueURL(t, "user-audit-q")
 	dlq := e.queueURL(t, "user-audit-q-dlq")
+	// The floci is shared per package: drop anything earlier tests left on
+	// this queue pair so the DLQ count and the delivery count are ours alone.
+	for _, q := range []string{url, dlq} {
+		_, err := e.sqs.PurgeQueue(context.Background(), &sqs.PurgeQueueInput{QueueUrl: aws.String(q)})
+		require.NoError(t, err)
+	}
+	const eventID = "0190a1b2-0000-7000-8000-000000000002"
 
 	var deliveries, deadLettered atomic.Int32
 	e.startConsumer(t, url,
-		func(context.Context, events.Envelope[json.RawMessage]) error {
-			deliveries.Add(1)
+		func(_ context.Context, env events.Envelope[json.RawMessage]) error {
+			if env.ID == eventID {
+				deliveries.Add(1)
+			}
 			return errors.New("transient: db down")
 		},
 		events.WithVisibilityTimeout(time.Second),
@@ -98,11 +109,14 @@ func TestWire_UnackedMessageRedrivesToDLQ_ALEVT4(t *testing.T) {
 		}),
 	)
 
-	e.publish(t, "iam-user-events", envelope(t, "0190a1b2-0000-7000-8000-000000000002", "UserUpdated", tenantA))
+	e.publish(t, "iam-user-events", envelope(t, eventID, "UserUpdated", tenantA))
 
 	eventually(t, 90*time.Second, func() bool { return e.approxCount(t, dlq) == 1 }, "message never reached the DLQ")
-	assert.GreaterOrEqual(t, deliveries.Load(), int32(4), "handler must see the redeliveries")
-	assert.GreaterOrEqual(t, deadLettered.Load(), int32(1), "dead-letter handler must fire before redrive")
+	// Receives 1..3 reach the handler; receive 4 (= maxReceiveCount) goes to
+	// the dead-letter handler, which returns an error so SQS redrives on 5.
+	assert.GreaterOrEqual(t, deliveries.Load(), int32(3), "handler must see the redeliveries before the threshold")
+	assert.GreaterOrEqual(t, deadLettered.Load(), int32(1), "dead-letter handler must fire at the threshold, before redrive")
+	assert.GreaterOrEqual(t, deliveries.Load()+deadLettered.Load(), int32(4), "every receive up to maxReceiveCount is observed")
 }
 
 // Decision D-3 (BUILD_PLAN §C): platform-events v1.4.0 deletes a message

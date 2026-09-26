@@ -270,10 +270,11 @@ func seedManifest(t *testing.T, db *testDB, tenant, partition, tier string, subj
 	t.Helper()
 	_, err := db.raw.Exec(context.Background(), `INSERT INTO audit_archive_objects
 		(partition_name, retention_tier, tenant_id, part, period_month, s3_bucket, s3_key, row_count, byte_size,
-		 min_occurred_at, max_occurred_at, min_id, max_id, sha256, subject_ids)
+		 min_occurred_at, max_occurred_at, min_id, max_id, sha256, subject_ids, sealed)
 		VALUES ($1, $2::audit_retention_tier, $3, 0, '2019-01-01', 'iam-audit-archive', $4, 1, 1,
 		        '2019-01-01', '2019-01-31', '00000000-0000-0000-0000-000000000000',
-		        'ffffffff-ffff-ffff-ffff-ffffffffffff', 'x', $5::uuid[])`,
+		        'ffffffff-ffff-ffff-ffff-ffffffffffff', 'x', $5::uuid[],
+		        to_regclass('public.' || quote_ident($1)) IS NULL)`, // sealed ⇔ dropped (D-20)
 		partition, tier, tenant, uuid.NewString(), subjects)
 	require.NoError(t, err)
 }

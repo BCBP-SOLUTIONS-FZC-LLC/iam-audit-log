@@ -1,7 +1,7 @@
 // Package jobs holds the reconciler job bodies dispatched by --job
 // (LLD §8.5, §8.6, §15.4): archival + verify + partition drop, partition
-// pre-creation, and processed_events pruning. Every job runs on the
-// audit_reconciler (BYPASSRLS) pool exclusively. Jobs land in Phase 1/7.
+// pre-creation, processed_events pruning, and the redaction retry/sweep.
+// Every job runs on the audit_reconciler (BYPASSRLS) pool exclusively.
 package jobs
 
 import (
@@ -22,6 +22,13 @@ type Context struct {
 
 	// Partitions creates monthly audit_events partitions (LLD §4.4).
 	Partitions port.PartitionManager
+	// Archives / ArchiveStore / ArchiveMetrics drive archival (LLD §8.5).
+	Archives       port.ArchiveRepository
+	ArchiveStore   port.ArchiveStore
+	ArchiveMetrics port.ArchiveMetrics
+	// Ledger prunes processed_events (LLD §4.2).
+	Ledger port.LedgerPruner
+
 	// Redactions lists and re-applies stuck redaction tasks (LLD §8.7).
 	Redactions port.RedactionTasks
 	// RedactionMetrics counts outcomes (collectors exist; a CronJob has no
@@ -35,6 +42,9 @@ type Context struct {
 	RedactionRetryMinAge   time.Duration
 	RedactionRetryBatch    int
 	RedactionSweepWindow   time.Duration
+	ArchivePartMaxRows     int
+	ArchiveWorkDir         string
+	ProcessedEventsBatch   int
 }
 
 // Result summarizes a job run.
@@ -49,11 +59,12 @@ type Result struct {
 type Func func(ctx context.Context, jctx *Context) (Result, error)
 
 // Registry maps --job names to job bodies (LLD §12 RECONCILER_SCHEDULE /
-// PROCESSED_EVENTS_PRUNE_SCHEDULE). processed-events-prune lands in Phase 7.
+// PROCESSED_EVENTS_PRUNE_SCHEDULE / the redaction schedules).
 func Registry() map[string]Func {
 	return map[string]Func{
-		"reconcile":       Reconcile,
-		"redaction-retry": RedactionRetry,
-		"redaction-sweep": RedactionSweep,
+		"reconcile":              Reconcile,
+		"redaction-retry":        RedactionRetry,
+		"redaction-sweep":        RedactionSweep,
+		"processed-events-prune": ProcessedEventsPrune,
 	}
 }

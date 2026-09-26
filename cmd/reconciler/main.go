@@ -16,11 +16,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.opentelemetry.io/otel"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/cmd/reconciler/jobs"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
+	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
 
@@ -127,12 +131,23 @@ func run() int {
 		log.Warn("reconciler DB role check failed (tolerated in dev)", "error", err.Error())
 	}
 
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
+	if err != nil {
+		log.Error("load aws config", "error", err.Error())
+		return 1
+	}
+	archives := pgadapter.NewArchiveRepository(pool)
+
 	log.Info("reconciler starting", "job", jobName)
 	res, err := fn(ctx, &jobs.Context{
 		Pool:                   pool,
 		Logger:                 log,
 		RawLogger:              rawLog,
 		Partitions:             pgadapter.NewPartitionRepository(pool),
+		Archives:               archives,
+		ArchiveStore:           buildArchiveStore(awsCfg, cfg),
+		ArchiveMetrics:         metrics.Archive{},
+		Ledger:                 archives,
 		Redactions:             pgadapter.NewRedactionRepository(pool),
 		RedactionMetrics:       metrics.Redaction{},
 		HotWindowDays:          cfg.HotWindowDays,
@@ -142,6 +157,9 @@ func run() int {
 		RedactionRetryMinAge:   cfg.RedactionRetryMinAge,
 		RedactionRetryBatch:    cfg.RedactionRetryBatch,
 		RedactionSweepWindow:   cfg.RedactionSweepWindow,
+		ArchivePartMaxRows:     cfg.ArchivePartMaxRows,
+		ArchiveWorkDir:         cfg.ArchiveWorkDir,
+		ProcessedEventsBatch:   cfg.ProcessedEventsPruneBatch,
 	})
 	if err != nil {
 		log.Error("reconciler job failed", "job", jobName, "error", err.Error())
@@ -150,6 +168,24 @@ func run() int {
 	log.Info("reconciler complete", "job", jobName,
 		"attempted", res.Attempted, "succeeded", res.Succeeded, "failed", res.Failed, "skipped", res.Skipped)
 	return 0
+}
+
+// buildArchiveStore wires the S3 archive writer (LLD §15.4): SSE-KMS with
+// AUDIT_ARCHIVE_KMS_KEY and Object Lock in AUDIT_ARCHIVE_OBJECT_LOCK_MODE
+// (COMPLIANCE outside dev), verified on read-back. Against an emulator
+// endpoint (AWS_ENDPOINT_URL) it uses path-style addressing and no KMS
+// key; lock headers are still sent, but not required back, since the
+// emulator may not echo them.
+func buildArchiveStore(awsCfg aws.Config, cfg config.Reconciler) *s3adapter.Store {
+	kmsKey, verifyLock := cfg.ArchiveKMSKey, true
+	var opts []func(*awss3.Options)
+	if cfg.AWSEndpoint != "" {
+		ep := cfg.AWSEndpoint
+		opts = append(opts, func(o *awss3.Options) { o.BaseEndpoint = &ep; o.UsePathStyle = true })
+		kmsKey, verifyLock = "", false
+	}
+	return s3adapter.New(awss3.NewFromConfig(awsCfg, opts...), cfg.ArchiveBucket, kmsKey).
+		WithObjectLock(s3adapter.ObjectLock{Mode: cfg.ArchiveObjectLockMode, Verify: verifyLock})
 }
 
 func names(r map[string]jobs.Func) []string {

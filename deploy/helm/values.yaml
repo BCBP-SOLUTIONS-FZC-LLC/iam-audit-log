@@ -111,6 +111,8 @@ reconcilerEnv:
   REDACTION_RETRY_MIN_AGE: "5m"      # redaction-retry: re-apply tasks pending longer than this (RB-7)
   REDACTION_RETRY_BATCH: "500"
   REDACTION_SWEEP_WINDOW: "2160h"    # redaction-sweep: subjects erased in the last 90 d (D-18)
+  ARCHIVE_PART_MAX_ROWS: "50000"     # rows per archive object part (LLD §15.4)
+  PROCESSED_EVENTS_PRUNE_BATCH: "10000"
 
 # One Secret per composition root (rule 5). Production: existingSecret.
 secrets:
@@ -265,7 +267,7 @@ cronjobs:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 500m, memory: 256Mi }
   processedEventsPrune:
-    enabled: false
+    enabled: true
     jobName: processed-events-prune
     schedule: "0 3 * * *"            # PROCESSED_EVENTS_PRUNE_SCHEDULE
     concurrencyPolicy: Forbid

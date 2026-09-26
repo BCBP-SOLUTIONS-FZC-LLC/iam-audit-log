@@ -304,10 +304,13 @@ type archiveSeed struct {
 	Min, Max                time.Time
 	Rows, Bytes             int64
 	MinID, MaxID            string // "" → the full uuid range
+	// Sealed overrides the default, which is sealed exactly when the
+	// partition no longer exists (the drop gate seals at drop, D-20).
+	Sealed *bool
 }
 
 // seedArchiveObject inserts a manifest row as superuser (audit_app has
-// SELECT only; the reconciler writes these in Phase 7).
+// SELECT only; the reconciler writes these).
 func seedArchiveObject(t *testing.T, db *testDB, s archiveSeed) string {
 	t.Helper()
 	month := time.Date(s.Min.Year(), s.Min.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -320,17 +323,18 @@ func seedArchiveObject(t *testing.T, db *testDB, s archiveSeed) string {
 	}
 	_, err := db.raw.Exec(context.Background(), `INSERT INTO audit_archive_objects
 		(partition_name, retention_tier, tenant_id, part, period_month, s3_bucket, s3_key,
-		 row_count, byte_size, min_occurred_at, max_occurred_at, min_id, max_id, sha256)
-		VALUES ($1, $2::audit_retention_tier, $3, $4, $5, 'iam-audit-archive', $6, $7, $8, $9, $10, $11, $12, 'deadbeef')`,
-		s.Partition, s.Tier, s.Tenant, s.Part, month, key, s.Rows, s.Bytes, s.Min, s.Max, s.MinID, s.MaxID)
+		 row_count, byte_size, min_occurred_at, max_occurred_at, min_id, max_id, sha256, sealed)
+		VALUES ($1, $2::audit_retention_tier, $3, $4, $5, 'iam-audit-archive', $6, $7, $8, $9, $10, $11, $12, 'deadbeef',
+		        coalesce($13::boolean, to_regclass('public.' || quote_ident($1)) IS NULL))`,
+		s.Partition, s.Tier, s.Tenant, s.Part, month, key, s.Rows, s.Bytes, s.Min, s.Max, s.MinID, s.MaxID, s.Sealed)
 	require.NoError(t, err)
 	return key
 }
 
-// Decision D-12: partition existence is the hot/archived boundary. A
-// manifest row whose partition still exists is excluded (its rows are read
-// from RDS); a dropped month's objects are returned, overlap-filtered,
-// tier-filtered, newest first.
+// Decisions D-12/D-20: `sealed` is the hot/archived boundary. An unsealed
+// row (its partition still holds the rows) is excluded; a sealed row
+// (dropped month) is returned, overlap-filtered, tier-filtered, newest
+// first, even when a re-opened month's partition exists again (D-19).
 func TestQuery_ArchivedObjectsOnlyForDroppedPartitions_D12(t *testing.T) {
 	db := setupTestDB(t, dbOpts{})
 	repo := pgadapter.NewQueryRepository(db.appPool)
@@ -380,6 +384,18 @@ func TestQuery_ArchivedObjectsOnlyForDroppedPartitions_D12(t *testing.T) {
 	got, err = repo.ArchivedObjects(ctx, tenantA, d(2018, 1, 1), d(2020, 1, 1), "compliance_7y")
 	require.NoError(t, err)
 	assert.Equal(t, []string{janC}, keys(got))
+
+	// `sealed` decides, not partition existence: a re-opened month (the
+	// partition exists again, D-19) still serves its sealed objects, and an
+	// unsealed row of a missing partition is not served.
+	yes, no := true, false
+	reopened := seedArchiveObject(t, db, archiveSeed{Tenant: tenantA, Partition: partitionName(-1), Tier: "compliance_7y",
+		Min: monthStart(-1), Max: monthStart(-1).Add(time.Hour), Rows: 1, Bytes: 1, Sealed: &yes})
+	seedArchiveObject(t, db, archiveSeed{Tenant: tenantA, Partition: "audit_events_2019_03", Tier: "compliance_7y",
+		Min: d(2019, 3, 1), Max: d(2019, 3, 2), Rows: 1, Bytes: 1, Sealed: &no})
+	got, err = repo.ArchivedObjects(ctx, tenantA, d(2018, 1, 1), time.Now().UTC().Add(time.Hour), "compliance_7y")
+	require.NoError(t, err)
+	assert.Equal(t, []string{reopened, janC}, keys(got))
 }
 
 // Gap 32: the AL-2 archived fallback reads only dropped-partition objects
@@ -424,7 +440,8 @@ func TestArchiveObjects_GrantsAndRLS(t *testing.T) {
 	db := setupTestDB(t, dbOpts{})
 	ctx := context.Background()
 	assert.Equal(t, []string{"SELECT"}, tableGrants(t, db, "audit_app", "audit_archive_objects"))
-	assert.Equal(t, []string{"INSERT", "SELECT"}, tableGrants(t, db, "audit_reconciler", "audit_archive_objects"))
+	assert.Equal(t, []string{"DELETE", "INSERT", "SELECT", "UPDATE"}, tableGrants(t, db, "audit_reconciler", "audit_archive_objects"),
+		"000008: re-archive upserts and deletes stale unsealed parts (D-20)")
 
 	insert := `INSERT INTO audit_archive_objects (partition_name, retention_tier, tenant_id, part, period_month,
 		s3_bucket, s3_key, row_count, byte_size, min_occurred_at, max_occurred_at, min_id, max_id, sha256)

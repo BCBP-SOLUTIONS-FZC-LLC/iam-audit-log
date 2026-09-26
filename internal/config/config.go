@@ -132,6 +132,13 @@ type Reconciler struct {
 	// finished within this window (covers late rows within
 	// AUDIT_WRITABLE_TRAILING_MONTHS).
 	RedactionSweepWindow time.Duration
+
+	// Archival (LLD §8.5, §15.4): rows per archive object part and the temp
+	// dir parts are assembled in.
+	ArchivePartMaxRows int
+	ArchiveWorkDir     string
+	// ProcessedEventsPruneBatch bounds each DELETE of the ledger prune.
+	ProcessedEventsPruneBatch int
 }
 
 // IsDev reports whether appEnv permits local-dev placeholders.
@@ -239,15 +246,18 @@ func (c Server) MigrationDSN() string {
 // LoadReconciler reads and validates cmd/reconciler's environment.
 func LoadReconciler(buildVersion, job string) (Reconciler, error) {
 	c := Reconciler{
-		Common:                 loadCommon(buildVersion),
-		ReconcilerDatabaseURL:  os.Getenv("RECONCILER_DATABASE_URL"),
-		DBReconcilerRole:       envOr("DB_RECONCILER_ROLE", "audit_reconciler"),
-		Job:                    job,
-		Timeout:                envDuration("RECONCILER_TIMEOUT", 30*time.Minute),
-		ProcessedEventsTTLDays: envInt("PROCESSED_EVENTS_TTL_DAYS", 8),
-		RedactionRetryMinAge:   envDuration("REDACTION_RETRY_MIN_AGE", 5*time.Minute),
-		RedactionRetryBatch:    envInt("REDACTION_RETRY_BATCH", 500),
-		RedactionSweepWindow:   envDuration("REDACTION_SWEEP_WINDOW", 90*24*time.Hour),
+		Common:                    loadCommon(buildVersion),
+		ReconcilerDatabaseURL:     os.Getenv("RECONCILER_DATABASE_URL"),
+		DBReconcilerRole:          envOr("DB_RECONCILER_ROLE", "audit_reconciler"),
+		Job:                       job,
+		Timeout:                   envDuration("RECONCILER_TIMEOUT", 30*time.Minute),
+		ProcessedEventsTTLDays:    envInt("PROCESSED_EVENTS_TTL_DAYS", 8),
+		RedactionRetryMinAge:      envDuration("REDACTION_RETRY_MIN_AGE", 5*time.Minute),
+		RedactionRetryBatch:       envInt("REDACTION_RETRY_BATCH", 500),
+		RedactionSweepWindow:      envDuration("REDACTION_SWEEP_WINDOW", 90*24*time.Hour),
+		ArchivePartMaxRows:        envInt("ARCHIVE_PART_MAX_ROWS", 50000),
+		ArchiveWorkDir:            os.Getenv("ARCHIVE_WORK_DIR"),
+		ProcessedEventsPruneBatch: envInt("PROCESSED_EVENTS_PRUNE_BATCH", 10000),
 	}
 	c.ServiceName = envOr("SERVICE_NAME", "iam-audit-log") + "-reconciler"
 
@@ -263,6 +273,9 @@ func LoadReconciler(buildVersion, job string) (Reconciler, error) {
 	}
 	if c.RedactionSweepWindow < 24*time.Hour || c.RedactionSweepWindow > 400*24*time.Hour {
 		problems = append(problems, "REDACTION_SWEEP_WINDOW: must be between 24h and 9600h (sweep_redactions bound)")
+	}
+	if c.ArchivePartMaxRows < 1000 || c.ArchivePartMaxRows > 1000000 {
+		problems = append(problems, "ARCHIVE_PART_MAX_ROWS: must be between 1000 and 1000000")
 	}
 	problems = append(problems, validateCommon(c.Common)...)
 	return c, joinProblems(problems)

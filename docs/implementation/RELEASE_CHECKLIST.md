@@ -44,3 +44,14 @@ first needs it. Each item says what fails if it is missing. Background is in
 - [ ] The service is deployed in the `iam` namespace (AL-Q17).
       **If missing:** Catalog's same-namespace NetworkPolicy blocks the CAT-I2
       poller, which then serves the stale map indefinitely (RB-8).
+
+## Operations (until Phase 8 metrics publishing)
+
+- [ ] **Reconciler health is watched through CronJob state, not metrics** (gap
+      40, LLD rev 0.23 §11). The archival metrics are internal only until
+      Phase 8. Alert on failed Jobs for the `reconcile`, `redaction-retry`,
+      `redaction-sweep` and `processed-events-prune` CronJobs, and keep Job
+      history and logs available. A blocked (pending redaction) or stalled
+      (unverified tier, persistent late writes) archival run exits non-zero.
+      **If missing:** a stalled archive goes unnoticed and hot partitions
+      grow past the hot window.

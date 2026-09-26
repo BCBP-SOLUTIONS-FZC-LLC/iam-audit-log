@@ -73,6 +73,18 @@ var (
 	// not an alarm; pending is the one to alert on (RB-7).
 	RedactionTasks *prometheus.CounterVec
 
+	// ArchivePartitions counts per-tier archival outcomes (verified|failed).
+	ArchivePartitions *prometheus.CounterVec
+	// RedactionBlockedArchive counts archival refused for a pending
+	// redaction task (AL-INV-12 backstop) — Critical, near zero.
+	RedactionBlockedArchive prometheus.Counter
+	// RetentionPruned counts partition drops per tier (§8.6).
+	RetentionPruned *prometheus.CounterVec
+	// ArchiveStalled is the number of eligible partitions the last run
+	// could not drop (a failed tier or persistent late writes; AL-INV-9) —
+	// Critical when > 0.
+	ArchiveStalled prometheus.Gauge
+
 	// catalogLastSuccess is the unix-nano time CatalogPlansStale measures from.
 	catalogLastSuccess atomic.Int64
 )
@@ -159,6 +171,30 @@ func registerMetrics(environment string) {
 		ConstLabels: sLabels,
 	}, []string{"status"})
 
+	ArchivePartitions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_archive_partitions_total",
+		Help:        "Per-tier archival outcomes, by tier and result (verified|failed).",
+		ConstLabels: sLabels,
+	}, []string{"tier", "result"})
+
+	RedactionBlockedArchive = prometheus.NewCounter(prometheus.CounterOpts{
+		Name:        "iam_audit_log_redaction_blocked_archive_total",
+		Help:        "Archival refused because a pending redaction task touches the partition (AL-INV-12). Critical; near zero.",
+		ConstLabels: sLabels,
+	})
+
+	RetentionPruned = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_retention_pruned_total",
+		Help:        "Partition drops reconciled, by tier (§8.6).",
+		ConstLabels: sLabels,
+	}, []string{"tier"})
+
+	ArchiveStalled = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:        "iam_audit_log_archive_stalled",
+		Help:        "Eligible partitions the last reconcile run could not drop (AL-INV-9 held). Critical when > 0.",
+		ConstLabels: sLabels,
+	})
+
 	catalogLastSuccess.Store(time.Now().UnixNano())
 	CatalogPlansStale = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name:        "iam_audit_log_catalog_plans_stale_seconds",
@@ -170,5 +206,6 @@ func registerMetrics(environment string) {
 		MessagesReceived, MessagesProcessed, MessagesFailed, DLQMessages,
 		DependencyRequestSeconds, RLSViolations,
 		CatalogPlansPolls, CatalogPlansStale, RedactionTasks,
+		ArchivePartitions, RedactionBlockedArchive, RetentionPruned, ArchiveStalled,
 	)
 }

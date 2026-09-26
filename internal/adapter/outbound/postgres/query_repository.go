@@ -139,9 +139,10 @@ func (r *QueryRepository) PlanWindow(ctx context.Context, tenantID string) (*dom
 	return row, err
 }
 
-// archivedObjectsSQL: manifest rows overlapping the range whose partition is
-// gone — partition existence is the hot/archived boundary (decision D-12),
-// so a month is read from exactly one source and never double-counted.
+// archivedObjectsSQL: sealed manifest rows overlapping the range. An object
+// is sealed when its partition is dropped (000008), so its rows exist only
+// in S3; unsealed objects' rows are still in RDS. Each row is therefore
+// read from exactly one source, even for a re-opened month (D-12, D-19/D-20).
 const archiveObjectColumns = `s3_bucket, s3_key, tenant_id::text, retention_tier::text, period_month, part,
     row_count, byte_size, min_occurred_at, max_occurred_at, min_id::text, max_id::text`
 
@@ -150,17 +151,17 @@ FROM audit_archive_objects
 WHERE tenant_id = $1
   AND max_occurred_at >= $2 AND min_occurred_at <= $3
   AND ($4 = '' OR retention_tier::text = $4)
-  AND to_regclass('public.' || quote_ident(partition_name)) IS NULL
+  AND sealed
 ORDER BY max_occurred_at DESC, part`
 
-// archivedObjectsForIDSQL: the dropped-partition objects whose id range
-// contains the id (AL-2 archived fallback, D-12).
+// archivedObjectsForIDSQL: the sealed objects whose id range contains the id
+// (AL-2 archived fallback, D-12).
 const archivedObjectsForIDSQL = `SELECT ` + archiveObjectColumns + `
 FROM audit_archive_objects
 WHERE tenant_id = $1
   AND min_id <= $2::uuid AND max_id >= $2::uuid
   AND max_occurred_at >= $3
-  AND to_regclass('public.' || quote_ident(partition_name)) IS NULL
+  AND sealed
 ORDER BY max_occurred_at DESC, part`
 
 // ArchivedObjects implements port.AuditReader.
