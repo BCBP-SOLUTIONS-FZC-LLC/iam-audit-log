@@ -42,3 +42,33 @@ type PlanProjector interface {
 type PlanWindows interface {
 	WindowDays(planCode string) (int, bool)
 }
+
+// RedactionStore is the GDPR redaction side of the write path (LLD §8.7;
+// decisions D-1, D-15..D-17).
+type RedactionStore interface {
+	// AppendWithRedaction is AuditWriter.Append plus, in the same
+	// transaction, an audit_redaction_tasks insert that is a no-op on a
+	// redelivered trigger. taskCreated reports whether req's task was
+	// inserted, so it should be applied now.
+	AppendWithRedaction(ctx context.Context, entry domain.AuditEntry, consumer string, req domain.RedactionRequest) (stored domain.AuditEntry, created, taskCreated bool, err error)
+	// ApplyRedaction runs apply_redaction(taskID). It is idempotent: a
+	// finished task only reports its outcome.
+	ApplyRedaction(ctx context.Context, taskID string) (domain.RedactionOutcome, error)
+}
+
+// RedactionTasks lists stuck tasks for the reconciler's retry job.
+type RedactionTasks interface {
+	// PendingTasks returns up to limit pending task ids requested before
+	// olderThan, oldest first.
+	PendingTasks(ctx context.Context, olderThan time.Time, limit int) ([]string, error)
+	ApplyRedaction(ctx context.Context, taskID string) (domain.RedactionOutcome, error)
+	// Sweep re-redacts unredacted security_3y rows of subjects whose
+	// redaction finished within window (sweep_redactions(), D-18) and
+	// returns the rows fixed.
+	Sweep(ctx context.Context, window time.Duration) (int64, error)
+}
+
+// RedactionMetrics counts task outcomes (iam_audit_log_redaction_tasks_total).
+type RedactionMetrics interface {
+	TaskOutcome(status string)
+}

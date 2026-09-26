@@ -72,19 +72,25 @@ func (s *QueryService) window(ctx context.Context, tenantID string, f domain.Que
 	return domain.ClampWindow(f.From, f.To, s.cfg.Now().UTC(), days), nil
 }
 
-// Query implements AL-1.
-func (s *QueryService) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+// validateRequest checks the filter, limit and cursor shared by AL-1/AL-7.
+func validateRequest(req QueryRequest) (limit int, cursor *domain.Cursor, err error) {
 	if err := req.Filter.Validate(); err != nil {
-		return QueryResult{}, err
+		return 0, nil, err
 	}
-	limit := req.Limit
+	limit = req.Limit
 	if limit == 0 {
 		limit = domain.DefaultQueryLimit
 	}
 	if limit < 1 || limit > domain.MaxQueryLimit {
-		return QueryResult{}, domain.NewError(domain.ErrInvalidRequest, fmt.Sprintf("limit must be between 1 and %d", domain.MaxQueryLimit))
+		return 0, nil, domain.NewError(domain.ErrInvalidRequest, fmt.Sprintf("limit must be between 1 and %d", domain.MaxQueryLimit))
 	}
-	cursor, err := domain.DecodeCursor(req.Cursor)
+	cursor, err = domain.DecodeCursor(req.Cursor)
+	return limit, cursor, err
+}
+
+// Query implements AL-1.
+func (s *QueryService) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+	limit, cursor, err := validateRequest(req)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -106,7 +112,42 @@ func (s *QueryService) Query(ctx context.Context, req QueryRequest) (QueryResult
 		res.Deferred = &f
 		return res, nil
 	}
+	return s.page(ctx, req, w, objects, cursor, limit, res)
+}
 
+// InternalQuery implements AL-7: the mesh-only provenance read. It is
+// RLS-scoped to the explicit tenant_id but has no plan clamp (§5.4:
+// compliance/legal retrieve beyond the plan window through AL-7). An
+// archived range over the D-10 bounds is 422 range_too_large — a service
+// caller has no export path (decision D-14).
+func (s *QueryService) InternalQuery(ctx context.Context, req QueryRequest) (QueryResult, error) {
+	limit, cursor, err := validateRequest(req)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	w := domain.Window{From: time.Unix(0, 0).UTC(), To: s.cfg.Now().UTC()}
+	if req.Filter.From != nil {
+		w.From = req.Filter.From.UTC()
+	}
+	if req.Filter.To != nil {
+		w.To = req.Filter.To.UTC()
+	}
+	objects, err := s.reader.ArchivedObjects(ctx, req.TenantID, w.From, w.To, req.Filter.RetentionTier)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	if len(objects) > 0 && s.exceedsSyncBounds(objects) {
+		return QueryResult{}, domain.NewError(domain.ErrRangeTooLarge,
+			"the archived part of this range exceeds the synchronous read bound; narrow from/to")
+	}
+	return s.page(ctx, req, w, objects, cursor, limit, QueryResult{EffectiveFrom: w.From})
+}
+
+// page reads one keyset page from the hot store plus the (size-bounded)
+// archived objects and merges them.
+func (s *QueryService) page(ctx context.Context, req QueryRequest, w domain.Window, objects []domain.ArchiveObject,
+	cursor *domain.Cursor, limit int, res QueryResult,
+) (QueryResult, error) {
 	hot, err := s.reader.Page(ctx, req.TenantID, req.Filter, w.From, w.To, cursor, limit+1)
 	if err != nil {
 		return QueryResult{}, err

@@ -108,6 +108,9 @@ reconcilerEnv:
   PG_MAX_CONNS: "4"
   PROCESSED_EVENTS_TTL_DAYS: "8"
   RECONCILER_TIMEOUT: "30m"
+  REDACTION_RETRY_MIN_AGE: "5m"      # redaction-retry: re-apply tasks pending longer than this (RB-7)
+  REDACTION_RETRY_BATCH: "500"
+  REDACTION_SWEEP_WINDOW: "2160h"    # redaction-sweep: subjects erased in the last 90 d (D-18)
 
 # One Secret per composition root (rule 5). Production: existingSecret.
 secrets:
@@ -239,6 +242,28 @@ cronjobs:
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { cpu: "1", memory: 1Gi }
+  redactionRetry:
+    enabled: true
+    jobName: redaction-retry
+    schedule: "*/15 * * * *"         # REDACTION_RETRY_SCHEDULE — stuck-pending tasks (LLD §8.7, RB-7)
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    activeDeadlineSeconds: 600
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  redactionSweep:
+    enabled: true
+    jobName: redaction-sweep
+    schedule: "30 3 * * *"           # REDACTION_SWEEP_SCHEDULE — daily re-check behind the ingest-time redaction (D-18)
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    activeDeadlineSeconds: 1800
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }
   processedEventsPrune:
     enabled: false
     jobName: processed-events-prune

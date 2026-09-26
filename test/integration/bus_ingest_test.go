@@ -50,11 +50,13 @@ func newBusStack(t *testing.T, queueNames ...string) *busStack {
 	require.NoError(t, err)
 	t.Cleanup(seed.Close)
 
-	ingest := service.NewIngestService(pgadapter.NewAuditRepository(pool), func() (string, error) {
+	auditRepo := pgadapter.NewAuditRepository(pool)
+	ingest := service.NewIngestService(auditRepo, func() (string, error) {
 		id, err := uuid.NewV7()
 		return id.String(), err
 	}, 8192, 500, nil).WithBus(service.BusIngestConfig{
 		Plans: pgadapter.NewPlanWindowRepository(pool), DefaultWindowDays: 365,
+		Redaction: auditRepo, // GDPR redaction on UserDeleted, as cmd/server wires it (LLD §8.7)
 	})
 
 	want := map[string]bool{}

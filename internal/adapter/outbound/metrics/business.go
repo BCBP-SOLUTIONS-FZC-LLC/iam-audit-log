@@ -9,7 +9,8 @@
 //   - Tier 2 — iam_* : concepts shared across IAM services (RLS violations).
 //     "service", "environment" injected centrally (serviceLabels).
 //   - Tier 3 — iam_audit_log_* : behavior unique to this service (ingest,
-//     archival, redaction, CAT-I2 poller — LLD §11 table). Landed in Phase 8.
+//     archival, redaction, CAT-I2 poller — LLD §11 table). The CAT-I2 pair
+//     landed in Phase 5; the rest land in Phase 8.
 //
 // Every counter ends in _total, every histogram in _seconds, and every
 // collector registers on gincommon.MetricsRegisterer() only — enforced by
@@ -19,6 +20,8 @@ package metrics
 import (
 	"maps"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -52,6 +55,26 @@ var (
 	// RLSViolations is fed from rls_violation_log (LLD §4.3, §11):
 	// cross_tenant_access = Critical, missing_or_invalid_guc = Warning.
 	RLSViolations *prometheus.CounterVec
+
+	// ── Tier 3 — iam_audit_log_* ────────────────────────────────────────
+
+	// CatalogPlansPolls counts CAT-I2 plan-map polls by result
+	// (success | error | timeout; AL-D15, LLD §11).
+	CatalogPlansPolls *prometheus.CounterVec
+	// CatalogPlansStale reports seconds since the last successful CAT-I2
+	// poll (since process start before the first one) — Warning past 2×,
+	// Critical past 10× CATALOG_PLANS_POLL_INTERVAL (RB-8).
+	CatalogPlansStale prometheus.GaugeFunc
+
+	// RedactionTasks counts GDPR redaction task outcomes by status
+	// (applied | not_applicable | missed | pending = an apply that failed
+	// and left the task for redaction-retry). missed is a routine outcome
+	// (the subject also has archived rows, retained under AL-Q15 Option A),
+	// not an alarm; pending is the one to alert on (RB-7).
+	RedactionTasks *prometheus.CounterVec
+
+	// catalogLastSuccess is the unix-nano time CatalogPlansStale measures from.
+	catalogLastSuccess atomic.Int64
 )
 
 // platformLabels returns ConstLabels for a Tier-1 platform_* collector:
@@ -123,8 +146,29 @@ func registerMetrics(environment string) {
 		ConstLabels: sLabels,
 	}, []string{"violation_type"})
 
+	// ── Tier 3 — iam_audit_log_* ─────────────────────────────────────────
+	CatalogPlansPolls = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_catalog_plans_poll_total",
+		Help:        "CAT-I2 plan-map poll outcomes, by result (success|error|timeout; AL-D15).",
+		ConstLabels: sLabels,
+	}, []string{"result"})
+
+	RedactionTasks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_redaction_tasks_total",
+		Help:        "GDPR redaction task outcomes, by status (applied|not_applicable|missed|pending=apply failed). missed = archived rows retained (AL-Q15), routine; pending needs action (RB-7).",
+		ConstLabels: sLabels,
+	}, []string{"status"})
+
+	catalogLastSuccess.Store(time.Now().UnixNano())
+	CatalogPlansStale = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name:        "iam_audit_log_catalog_plans_stale_seconds",
+		Help:        "Seconds since the last successful CAT-I2 poll (since start before the first). Stale-if-error masks outages (RB-8).",
+		ConstLabels: sLabels,
+	}, func() float64 { return time.Since(time.Unix(0, catalogLastSuccess.Load())).Seconds() })
+
 	gincommon.MetricsRegisterer().MustRegister(
 		MessagesReceived, MessagesProcessed, MessagesFailed, DLQMessages,
 		DependencyRequestSeconds, RLSViolations,
+		CatalogPlansPolls, CatalogPlansStale, RedactionTasks,
 	)
 }

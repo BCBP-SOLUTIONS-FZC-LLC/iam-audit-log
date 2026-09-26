@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,9 +15,10 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/pkg/requestctx"
 )
 
-// Querier is the AL-1/AL-2 use case (implemented by *service.QueryService).
+// Querier is the AL-1/AL-2/AL-7 use case (implemented by *service.QueryService).
 type Querier interface {
 	Query(ctx context.Context, req service.QueryRequest) (service.QueryResult, error)
+	InternalQuery(ctx context.Context, req service.QueryRequest) (service.QueryResult, error)
 	Get(ctx context.Context, tenantID, id string) (domain.AuditEntry, error)
 }
 
@@ -196,4 +198,52 @@ func (h *QueryHandler) GetExport(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, toExportStatus(v))
+}
+
+// InternalListEvents is AL-7.
+//
+//	@Summary		Mesh-only provenance read (AL-7)
+//	@Description	For compliance/verification service callers (iam-system role). tenant_id is required and bound to app.tenant_id, so RLS still applies and there is no cross-tenant read. There is no plan-window clamp (§5.4); window_clamped is always false and effective_from is the lower bound applied. The filter, limit and cursor contract is the same as AL-1. An archived range over ARCHIVE_SYNC_MAX_ROWS / ARCHIVE_SYNC_MAX_BYTES returns 422 range_too_large; narrow from/to (decision D-14).
+//	@Tags			Internal
+//	@Produce		json
+//	@Security		TenantRoles
+//	@Security		TenantID
+//	@Security		UserID
+//	@Param			tenant_id		query		string		true	"tenant whose trail is read (UUID)"
+//	@Param			from			query		string		false	"occurred_at lower bound (RFC 3339; default unbounded)"
+//	@Param			to				query		string		false	"occurred_at upper bound (RFC 3339; default now)"
+//	@Param			entry_type		query		[]string	false	"entry type (repeatable)"	collectionFormat(multi)
+//	@Param			actor_id		query		string		false	"actor UUID"
+//	@Param			actor_type		query		string		false	"user | service_account | iam_system | anonymous"
+//	@Param			target_type		query		string		false	"target type"
+//	@Param			target_id		query		string		false	"target id (requires target_type)"
+//	@Param			source_service	query		string		false	"source service"
+//	@Param			retention_tier	query		string		false	"compliance_7y | security_3y | access_90d"
+//	@Param			limit			query		int			false	"page size (default 100, max 1000)"
+//	@Param			cursor			query		string		false	"opaque keyset cursor"
+//	@Success		200				{object}	EventsResponse
+//	@Failure		400				{object}	ErrorResponse	"invalid_request"
+//	@Failure		401				{object}	ErrorResponse	"missing_identity_headers"
+//	@Failure		403				{object}	ErrorResponse	"forbidden_peer"
+//	@Failure		422				{object}	ErrorResponse	"range_too_large"
+//	@Failure		503				{object}	ErrorResponse	"dependency_unavailable"
+//	@Router			/internal/audit/events [get]
+func (h *QueryHandler) InternalListEvents(c *gin.Context) {
+	q := c.Request.URL.Query()
+	tenantID := q.Get("tenant_id")
+	if !domain.IsUUID(tenantID) {
+		abort(c, domain.ErrInvalidRequest, "tenant_id is required and must be a UUID")
+		return
+	}
+	f, cursor, limit, err := parseQuery(q)
+	if err != nil {
+		HandleError(c, err)
+		return
+	}
+	res, err := h.query.InternalQuery(c.Request.Context(), service.QueryRequest{TenantID: strings.ToLower(tenantID), Filter: f, Cursor: cursor, Limit: limit})
+	if err != nil {
+		HandleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toEventsResponse(res))
 }

@@ -40,14 +40,14 @@ if not m:
 body = m.group(0)
 
 # One block per collector construction: kind (Counter/CounterVec/
-# Histogram/HistogramVec/Gauge/GaugeVec), Name literal, ConstLabels var.
+# Histogram/HistogramVec/Gauge/GaugeVec/GaugeFunc), Name literal, ConstLabels var.
 # The Opts{...} struct literal is captured up to its OWN closing brace
 # (a line holding just a single tab + "}") rather than the first bare "}"
 # encountered, since a HistogramOpts' Buckets: []float64{...} field has an
 # inline closing brace of its own that would otherwise truncate the match
 # early and hide a later ConstLabels: line.
 block_re = re.compile(
-    r"prometheus\.New(?P<kind>CounterVec|Counter|HistogramVec|Histogram|GaugeVec|Gauge)\("
+    r"prometheus\.New(?P<kind>CounterVec|Counter|HistogramVec|Histogram|GaugeVec|GaugeFunc|Gauge)\("
     r"prometheus\.\w+Opts\{"
     r"(?P<opts>.*?)"
     r"\n\t\}",

@@ -28,6 +28,10 @@ type BusIngestConfig struct {
 	Windows           port.PlanWindows // nil until the Phase 5 poller
 	DefaultWindowDays int              // AUDIT_DEFAULT_QUERY_WINDOW_DAYS
 	Now               port.Clock
+	// Redaction schedules and immediately applies GDPR redaction on
+	// UserDeleted (LLD §8.7, AL-INV-12); nil disables it.
+	Redaction        port.RedactionStore
+	RedactionMetrics port.RedactionMetrics // may be nil
 }
 
 // WithBus enables IngestBus on the service.
@@ -63,7 +67,7 @@ func (s *IngestService) IngestBus(ctx context.Context, ev domain.BusEvent, consu
 		return BusResult{}, fmt.Errorf("mint entry id: %w", err)
 	}
 	entry.ID = id
-	stored, created, err := s.store.Append(ctx, entry, consumer)
+	stored, created, err := s.appendBus(ctx, entry, consumer)
 	if err != nil {
 		return BusResult{}, err
 	}
@@ -85,6 +89,66 @@ func (s *IngestService) IngestBus(ctx context.Context, ev domain.BusEvent, consu
 		return BusResult{}, err
 	}
 	return BusResult{Entry: stored, Created: created, Known: known}, nil
+}
+
+// appendBus persists a bus entry. A UserDeleted also schedules its
+// redaction task in the same transaction and, once committed, applies it
+// immediately while the subject's recent rows are still hot (LLD §8.7).
+// A failed apply leaves the task pending for the reconciler's
+// redaction-retry job; it never fails the message, because the audit row
+// and the task are already durable.
+func (s *IngestService) appendBus(ctx context.Context, entry domain.AuditEntry, consumer string) (domain.AuditEntry, bool, error) {
+	subject, trigger := domain.RedactionTrigger(entry)
+	if !trigger || s.bus.Redaction == nil {
+		return s.store.Append(ctx, entry, consumer)
+	}
+	if subject == "" {
+		if s.log != nil {
+			s.log.Error("UserDeleted names no usable user_id — no redaction task created (GDPR erasure not scheduled)", map[string]any{
+				"source_event_id": entry.SourceEventID, "tenant_id": entry.TenantID,
+			})
+		}
+		return s.store.Append(ctx, entry, consumer)
+	}
+	taskID, err := s.newID()
+	if err != nil {
+		return domain.AuditEntry{}, false, fmt.Errorf("mint redaction task id: %w", err)
+	}
+	stored, created, taskCreated, err := s.bus.Redaction.AppendWithRedaction(ctx, entry, consumer, domain.RedactionRequest{
+		TaskID: taskID, TenantID: entry.TenantID, SubjectID: subject,
+		TriggerEventType: domain.RedactionTriggerUserDeleted, TriggerSourceEventID: entry.SourceEventID,
+	})
+	if err != nil || !taskCreated {
+		return stored, created, err
+	}
+	s.applyRedaction(ctx, taskID, entry.TenantID)
+	return stored, created, nil
+}
+
+func (s *IngestService) applyRedaction(ctx context.Context, taskID, tenantID string) {
+	out, err := s.bus.Redaction.ApplyRedaction(ctx, taskID)
+	status := out.Status
+	if err != nil {
+		status = domain.RedactionPending
+	}
+	if s.bus.RedactionMetrics != nil {
+		s.bus.RedactionMetrics.TaskOutcome(status)
+	}
+	if s.log == nil {
+		return
+	}
+	fields := map[string]any{"redaction_task_id": taskID, "tenant_id": tenantID, "status": status, "rows_redacted": out.RowsRedacted}
+	switch {
+	case err != nil:
+		fields["error"] = err.Error()
+		s.log.Error("immediate redaction failed — task left pending for redaction-retry (RB-7)", fields)
+	case status == domain.RedactionMissed:
+		// Routine, not an alarm (AL-Q15, Option A): hot rows are redacted;
+		// archived rows stay retained under Object Lock.
+		s.log.Info("redaction applied to hot rows; the subject also has archived security_3y rows, which are retained (AL-Q15)", fields)
+	default:
+		s.log.Info("redaction applied", fields)
+	}
 }
 
 func (s *IngestService) projectPlan(ctx context.Context, entry domain.AuditEntry, ev domain.BusEvent) error {

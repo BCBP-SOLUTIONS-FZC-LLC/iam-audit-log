@@ -498,3 +498,77 @@ func TestMergeNewestFirst_Interleaves(t *testing.T) {
 		t.Errorf("merged = %v, want %v", got, want)
 	}
 }
+
+// AL-7 (decision D-14): RLS-scoped, no plan clamp, same keyset/merge as
+// AL-1, and an archived range over the D-10 bounds is 422 range_too_large.
+func TestInternalQuery_NoClamp(t *testing.T) {
+	old := entryAt(1, qNow.AddDate(-5, 0, 0), domain.TierCompliance7y) // far outside a 30-day plan window
+	recent := entryAt(2, qNow.Add(-time.Hour), domain.TierSecurity3y)
+	r := &fakeReader{plan: &domain.PlanWindowRow{QueryWindowDays: 30}, hot: []domain.AuditEntry{old, recent}}
+	svc := newQuery(r, nil, QueryConfig{})
+
+	res, err := svc.InternalQuery(context.Background(), QueryRequest{TenantID: qTenant})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 2 || res.Events[0].ID != recent.ID || res.Events[1].ID != old.ID {
+		t.Errorf("events = %+v, want both newest first", res.Events)
+	}
+	if res.WindowClamped || !res.EffectiveFrom.Equal(time.Unix(0, 0)) {
+		t.Errorf("clamped=%v effective_from=%v, want false / epoch", res.WindowClamped, res.EffectiveFrom)
+	}
+	if !r.gotFrom.Equal(time.Unix(0, 0)) || !r.gotTo.Equal(qNow) {
+		t.Errorf("range = [%v, %v], want [epoch, now]", r.gotFrom, r.gotTo)
+	}
+
+	from, to := qNow.AddDate(-6, 0, 0), qNow.AddDate(-4, 0, 0)
+	res, err = svc.InternalQuery(context.Background(), QueryRequest{TenantID: qTenant, Filter: domain.QueryFilter{From: &from, To: &to}, Limit: 1})
+	if err != nil || len(res.Events) != 1 || res.Events[0].ID != old.ID || !res.EffectiveFrom.Equal(from) || res.NextCursor != "" {
+		t.Errorf("explicit range: res=%+v err=%v", res, err)
+	}
+	if !r.gotTo.Equal(to) {
+		t.Errorf("to = %v, want %v", r.gotTo, to)
+	}
+}
+
+func TestInternalQuery_ValidationAndErrors(t *testing.T) {
+	r := &fakeReader{}
+	svc := newQuery(r, nil, QueryConfig{})
+	for name, req := range map[string]QueryRequest{
+		"bad filter": {TenantID: qTenant, Filter: domain.QueryFilter{ActorID: "x"}},
+		"bad limit":  {TenantID: qTenant, Limit: -1},
+		"bad cursor": {TenantID: qTenant, Cursor: "!!"},
+	} {
+		if _, err := svc.InternalQuery(context.Background(), req); codeOfErr(err) != domain.ErrInvalidRequest {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	boom := errors.New("db")
+	r.objErr = boom
+	if _, err := svc.InternalQuery(context.Background(), QueryRequest{TenantID: qTenant}); !errors.Is(err, boom) {
+		t.Errorf("manifest error: %v", err)
+	}
+	r.objErr, r.pageErr = nil, boom
+	if _, err := svc.InternalQuery(context.Background(), QueryRequest{TenantID: qTenant}); !errors.Is(err, boom) {
+		t.Errorf("page error: %v", err)
+	}
+}
+
+func TestInternalQuery_ArchivedBounds_D14(t *testing.T) {
+	at := qNow.AddDate(-3, 0, 0)
+	r := &fakeReader{objects: []domain.ArchiveObject{object("big", 11, at, at)}}
+	svc := newQuery(r, &fakeArchive{}, QueryConfig{SyncMaxRows: 10})
+	if _, err := svc.InternalQuery(context.Background(), QueryRequest{TenantID: qTenant}); codeOfErr(err) != domain.ErrRangeTooLarge {
+		t.Errorf("over bounds: err = %v, want range_too_large", err)
+	}
+
+	archived := entryAt(3, at, domain.TierCompliance7y)
+	r = &fakeReader{hot: []domain.AuditEntry{entryAt(4, qNow.Add(-time.Hour), domain.TierSecurity3y)},
+		objects: []domain.ArchiveObject{object("small", 1, at, at)}}
+	a := &fakeArchive{records: map[string][]domain.AuditEntry{"small": {archived}}}
+	svc = newQuery(r, a, QueryConfig{SyncMaxRows: 10})
+	res, err := svc.InternalQuery(context.Background(), QueryRequest{TenantID: qTenant, Filter: domain.QueryFilter{RetentionTier: ""}})
+	if err != nil || len(res.Events) != 2 || res.Events[1].ID != archived.ID {
+		t.Errorf("within bounds: res=%+v err=%v", res, err)
+	}
+}

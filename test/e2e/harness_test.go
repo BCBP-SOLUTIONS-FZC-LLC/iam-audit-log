@@ -37,6 +37,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/http"
+	catalogadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/catalog"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
 	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
@@ -82,6 +83,23 @@ const e2eBucket = "iam-audit-archive"
 // endpoint: fine for tests that never archive or export.
 func newE2EEnvWithS3(t *testing.T, awsCfg *aws.Config) *e2eEnv {
 	t.Helper()
+	return newE2EEnvOpts(t, e2eOpts{aws: awsCfg})
+}
+
+// e2eOpts selects optional real dependencies for the e2e stack.
+type e2eOpts struct {
+	aws *aws.Config // nil → unreachable S3 endpoint
+	// catalogURL, when set, wires a real CAT-I2 PlanPoller (AL-D15) against
+	// it as QueryConfig.Windows, polling every e2ePollInterval.
+	catalogURL string
+}
+
+// e2ePollInterval is the CAT-I2 poll cadence in e2e (production: 600s).
+const e2ePollInterval = 200 * time.Millisecond
+
+func newE2EEnvOpts(t *testing.T, o e2eOpts) *e2eEnv {
+	t.Helper()
+	awsCfg := o.aws
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
 	roles := fixtures.CreateRoles(t, fixtures.StartPostgres(t))
@@ -112,9 +130,20 @@ func newE2EEnvWithS3(t *testing.T, awsCfg *aws.Config) *e2eEnv {
 		o.BaseEndpoint, o.UsePathStyle = &endpoint, true
 	}), e2eBucket, "")
 	reader := pgadapter.NewQueryRepository(pool)
-	query := service.NewQueryService(reader, store, service.QueryConfig{
-		DefaultWindowDays: 365, SyncMaxRows: 10000, SyncMaxBytes: 50 << 20,
-	}, nil)
+	qcfg := service.QueryConfig{DefaultWindowDays: 365, SyncMaxRows: 10000, SyncMaxBytes: 50 << 20}
+	if o.catalogURL != "" {
+		plans := service.NewPlanPoller(catalogadapter.New(o.catalogURL, time.Second), nil,
+			service.PlanPollerConfig{Interval: e2ePollInterval, Timeout: time.Second}, nil)
+		qcfg.Windows = plans
+		pollCtx, stopPoll := context.WithCancel(ctx)
+		pollDone := make(chan struct{})
+		go func() {
+			defer close(pollDone)
+			plans.Run(pollCtx)
+		}()
+		t.Cleanup(func() { stopPoll(); <-pollDone }) // LIFO: before pool.Close
+	}
+	query := service.NewQueryService(reader, store, qcfg, nil)
 	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, store, store, query, newID,
 		service.ExportConfig{
 			SignedURLTTL: 7 * 24 * time.Hour, DownloadURLTTL: 15 * time.Minute,

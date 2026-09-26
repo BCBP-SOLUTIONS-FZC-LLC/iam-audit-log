@@ -28,6 +28,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/consumer"
 	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/http"
+	catalogadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/catalog"
 	glueadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/glue"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
@@ -132,7 +133,8 @@ func run() int {
 
 	// ── 3c. Ingest core (LLD §5.4, AL-D1) — the single write path shared by
 	// AL-5/AL-6 now and the Phase 3 consumer fleet (AL-INV-2).
-	ingest := service.NewIngestService(pgadapter.NewAuditRepository(pool), newUUIDv7,
+	auditRepo := pgadapter.NewAuditRepository(pool)
+	ingest := service.NewIngestService(auditRepo, newUUIDv7,
 		cfg.MaxMetadataBytes, cfg.MaxIngestBatch, log)
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
@@ -141,11 +143,27 @@ func run() int {
 		return 1
 	}
 
+	// ── 3c'. CAT-I2 plans poller (AL-D15): a background timer, never
+	// per-query; stale-if-error. Shared by the bus projection and the query
+	// path's window resolution.
+	plans := service.NewPlanPoller(catalogadapter.New(cfg.CatalogBaseURL, cfg.CatalogPollTimeout), metrics.CatalogPoll{},
+		service.PlanPollerConfig{Interval: cfg.CatalogPollInterval, Timeout: cfg.CatalogPollTimeout}, log)
+	pollerDone := make(chan struct{})
+	go func() {
+		defer close(pollerDone)
+		plans.Run(ctx)
+	}()
+
 	// ── 3d. SQS consumer fleet (LLD §7.1) — one platform-events consumer per
 	// inbound queue, all converging on the same ingest path (AL-INV-2).
 	fleet, err := buildFleet(awsCfg, cfg, ingest.WithBus(service.BusIngestConfig{
 		Plans:             pgadapter.NewPlanWindowRepository(pool),
+		Windows:           plans,
 		DefaultWindowDays: cfg.DefaultQueryWindowDays,
+		// GDPR redaction on UserDeleted (LLD §8.7): the task commits with
+		// the audit row, then apply_redaction() runs immediately (D-1).
+		Redaction:        auditRepo,
+		RedactionMetrics: metrics.Redaction{},
 	}), log)
 	if err != nil {
 		log.Error("build consumer fleet", map[string]any{"error": err.Error()})
@@ -163,6 +181,7 @@ func run() int {
 	reader := pgadapter.NewQueryRepository(pool)
 	query := service.NewQueryService(reader, store, service.QueryConfig{
 		DefaultWindowDays: cfg.DefaultQueryWindowDays,
+		Windows:           plans,
 		SyncMaxRows:       cfg.ArchiveSyncMaxRows,
 		SyncMaxBytes:      cfg.ArchiveSyncMaxBytes,
 	}, log)
@@ -254,6 +273,7 @@ func run() int {
 	}
 	cancelBackground()
 	<-workerDone // an interrupted export records its failure before the pool drains
+	<-pollerDone
 	if err := pool.DrainAndClose(shutdownCtx); err != nil {
 		log.Error("pool drain error", map[string]any{"error": err.Error()})
 	}

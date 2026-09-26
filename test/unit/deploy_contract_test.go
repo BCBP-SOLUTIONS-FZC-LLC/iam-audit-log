@@ -75,6 +75,34 @@ func TestHelm_ProductionDefaults(t *testing.T) {
 	}
 }
 
+// LLD §8.7 / RB-7: the redaction-retry job has a singleton CronJob that
+// dispatches the registered job name.
+func TestHelm_RedactionRetryCronJob(t *testing.T) {
+	j, ok := loadValues(t).Cronjobs["redactionRetry"]
+	if !ok {
+		t.Fatal("cronjobs.redactionRetry missing")
+	}
+	if j.JobName != "redaction-retry" || j.ConcurrencyPolicy != "Forbid" {
+		t.Errorf("redactionRetry = %+v", j)
+	}
+}
+
+// D-18: the daily redaction-sweep CronJob (defense in depth behind the
+// ingest-time check).
+func TestHelm_RedactionSweepCronJob(t *testing.T) {
+	v := loadValues(t)
+	j, ok := v.Cronjobs["redactionSweep"]
+	if !ok {
+		t.Fatal("cronjobs.redactionSweep missing")
+	}
+	if j.JobName != "redaction-sweep" || j.ConcurrencyPolicy != "Forbid" {
+		t.Errorf("redactionSweep = %+v", j)
+	}
+	if v.ReconcilerEnv["REDACTION_SWEEP_WINDOW"] == "" {
+		t.Error("reconcilerEnv.REDACTION_SWEEP_WINDOW missing")
+	}
+}
+
 // LLD §5.2 / §10.2: only /api/v1/audit is gateway-routed; /internal never.
 func TestHelm_IngressExposesOnlyPublicAuditAPI(t *testing.T) {
 	for _, h := range loadValues(t).Ingress.Hosts {

@@ -22,6 +22,7 @@ const (
 	ErrInvalidActor            ErrorCode = "invalid_actor"            // 422
 	ErrMetadataTooLarge        ErrorCode = "metadata_too_large"       // 422
 	ErrBatchTooLarge           ErrorCode = "batch_too_large"          // 422
+	ErrRangeTooLarge           ErrorCode = "range_too_large"          // 422 (AL-7 archived range over the D-10 bounds; BUILD_PLAN D-14)
 	ErrRateLimited             ErrorCode = "rate_limited"             // 429
 	ErrDependencyUnavailable   ErrorCode = "dependency_unavailable"   // 503
 )
@@ -38,6 +39,7 @@ var httpStatus = map[ErrorCode]int{
 	ErrInvalidActor:            422,
 	ErrMetadataTooLarge:        422,
 	ErrBatchTooLarge:           422,
+	ErrRangeTooLarge:           422,
 	ErrRateLimited:             429,
 	ErrDependencyUnavailable:   503,
 }

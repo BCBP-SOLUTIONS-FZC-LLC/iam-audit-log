@@ -499,6 +499,146 @@
                     }
                 }
             }
+        },
+        "/internal/audit/events": {
+            "get": {
+                "security": [
+                    {
+                        "TenantRoles": []
+                    },
+                    {
+                        "TenantID": []
+                    },
+                    {
+                        "UserID": []
+                    }
+                ],
+                "description": "For compliance/verification service callers (iam-system role). tenant_id is required and bound to app.tenant_id, so RLS still applies and there is no cross-tenant read. There is no plan-window clamp (§5.4); window_clamped is always false and effective_from is the lower bound applied. The filter, limit and cursor contract is the same as AL-1. An archived range over ARCHIVE_SYNC_MAX_ROWS / ARCHIVE_SYNC_MAX_BYTES returns 422 range_too_large; narrow from/to (decision D-14).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Internal"
+                ],
+                "summary": "Mesh-only provenance read (AL-7)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "tenant whose trail is read (UUID)",
+                        "name": "tenant_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "occurred_at lower bound (RFC 3339; default unbounded)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "occurred_at upper bound (RFC 3339; default now)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "entry type (repeatable)",
+                        "name": "entry_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "actor UUID",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "user | service_account | iam_system | anonymous",
+                        "name": "actor_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "target type",
+                        "name": "target_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "target id (requires target_type)",
+                        "name": "target_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "source service",
+                        "name": "source_service",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "compliance_7y | security_3y | access_90d",
+                        "name": "retention_tier",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size (default 100, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "opaque keyset cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.EventsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing_identity_headers",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "forbidden_peer",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "range_too_large",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "dependency_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {

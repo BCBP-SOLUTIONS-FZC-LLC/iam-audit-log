@@ -12,6 +12,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -122,6 +123,15 @@ type Reconciler struct {
 	Job                    string
 	Timeout                time.Duration
 	ProcessedEventsTTLDays int
+
+	// redaction-retry job (LLD §8.7, RB-7): a pending task older than
+	// RedactionRetryMinAge is re-applied, up to RedactionRetryBatch per run.
+	RedactionRetryMinAge time.Duration
+	RedactionRetryBatch  int
+	// redaction-sweep job (D-18): re-check subjects whose redaction
+	// finished within this window (covers late rows within
+	// AUDIT_WRITABLE_TRAILING_MONTHS).
+	RedactionSweepWindow time.Duration
 }
 
 // IsDev reports whether appEnv permits local-dev placeholders.
@@ -201,6 +211,12 @@ func LoadServer(buildVersion string) (Server, error) {
 			}
 		}
 	}
+	if u, err := url.Parse(c.CatalogBaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		problems = append(problems, "CATALOG_BASE_URL: must be an absolute http(s) URL (CAT-I2 poller, AL-D15)")
+	}
+	if c.CatalogPollTimeout <= 0 || c.CatalogPollInterval <= c.CatalogPollTimeout {
+		problems = append(problems, "CATALOG_PLANS_POLL_TIMEOUT: must be > 0 and shorter than CATALOG_PLANS_POLL_INTERVAL")
+	}
 	if c.ExportJobLease < time.Minute || c.ExportJobLease > 24*time.Hour {
 		problems = append(problems, "EXPORT_JOB_LEASE: must be between 1m and 24h (claim_export_job bound)")
 	}
@@ -229,6 +245,9 @@ func LoadReconciler(buildVersion, job string) (Reconciler, error) {
 		Job:                    job,
 		Timeout:                envDuration("RECONCILER_TIMEOUT", 30*time.Minute),
 		ProcessedEventsTTLDays: envInt("PROCESSED_EVENTS_TTL_DAYS", 8),
+		RedactionRetryMinAge:   envDuration("REDACTION_RETRY_MIN_AGE", 5*time.Minute),
+		RedactionRetryBatch:    envInt("REDACTION_RETRY_BATCH", 500),
+		RedactionSweepWindow:   envDuration("REDACTION_SWEEP_WINDOW", 90*24*time.Hour),
 	}
 	c.ServiceName = envOr("SERVICE_NAME", "iam-audit-log") + "-reconciler"
 
@@ -238,6 +257,12 @@ func LoadReconciler(buildVersion, job string) (Reconciler, error) {
 	}
 	if c.ProcessedEventsTTLDays <= 7 {
 		problems = append(problems, "PROCESSED_EVENTS_TTL_DAYS: must exceed the 7-day SQS message lifetime (LLD §4.2)")
+	}
+	if c.RedactionRetryBatch < 1 || c.RedactionRetryBatch > 10000 {
+		problems = append(problems, "REDACTION_RETRY_BATCH: must be between 1 and 10000")
+	}
+	if c.RedactionSweepWindow < 24*time.Hour || c.RedactionSweepWindow > 400*24*time.Hour {
+		problems = append(problems, "REDACTION_SWEEP_WINDOW: must be between 24h and 9600h (sweep_redactions bound)")
 	}
 	problems = append(problems, validateCommon(c.Common)...)
 	return c, joinProblems(problems)

@@ -34,7 +34,7 @@ func TestErrorTaxonomy_LLDTable(t *testing.T) {
 	table := map[string]int{
 		"invalid_request": 400, "insufficient_permissions": 403, "forbidden_peer": 403,
 		"audit_entry_not_found": 404, "export_not_found": 404,
-		"unknown_entry_type": 422, "invalid_actor": 422, "metadata_too_large": 422, "batch_too_large": 422,
+		"unknown_entry_type": 422, "invalid_actor": 422, "metadata_too_large": 422, "batch_too_large": 422, "range_too_large": 422,
 		"rate_limited": 429, "dependency_unavailable": 503,
 	}
 	for code, status := range table {

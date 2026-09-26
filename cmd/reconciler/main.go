@@ -133,10 +133,15 @@ func run() int {
 		Logger:                 log,
 		RawLogger:              rawLog,
 		Partitions:             pgadapter.NewPartitionRepository(pool),
+		Redactions:             pgadapter.NewRedactionRepository(pool),
+		RedactionMetrics:       metrics.Redaction{},
 		HotWindowDays:          cfg.HotWindowDays,
 		PrecreateMonths:        cfg.PrecreateMonths,
 		WritableTrailingMonths: cfg.WritableTrailingMonths,
 		ProcessedEventsTTLDays: cfg.ProcessedEventsTTLDays,
+		RedactionRetryMinAge:   cfg.RedactionRetryMinAge,
+		RedactionRetryBatch:    cfg.RedactionRetryBatch,
+		RedactionSweepWindow:   cfg.RedactionSweepWindow,
 	})
 	if err != nil {
 		log.Error("reconciler job failed", "job", jobName, "error", err.Error())

@@ -11,7 +11,7 @@ func TestErrorTaxonomy_StatusMapping(t *testing.T) {
 		ErrInvalidRequest: 400, ErrUnauthenticated: 401,
 		ErrInsufficientPermissions: 403, ErrForbiddenPeer: 403,
 		ErrAuditEntryNotFound: 404, ErrExportNotFound: 404,
-		ErrUnknownEntryType: 422, ErrInvalidActor: 422, ErrMetadataTooLarge: 422, ErrBatchTooLarge: 422,
+		ErrUnknownEntryType: 422, ErrInvalidActor: 422, ErrMetadataTooLarge: 422, ErrBatchTooLarge: 422, ErrRangeTooLarge: 422,
 		ErrRateLimited: 429, ErrDependencyUnavailable: 503,
 	}
 	for code, status := range want {

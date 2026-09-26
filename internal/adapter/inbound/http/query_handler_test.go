@@ -31,6 +31,16 @@ type fakeQuerier struct {
 	getTen string
 	entry  domain.AuditEntry
 	getErr error
+	ireq   service.QueryRequest
+	ires   service.QueryResult
+	ierr   error
+	icalls int
+}
+
+func (f *fakeQuerier) InternalQuery(_ context.Context, req service.QueryRequest) (service.QueryResult, error) {
+	f.icalls++
+	f.ireq = req
+	return f.ires, f.ierr
 }
 
 func (f *fakeQuerier) Query(_ context.Context, req service.QueryRequest) (service.QueryResult, error) {
@@ -342,4 +352,92 @@ func TestGetExport(t *testing.T) {
 	w = sendJSON(t, r, http.MethodGet, "/api/v1/audit/exports/"+exportID, "", adminHeaders("tenant_admin"))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, "export_not_found", decode(t, w)["code"])
+}
+
+// ── AL-7 (mesh-only provenance read, decision D-14) ─────────────────────
+
+const (
+	al7Path   = "/api/v1/internal/audit/events"
+	al7Tenant = "abcdef01-2345-4678-89ab-cdef01234567"
+)
+
+func systemHeaders() map[string]string {
+	return map[string]string{"x-user-id": "iam-system", "x-tenant-id": domain.NilUUID, "x-tenant-roles": "iam-system"}
+}
+
+func TestInternalListEvents_SystemRoleOnly(t *testing.T) {
+	q := &fakeQuerier{}
+	r := queryRouter(q, &fakeExporter{}, nil)
+	for _, role := range []string{"tenant_admin", "tenant_owner", "member"} {
+		w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", adminHeaders(role))
+		assert.Equal(t, http.StatusForbidden, w.Code, role)
+		assert.Equal(t, "forbidden_peer", decode(t, w)["code"], role)
+	}
+	w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Zero(t, q.icalls, "no unauthorized call reaches the service")
+}
+
+func TestInternalListEvents_200UsesQueryTenant(t *testing.T) {
+	at := time.Date(2019, 1, 2, 3, 4, 5, 0, time.UTC)
+	q := &fakeQuerier{ires: service.QueryResult{
+		Events:        []domain.AuditEntry{{ID: entryID, OccurredAt: at, EntryType: "config.idp.changed", Action: "update", RetentionTier: domain.TierCompliance7y}},
+		NextCursor:    "next",
+		EffectiveFrom: time.Unix(0, 0).UTC(),
+	}}
+	r := queryRouter(q, &fakeExporter{}, nil)
+	upper := strings.ToUpper(al7Tenant)
+	w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+upper+"&entry_type=a.b&limit=7&cursor=c1&from=2019-01-01T00:00:00Z",
+		"", systemHeaders())
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.Equal(t, al7Tenant, q.ireq.TenantID, "tenant comes from the tenant_id query (lowercased), not x-tenant-id")
+	assert.Equal(t, []string{"a.b"}, q.ireq.Filter.EntryTypes)
+	assert.Equal(t, 7, q.ireq.Limit)
+	assert.Equal(t, "c1", q.ireq.Cursor)
+	require.NotNil(t, q.ireq.Filter.From)
+
+	var body EventsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Events, 1)
+	assert.Equal(t, entryID, body.Events[0].ID)
+	assert.JSONEq(t, `{}`, string(body.Events[0].Metadata))
+	require.NotNil(t, body.NextCursor)
+	assert.Equal(t, "next", *body.NextCursor)
+	assert.False(t, body.WindowClamped)
+	assert.True(t, body.EffectiveFrom.Equal(time.Unix(0, 0)))
+}
+
+func TestInternalListEvents_BadRequests(t *testing.T) {
+	q := &fakeQuerier{}
+	r := queryRouter(q, &fakeExporter{}, nil)
+	for name, qs := range map[string]string{
+		"missing tenant_id": "",
+		"bad tenant_id":     "?tenant_id=nope",
+		"bad from":          "?tenant_id=" + tenantA + "&from=yesterday",
+		"bad limit":         "?tenant_id=" + tenantA + "&limit=x",
+	} {
+		w := sendJSON(t, r, http.MethodGet, al7Path+qs, "", systemHeaders())
+		assert.Equal(t, http.StatusBadRequest, w.Code, name)
+		assert.Equal(t, "invalid_request", decode(t, w)["code"], name)
+	}
+	assert.Zero(t, q.icalls)
+}
+
+func TestInternalListEvents_ServiceErrors(t *testing.T) {
+	q := &fakeQuerier{ierr: domain.NewError(domain.ErrRangeTooLarge, "narrow it")}
+	r := queryRouter(q, &fakeExporter{}, nil)
+	w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", systemHeaders())
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Equal(t, "range_too_large", decode(t, w)["code"])
+
+	q.ierr = errors.New("boom")
+	w = sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", systemHeaders())
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestInternalListEvents_NotMountedWithoutHandler(t *testing.T) {
+	r := NewRouter(RouterConfig{GinConfig: gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"}})
+	w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", systemHeaders())
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

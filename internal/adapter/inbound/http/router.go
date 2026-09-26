@@ -47,7 +47,7 @@ type RouterConfig struct {
 	// BatchLimiter rate-limits AL-6 per tenant (§10.5, D-5); nil → unlimited.
 	BatchLimiter *TenantRateLimiter
 
-	// Query serves AL-1..AL-4 (nil → not mounted).
+	// Query serves AL-1..AL-4 and AL-7 (nil → not mounted).
 	Query *QueryHandler
 
 	// Audit mounts extra routes under /api/v1/audit (tenant_admin/owner).
@@ -111,6 +111,9 @@ func NewRouter(cfg RouterConfig) *Router {
 		}
 		// Escaped colon: gin routes the literal LLD path …/audit-entries:batch.
 		internal.POST(`/audit-entries\:batch`, append(batch, cfg.Ingest.CreateBatch)...) // AL-6
+	}
+	if cfg.Query != nil {
+		internal.GET("/audit/events", cfg.Query.InternalListEvents) // AL-7
 	}
 	if cfg.Internal != nil {
 		cfg.Internal(internal)

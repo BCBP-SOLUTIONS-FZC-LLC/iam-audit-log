@@ -6,6 +6,7 @@ package jobs
 
 import (
 	"context"
+	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
@@ -21,11 +22,19 @@ type Context struct {
 
 	// Partitions creates monthly audit_events partitions (LLD §4.4).
 	Partitions port.PartitionManager
+	// Redactions lists and re-applies stuck redaction tasks (LLD §8.7).
+	Redactions port.RedactionTasks
+	// RedactionMetrics counts outcomes (collectors exist; a CronJob has no
+	// scrape endpoint until Phase 8's push path).
+	RedactionMetrics port.RedactionMetrics
 
 	HotWindowDays          int
 	PrecreateMonths        int
 	WritableTrailingMonths int
 	ProcessedEventsTTLDays int
+	RedactionRetryMinAge   time.Duration
+	RedactionRetryBatch    int
+	RedactionSweepWindow   time.Duration
 }
 
 // Result summarizes a job run.
@@ -43,6 +52,8 @@ type Func func(ctx context.Context, jctx *Context) (Result, error)
 // PROCESSED_EVENTS_PRUNE_SCHEDULE). processed-events-prune lands in Phase 7.
 func Registry() map[string]Func {
 	return map[string]Func{
-		"reconcile": Reconcile,
+		"reconcile":       Reconcile,
+		"redaction-retry": RedactionRetry,
+		"redaction-sweep": RedactionSweep,
 	}
 }

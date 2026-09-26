@@ -618,6 +618,102 @@ paths:
       summary: Direct-write a batch of audit entries (AL-6)
       tags:
       - Ingest
+  /internal/audit/events:
+    get:
+      description: For compliance/verification service callers (iam-system role).
+        tenant_id is required and bound to app.tenant_id, so RLS still applies and
+        there is no cross-tenant read. There is no plan-window clamp (§5.4); window_clamped
+        is always false and effective_from is the lower bound applied. The filter,
+        limit and cursor contract is the same as AL-1. An archived range over ARCHIVE_SYNC_MAX_ROWS
+        / ARCHIVE_SYNC_MAX_BYTES returns 422 range_too_large; narrow from/to (decision
+        D-14).
+      parameters:
+      - description: tenant whose trail is read (UUID)
+        in: query
+        name: tenant_id
+        required: true
+        type: string
+      - description: occurred_at lower bound (RFC 3339; default unbounded)
+        in: query
+        name: from
+        type: string
+      - description: occurred_at upper bound (RFC 3339; default now)
+        in: query
+        name: to
+        type: string
+      - collectionFormat: multi
+        description: entry type (repeatable)
+        in: query
+        items:
+          type: string
+        name: entry_type
+        type: array
+      - description: actor UUID
+        in: query
+        name: actor_id
+        type: string
+      - description: user | service_account | iam_system | anonymous
+        in: query
+        name: actor_type
+        type: string
+      - description: target type
+        in: query
+        name: target_type
+        type: string
+      - description: target id (requires target_type)
+        in: query
+        name: target_id
+        type: string
+      - description: source service
+        in: query
+        name: source_service
+        type: string
+      - description: compliance_7y | security_3y | access_90d
+        in: query
+        name: retention_tier
+        type: string
+      - description: page size (default 100, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: opaque keyset cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.EventsResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: missing_identity_headers
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: forbidden_peer
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "422":
+          description: range_too_large
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Mesh-only provenance read (AL-7)
+      tags:
+      - Internal
 securityDefinitions:
   IdempotencyKey:
     description: Required on AL-5/AL-6; becomes the entry's source_event_id (LLD §5.4).
