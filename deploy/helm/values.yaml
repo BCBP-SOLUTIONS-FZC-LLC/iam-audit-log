@@ -93,6 +93,13 @@ serverEnv:
   EXPORT_SIGNED_URL_TTL: "168h"
   INGEST_BATCH_RATE_LIMIT_RPS: "10"     # AL-6 per-tenant bucket (D-5)
   INGEST_BATCH_RATE_LIMIT_BURST: "20"
+  ARCHIVE_SYNC_MAX_ROWS: "10000"        # archived AL-1 read → 202 export above this (D-10)
+  ARCHIVE_SYNC_MAX_BYTES: "52428800"    # 50 MiB (D-10)
+  EXPORT_DOWNLOAD_URL_TTL: "15m"        # fresh presigned URL per AL-4 poll (D-11)
+  EXPORT_RATE_LIMIT_PER_MINUTE: "10"    # AL-3 per-tenant bucket (§10.5)
+  EXPORT_RATE_LIMIT_BURST: "5"
+  EXPORT_POLL_INTERVAL: "5s"            # export worker claim poll (D-2)
+  EXPORT_JOB_LEASE: "15m"               # running-job lease; heartbeated at lease/3
   DOCS_ENABLED: "false"
 
 # Reconciler-only env.

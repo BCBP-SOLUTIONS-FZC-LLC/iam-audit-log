@@ -174,6 +174,112 @@ definitions:
       trace_id:
         type: string
     type: object
+  http.EventDTO:
+    properties:
+      action:
+        example: granted
+        type: string
+      actor:
+        $ref: '#/definitions/http.ActorDTO'
+      entry_type:
+        example: membership.department.granted
+        type: string
+      id:
+        type: string
+      ip_address:
+        type: string
+      metadata:
+        type: object
+      occurred_at:
+        type: string
+      retention_tier:
+        example: compliance_7y
+        type: string
+      source_event_type:
+        type: string
+      source_service:
+        example: iam-org-membership
+        type: string
+      target:
+        $ref: '#/definitions/http.TargetDTO'
+      trace_id:
+        type: string
+    type: object
+  http.EventsResponse:
+    properties:
+      effective_from:
+        type: string
+      events:
+        items:
+          $ref: '#/definitions/http.EventDTO'
+        type: array
+      next_cursor:
+        type: string
+      window_clamped:
+        type: boolean
+    type: object
+  http.ExportAcceptedResponse:
+    properties:
+      export_id:
+        type: string
+      status:
+        example: pending
+        type: string
+      status_url:
+        example: /api/v1/audit/exports/0192…
+        type: string
+    type: object
+  http.ExportFilterRequest:
+    properties:
+      actor_id:
+        type: string
+      actor_type:
+        type: string
+      entry_type:
+        items:
+          type: string
+        type: array
+      from:
+        type: string
+      retention_tier:
+        type: string
+      source_service:
+        type: string
+      target_id:
+        type: string
+      target_type:
+        type: string
+      to:
+        type: string
+    type: object
+  http.ExportStatusResponse:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      download_url:
+        type: string
+      download_url_expires_at:
+        type: string
+      error:
+        example: internal_error
+        type: string
+      expires_at:
+        type: string
+      export_id:
+        type: string
+      row_count:
+        type: integer
+      status:
+        enum:
+        - pending
+        - running
+        - ready
+        - failed
+        - expired
+        type: string
+    type: object
   http.TargetDTO:
     properties:
       id:
@@ -198,6 +304,223 @@ info:
   title: IAM Audit Log API
   version: "0.1"
 paths:
+  /audit/events:
+    get:
+      description: Keyset-paginated (occurred_at DESC, id DESC) search within the
+        plan window (AL-INV-8). A range older than the window is clamped (window_clamped=true,
+        effective_from). Archived months are read from S3 when the estimate is within
+        ARCHIVE_SYNC_MAX_ROWS / ARCHIVE_SYNC_MAX_BYTES; otherwise an export is created
+        and 202 returned (decision D-10).
+      parameters:
+      - description: occurred_at lower bound (RFC 3339)
+        in: query
+        name: from
+        type: string
+      - description: occurred_at upper bound (RFC 3339; default now)
+        in: query
+        name: to
+        type: string
+      - collectionFormat: multi
+        description: entry type (repeatable)
+        in: query
+        items:
+          type: string
+        name: entry_type
+        type: array
+      - description: actor UUID
+        in: query
+        name: actor_id
+        type: string
+      - description: user | service_account | iam_system | anonymous
+        in: query
+        name: actor_type
+        type: string
+      - description: target type
+        in: query
+        name: target_type
+        type: string
+      - description: target id (requires target_type)
+        in: query
+        name: target_id
+        type: string
+      - description: source service
+        in: query
+        name: source_service
+        type: string
+      - description: compliance_7y | security_3y | access_90d
+        in: query
+        name: retention_tier
+        type: string
+      - description: page size (default 100, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: opaque keyset cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.EventsResponse'
+        "202":
+          description: large archived range deferred to an export
+          schema:
+            $ref: '#/definitions/http.ExportAcceptedResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: missing_identity_headers
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: rate_limited (deferred export)
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Search the tenant's audit trail (AL-1)
+      tags:
+      - Audit
+  /audit/events/{id}:
+    get:
+      description: Within the caller's tenant (RLS) and plan window. An entry whose
+        month was archived is read from the tenant's archive object whose id range
+        holds it (BUILD_PLAN gap 32).
+      parameters:
+      - description: entry id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.EventDTO'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: audit_entry_not_found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Read one audit entry (AL-2)
+      tags:
+      - Audit
+  /audit/exports:
+    post:
+      consumes:
+      - application/json
+      description: Body is the AL-1 filter (all optional), clamped to the plan window.
+        Creates a pending job; poll AL-4. Rate-limited per tenant (§10.5).
+      parameters:
+      - description: filter
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/http.ExportFilterRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/http.ExportAcceptedResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Request an asynchronous export (AL-3)
+      tags:
+      - Audit
+  /audit/exports/{id}:
+    get:
+      description: When ready, download_url is a freshly presigned short-lived URL
+        (EXPORT_DOWNLOAD_URL_TTL) re-issued on every poll until expires_at (7 days,
+        decision D-11).
+      parameters:
+      - description: export id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.ExportStatusResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: export_not_found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Poll an export job (AL-4)
+      tags:
+      - Audit
   /internal/audit-entries:
     post:
       consumes:

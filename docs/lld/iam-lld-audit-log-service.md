@@ -39,6 +39,7 @@
 | Revision | 0.18 (2026-09-25): **AL-Q14 resolved — User Profile confirms the fan-out reading (rev 0.54, §8.7a); `user-audit-q` volume sizing is updated accordingly.** User Profile's internal contradiction (rev 0.2's finding) is settled: `TenantOffboarded` **does** make User Profile emit one `UserDeleted` per scrubbed user, plus up to one `UserAvailabilityChanged` per delegator whose pointer is cleared by the scrub — at most **2N** events on `iam.user.events` for an N-user tenant, sent as fast as User Profile's own outbox drains. `user-audit-q` is unfiltered and receives all of them, exactly as this document already assumed defensively. §6 and §13's sizing prose are updated: the platform's ~5,000 events/day baseline (HLD §14.1) should be read as a steady-state figure, not a hard ceiling — a large tenant's offboarding is a legitimate burst of up to 2× its user count landing in a short window, on top of that baseline. This changes no design: the ledger/redelivery/dedup mechanism and SQS-driven replica scaling already absorb a burst of this shape regardless of its cause (§16's original AL-Q14 framing — "No, a volume spike is absorbed by the ledger/redelivery design regardless" — was already correct); this revision only replaces an open sizing question with a confirmed, larger number to design against. §16 AL-Q14 moves from Open to **Resolved**. No schema, API, retention-tier, or invariant changed. |
 | Revision | 0.19 (2026-09-25): **Pod labels published for Catalog's NetworkPolicy `podSelector` (closes their first ask); the per-environment rollout-notification ask is recorded as a coordination item, not a document fact this LLD can assert.** (1) **Pod labels:** this service's Helm chart (`helm/templates/deployment.yaml`) labels its pods `app.kubernetes.io/name: iam-audit-log` and `app.kubernetes.io/instance: iam-audit-log` — the standard Helm-chart convention, published here so Catalog (and any future caller) can scope an egress/ingress `podSelector` to this service specifically rather than the whole `iam` namespace. As a not-yet-built service, this LLD is normative for the chart, not a description of one already written. (2) **Environment rollout:** which environments currently have this service deployed and reachable is live rollout status, not a design fact — this document cannot assert it. Recorded instead as a standing coordination obligation: whoever operates this service's rollout notifies Catalog per environment as it goes live, since Catalog's `IAMCatalogAdminAuditDeliveryStalled` alert fires in any environment where delivery is enabled but this service isn't yet reachable — an expected, not a real, incident until that notification happens. §13 and §18.2 updated. No schema, API, or invariant changed. |
 | Revision | 0.20 (2026-09-25): **Full re-audit of every open register item against the current text of all ten sibling LLDs and the parent HLD, as requested.** **AL-Q13 fully resolved (closed outright):** Catalog's own LLD (v1.41, **CAT-D15**) has shipped `plans.audit_query_window_days` — a typed `int NOT NULL CHECK (audit_query_window_days > 0)` column, seeded exactly **Starter 365 / Pro 1095 / Enterprise 2555**, served on CAT-I2 alongside `code` — precisely the field-shape this document's §4.2 `tenant_plan_window` design and HLD §6.6 required, and precisely what AL-D15's CAT-I2 poller (rev 0.17) already reads. Catalog's own changelog states this "clos[es] the last open item of Audit LLD AL-Q13" — confirmed from this side too; the narrowed remainder tracked since rev 0.14 is answered, not merely re-confirmed, and AL-Q13's "Blocks" answer drops from Possibly to **No**. No design change: §4.2/§5.4/AL-D15 already specified consuming this exact field. **AL-Q9 updated, stays Open:** the parent HLD file's own header has advanced to **v1.48**, and its changelog's terminal entry (also **v1.48**, dated September 2026 — the same entry that lands AL-Q2/AL-Q3, rev 0.4) now matches the header, so the header/changelog internal contradiction this question originally flagged (header 1.47 vs. terminal entries 1.44/1.43) has resolved itself. The underlying platform-wide gap has not: a fresh check of all ten sibling LLDs' own Base-HLD citations finds the same spread as before (v1.39, v1.41 ×5, v1.42, v1.44, v1.45) — **none cite v1.48** either, so no sibling has caught up to the header regardless of which number the header carries. This document continues grounding itself on the v1.47 content read at rev 0.1 (§5.7, §9.4, §13.3 confirmed stable through 1.48); AL-Q9 remains Open, owned by the HLD maintainer. **AL-Q14 independently re-verified:** read User Profile's own LLD (rev 0.54, §8.7a) directly rather than relying solely on the relayed summary — the text matches exactly what rev 0.18 recorded (up to 2N events on `iam.user.events` per N-user tenant offboarding); no correction needed, resolution stands as-is. **AL-Q1/AL-Q4/AL-Q5 reconfirmed Deferred:** swept all ten sibling LLDs for any of the three stated revisit triggers — a customer jurisdiction demanding log-level non-repudiation (AL-Q1), a producer unable to retry locally (AL-Q4), or a high-QPS "recent activity" read path (AL-Q5) — none found; all three stay Deferred exactly as specified, no revisit condition met. **No other stray cross-references found:** Delegation, Group Mapping, Tender ACL, and AuthZ Enrichment's own current LLD text were checked directly for any Audit-Log-relevant change beyond what prior revisions already captured; AuthZ Enrichment's own AE-32 (v1.23) independently confirms the HLD's three-type `tender.events` catalog this document's §18.1 `tender-audit-q` design already matches exactly, with no discrepancy on either side. §7.1 (intro paragraph), §7.4 (AL-D1 rationale), the sibling cross-reference table (§1), §16 (AL-Q9, AL-Q13), and the closing "resolved-by-this-document" / "End of document" paragraphs updated to reflect AL-Q13's closure and AL-Q9's refreshed numbers. **Housekeeping:** the header `Version` field, stale at `0.15` since rev 0.16 advanced the revision log independently, is corrected to `0.20`. No schema, API, retention-tier, or invariant changed. |
+| Revision | 0.21 (2026-09-26): **Per-object archive manifest `audit_archive_objects` added (implementation Phase 4; BUILD_PLAN gap 29, decisions D-10/D-12).** `audit_event_archive_state` is per partition × tier. It cannot estimate one tenant's archived-read size, locate that tenant's objects, or find the object that holds a given entry id. The new tenant-scoped, RLS-protected table (§4.2) has one row per archived S3 object: tier, tenant, month, part, row/byte counts, `occurred_at` and id ranges, and SHA-256. The archive key scheme becomes per tier **and tenant** (§15.4, §25), so an archived read touches only the caller's own objects. The hot/archived boundary is partition existence, not a fixed 90-day cut. The reconciler writes the manifest during archival (§8.5); the query path only reads it (AL-1 size estimate and 202 deferral, AL-2 archived lookup by id range, AL-3 export). |
 
 > **Revision 0.1 note — parent HLD version.** The staged parent file is named `iam-hld-tender-saas-v1.41.md` but its header declares **Version 1.47** ("Approved for LLD"), and its changelog's terminal substantive entries are **v1.44** (Event Consumer realm→tenant map; queue count) and **v1.43** (credential/MFA events promoted to bus events). This LLD grounds every claim in the **content as read (v1.47)** and cites HLD section numbers as they appear in that file. Where a reader's copy is labelled v1.44, the sections this LLD relies on (§5.7, §6.6, §9.1, §9.4, §13.3) are stable across 1.43→1.47. This discrepancy is recorded, not resolved here (see **AL-Q9**).
 
@@ -355,6 +356,23 @@ erDiagram
         timestamptz dropped_at
         text error
     }
+    AUDIT_ARCHIVE_OBJECTS {
+        text partition_name PK "composite PK (partition, tier, tenant, part)"
+        audit_retention_tier retention_tier PK
+        uuid tenant_id PK "RLS scope"
+        int part PK "NNNN in the object key"
+        date period_month
+        text s3_bucket
+        text s3_key "{tier}/{tenant_id}/{yyyy}/{mm}/audit_events_{yyyy}_{mm}-part-NNNN.jsonl.gz"
+        bigint row_count
+        bigint byte_size "uncompressed JSONL bytes"
+        timestamptz min_occurred_at
+        timestamptz max_occurred_at
+        uuid min_id "id range of the object's rows"
+        uuid max_id
+        text sha256 "object body checksum"
+        timestamptz created_at
+    }
     PROCESSED_EVENTS {
         text event_id PK "envelope id / idempotency key; composite PK"
         text consumer PK "inbound-queue discriminator; composite PK"
@@ -393,6 +411,7 @@ erDiagram
         text error
     }
     AUDIT_EVENTS ||..o{ AUDIT_EVENT_ARCHIVE_STATE : "monthly partition archived as (soft ref, not FK)"
+    AUDIT_EVENT_ARCHIVE_STATE ||..o{ AUDIT_ARCHIVE_OBJECTS : "per-tenant objects of a (partition, tier) (soft ref, not FK; rev 0.21)"
     AUDIT_EVENTS ||..o{ AUDIT_REDACTION_TASKS : "subject_actor_id matches actor_id (soft ref, not FK; rev 0.3)"
 ```
 
@@ -514,6 +533,44 @@ CREATE INDEX idx_archive_state_status ON audit_event_archive_state (status, peri
 
 Not partitioned, not tenant-scoped (archival is per-partition across all tenants — a compliance operation), **RLS-exempt**, and reachable only by the `audit_reconciler` role. `access_90d` rows are recorded here with `status='expired'` at partition-drop time (they are dropped with the hot partition and never written to S3 — §15.4); `security_3y` and `compliance_7y` rows progress `pending → archiving → archived → verified`, and the partition is dropped (`dropped`) only once **every** retained-tier row for it is `verified` (AL-INV-9).
 
+#### `audit_archive_objects` (per-object archive manifest — added rev 0.21)
+
+```sql
+CREATE TABLE audit_archive_objects (
+    partition_name  text NOT NULL,                       -- audit_events_YYYY_MM
+    retention_tier  audit_retention_tier NOT NULL,
+    tenant_id       uuid NOT NULL,                       -- RLS scope
+    part            int  NOT NULL,                       -- NNNN in the key
+    period_month    date NOT NULL,                       -- first day of the month
+    s3_bucket       text NOT NULL,
+    s3_key          text NOT NULL,                       -- {tier}/{tenant_id}/{yyyy}/{mm}/audit_events_{yyyy}_{mm}-part-NNNN.jsonl.gz
+    row_count       bigint NOT NULL,
+    byte_size       bigint NOT NULL,                     -- uncompressed JSONL bytes (size-estimate basis)
+    min_occurred_at timestamptz NOT NULL,
+    max_occurred_at timestamptz NOT NULL,
+    min_id          uuid NOT NULL,                       -- id range of the object's rows (UUIDv7 ≈ recorded order)
+    max_id          uuid NOT NULL,
+    sha256          text NOT NULL,                       -- checksum of the object body (verification, §15.4)
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT audit_archive_objects_pkey PRIMARY KEY (partition_name, retention_tier, tenant_id, part),
+    CONSTRAINT uq_archive_objects_key UNIQUE (s3_bucket, s3_key),
+    CONSTRAINT chk_archive_objects_counts CHECK (row_count >= 0 AND byte_size >= 0 AND part >= 0),
+    CONSTRAINT chk_archive_objects_ranges CHECK (min_occurred_at <= max_occurred_at AND min_id <= max_id)
+);
+CREATE INDEX idx_archive_objects_tenant_month ON audit_archive_objects (tenant_id, period_month);
+CREATE INDEX idx_archive_objects_tenant_ids   ON audit_archive_objects (tenant_id, min_id, max_id);
+```
+
+This is the per-object complement to `audit_event_archive_state`, which tracks one row per (partition, tier). Archive objects are split by tenant as well as tier and month (§15.4), so each manifest row belongs to exactly one tenant. The table is therefore **tenant-scoped and RLS-protected** (`FORCE`, `tenant_isolation`, §4.3), just like `audit_events`.
+
+- **Writer.** `cmd/reconciler`'s archival step (§8.5) runs as `audit_reconciler` and has `SELECT, INSERT`. It inserts one row per object it uploads, in the same transaction that moves the (partition, tier) row to `archived`. Verification (§15.4) re-reads each object and checks it against `sha256`.
+- **Reader.** `audit_app` has `SELECT` only and reads under the caller's `app.tenant_id`.
+- **Hot/archived boundary.** A row is only considered once its `partition_name` no longer exists, i.e. the partition was dropped after AL-INV-9. So every month is read from exactly one place, RDS or S3, and never counted twice.
+- **Query-path uses:**
+  1. **AL-1 size estimate.** The summed `row_count`/`byte_size` of the tenant's objects in range, compared against `ARCHIVE_SYNC_MAX_ROWS` / `ARCHIVE_SYNC_MAX_BYTES` (§12). Above either bound the read becomes an AL-3 export and returns `202` (§5.4). The estimate is an upper bound, because content filters can only be applied after reading.
+  2. **Locating objects.** Finding the tenant's objects for the queried months and tiers, via `min_occurred_at`/`max_occurred_at`.
+  3. **AL-2 lookup of an archived entry.** Only the objects whose `[min_id, max_id]` contains the id are read. Ids are UUIDv7, minted at ingest, so an object's range is tight around its month. Only late arrivals widen it.
+
 #### `processed_events` (consumer idempotency, HLD §9.3)
 
 ```sql
@@ -587,7 +644,7 @@ Not partitioned, not RLS-scoped (like `audit_event_archive_state`, this is a cro
 
 ### 4.3 Row-Level Security
 
-`audit_events`, `audit_export_jobs`, and the `tenant_plan_window` read on the query path are tenant-scoped; the platform RLS pattern (User Profile §4.3, O&M RLS-1/RLS-6) is reused verbatim. RLS is enforced on the **partitioned parent**; PostgreSQL applies the parent policy to every partition, so new monthly partitions inherit isolation automatically (verified by CI — MIG-4 analogue, §14).
+`audit_events`, `audit_export_jobs`, `audit_archive_objects` (rev 0.21, same `tenant_isolation` policy), and the `tenant_plan_window` read on the query path are tenant-scoped; the platform RLS pattern (User Profile §4.3, O&M RLS-1/RLS-6) is reused verbatim. RLS is enforced on the **partitioned parent**; PostgreSQL applies the parent policy to every partition, so new monthly partitions inherit isolation automatically (verified by CI — MIG-4 analogue, §14).
 
 ```sql
 ALTER TABLE audit_events      ENABLE ROW LEVEL SECURITY;
@@ -691,6 +748,7 @@ The grant model already prevents `audit_app` from issuing `UPDATE`/`DELETE`; the
 |---|---|---|---|---|
 | `audit_events` (+ monthly partitions) | Audit Log | yes | `FORCE`, `tenant_isolation` | append-only (INSERT+SELECT); DELETE only via reconciler partition lifecycle |
 | `audit_event_archive_state` | Audit Log | no (cross-tenant ops) | exempt | reconciler-only read/write |
+| `audit_archive_objects` (rev 0.21) | Audit Log | yes | `FORCE`, `tenant_isolation` | reconciler `INSERT`; `audit_app` `SELECT` (query path) |
 | `processed_events` | Audit Log | no | exempt | insert + prune |
 | `tenant_plan_window` | Audit Log (projection of Catalog `plans` + tenant/billing events) | keyed by tenant | exempt (single-row keyed read) | upsert from events |
 | `audit_export_jobs` | Audit Log | yes | `FORCE`, `tenant_isolation` | mutable job status |
@@ -1395,9 +1453,10 @@ A Starter-plan tenant's tender approvals are **stored** for 7 years (compliance)
 Archival mirrors the Realm Provisioner S3-export template (SSE-KMS, IRSA, fail-closed) applied to audit partitions. **Rev 0.3:** archival additionally checks `audit_redaction_tasks` before archiving any partition and skips (alarming) one that still carries a `pending` task (AL-INV-12, §8.5, §8.7) — a defensive backstop, since the primary guarantee is that redaction already ran, immediately, when the triggering `UserDeleted` event was consumed.
 
 - **Bucket** `iam-audit-archive` (distinct from RP's `iam-realm-exports`), SSE-KMS key `alias/iam-audit-archive`, **S3 Object Lock in compliance mode**, cross-region replicated to a compliance-isolated account (HLD §13.2).
-- **Object key scheme** — per tier prefix so a single S3 lifecycle rule governs each tier: `iam-audit-archive/{retention_tier}/{yyyy}/{mm}/audit_events-{partition}-part-NNNN.jsonl.gz`. Per-tier prefixes let Object-Lock retention + lifecycle expiration be set per tier (3 y vs 7 y) and let a windowed query read only the months + tiers it needs.
+- **Object key scheme** (rev 0.21) — per tier prefix, then tenant and month: `iam-audit-archive/{retention_tier}/{tenant_id}/{yyyy}/{mm}/audit_events_{yyyy}_{mm}-part-NNNN.jsonl.gz`. The per-tier prefix lets Object-Lock retention and lifecycle expiration be set per tier (3 y vs 7 y). Splitting by tenant means an interactive archived read touches only the caller's own objects: no other tenant's rows are ever read into application memory, outside RLS. Each object is recorded in `audit_archive_objects` (§4.2).
 - **Storage class / "Glacier after 90 days"** (HLD §5.7): archived objects are written to **S3 Glacier Instant Retrieval** (millisecond retrieval — keeps the plan-window queryable without a restore step, §8.4) and transitioned to **Glacier Deep Archive** near each tier's tail (rarely-queried old compliance records), per lifecycle rule. Objects are Object-Lock-retained for the tier duration, so lifecycle *expiration* cannot delete a compliance object early (§10.4).
 - **`audit_event_archive_state`** records, per `(partition, tier)`: row count, S3 prefix, object count, a SHA-256 manifest checksum, and the `pending→archiving→archived→verified→dropped` progression. **A hot partition is dropped only after every retained-tier row in it is `verified`** (AL-INV-9); `access_90d` rows are recorded `expired` and dropped with the partition, never archived.
+- **`audit_archive_objects`** (rev 0.21) records, per object: tenant, tier, month, part, row/byte counts, `occurred_at` and id ranges, and SHA-256. It is the query path's index into the archive (§4.2).
 - **Verification** re-reads the object manifest and compares the SHA-256 before marking `verified`; a mismatch blocks the drop and alarms (`iam_audit_log_archive_stalled`).
 
 ### 15.5 GDPR erasure vs. immutable compliance records (HLD §13.3)
@@ -1615,7 +1674,7 @@ Frozen on sign-off of this LLD. Names here are cross-service contracts; a siblin
 
 **Service & module.** Service `iam-audit-log`; Go module `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`; `ServiceName = "iam-audit-log"`; repo (HLD §15.2) `iam-audit-log`.
 
-**Database (`audit`) — tables.** `audit_events` (partitioned monthly, children `audit_events_YYYY_MM` + `audit_events_default`), `audit_event_archive_state`, `processed_events`, `tenant_plan_window`, `audit_export_jobs`, `audit_redaction_tasks` (rev 0.3), `rls_violation_log`, `schema_migrations`.
+**Database (`audit`) — tables.** `audit_events` (partitioned monthly, children `audit_events_YYYY_MM` + `audit_events_default`), `audit_event_archive_state`, `audit_archive_objects` (rev 0.21), `processed_events`, `tenant_plan_window`, `audit_export_jobs`, `audit_redaction_tasks` (rev 0.3), `rls_violation_log`, `schema_migrations`.
 
 **Enums.** `audit_retention_tier` {`compliance_7y`,`security_3y`,`access_90d`}; `audit_actor_type` {`user`,`service_account`,`iam_system`,`anonymous`}; `audit_ingest_mode` {`bus`,`direct_write`}; `audit_archive_status` {`pending`,`archiving`,`archived`,`verified`,`dropped`,`expired`,`failed`}; `audit_export_status` {`pending`,`running`,`ready`,`failed`,`expired`}; `audit_redaction_status` {`pending`,`applied`,`not_applicable`,`missed`} (rev 0.3).
 
@@ -1633,7 +1692,7 @@ Frozen on sign-off of this LLD. Names here are cross-service contracts; a siblin
 
 **`entry_type` vocabulary (frozen; §7.1).** `auth.login.success`, `auth.login.failure`, `auth.password.reset`, `auth.mfa.enrolled`, `auth.mfa.reset`, `auth.email.verified`; `user.provisioned`, `user.updated`, `user.availability.changed`, `user.deleted`; `membership.department.granted`, `membership.department.revoked`, `membership.department.level_changed`, `membership.role.granted`, `membership.role.revoked`, `membership.revoked`, `membership.purged`; `tender.assignee.overridden`, `tender.section.approved`, `tender.access.granted`, `tender.restricted`; `tenant.created`, `tenant.trial_started`, `tenant.trial_provisioned`, `tenant.realm_ready`, `tenant.converted`, `tenant.direct_paid_signup`, `tenant.trial_expired`, `tenant.trial_reactivated`, `tenant.suspended`, `tenant.offboarded`, `tenant.reactivated`, `tenant.plan_changed`, `tenant.payment_past_due`, `tenant.subscription_cancelled`, `tenant.owner_signed_up`, `tenant.state.changed`, `tenant.seat_overage.started`, `tenant.seat_overage.resolved`; `delegation.started`, `delegation.ended`, `delegation.review_requested`, `delegation.escalation_requested`; `serviceaccount.registered`, `serviceaccount.credential.issued`, `serviceaccount.credential.rotated`, `serviceaccount.credential.revoked`, `serviceaccount.revoked`; `usage.quota.warning`, `usage.quota.exceeded`; `workflow.task.created`, `workflow.task.sla_warning`, `workflow.task.sla_breached`, `workflow.task.deferred`, `workflow.task.reassigned`, `workflow.finished`, `workflow.template.published`; `config.tenant_setting.changed`, `config.idp.changed`, `config.department.created`, `config.department.updated`, `config.plan.updated`, `config.group_mapping.department_roles.changed`, `config.group_mapping.departments.changed`, `config.group_mapping.tenant_roles.changed`, `config.tender_acl.granted`, `config.tender_acl.revoked`, `config.tender_acl.cascade`; `invitation.created`, `invitation.revoked`, `invitation.expired`; `security.cross_tenant_access`; `<domain>.unknown` (fail-safe catch, AL-EVT-4).
 
-**S3 / KMS.** Bucket `iam-audit-archive`; KMS key alias `alias/iam-audit-archive`; archive key scheme `iam-audit-archive/{retention_tier}/{yyyy}/{mm}/audit_events-{partition}-part-NNNN.jsonl.gz`; export key scheme `iam-audit-archive/exports/{tenant_id}/{export_id}.jsonl.gz`; Object Lock mode `COMPLIANCE`.
+**S3 / KMS.** Bucket `iam-audit-archive`; KMS key alias `alias/iam-audit-archive`; archive key scheme `iam-audit-archive/{retention_tier}/{tenant_id}/{yyyy}/{mm}/audit_events_{yyyy}_{mm}-part-NNNN.jsonl.gz` (rev 0.21); export key scheme `iam-audit-archive/exports/{tenant_id}/{export_id}.jsonl.gz`; Object Lock mode `COMPLIANCE`.
 
 **Metric prefix (Tier-3).** `iam_audit_log_*` (see §11).
 

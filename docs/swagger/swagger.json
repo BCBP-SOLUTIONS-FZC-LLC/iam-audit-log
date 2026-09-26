@@ -15,6 +15,341 @@
     "host": "localhost:8080",
     "basePath": "/api/v1",
     "paths": {
+        "/audit/events": {
+            "get": {
+                "security": [
+                    {
+                        "TenantRoles": []
+                    },
+                    {
+                        "TenantID": []
+                    },
+                    {
+                        "UserID": []
+                    }
+                ],
+                "description": "Keyset-paginated (occurred_at DESC, id DESC) search within the plan window (AL-INV-8). A range older than the window is clamped (window_clamped=true, effective_from). Archived months are read from S3 when the estimate is within ARCHIVE_SYNC_MAX_ROWS / ARCHIVE_SYNC_MAX_BYTES; otherwise an export is created and 202 returned (decision D-10).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Audit"
+                ],
+                "summary": "Search the tenant's audit trail (AL-1)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "occurred_at lower bound (RFC 3339)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "occurred_at upper bound (RFC 3339; default now)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "multi",
+                        "description": "entry type (repeatable)",
+                        "name": "entry_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "actor UUID",
+                        "name": "actor_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "user | service_account | iam_system | anonymous",
+                        "name": "actor_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "target type",
+                        "name": "target_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "target id (requires target_type)",
+                        "name": "target_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "source service",
+                        "name": "source_service",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "compliance_7y | security_3y | access_90d",
+                        "name": "retention_tier",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size (default 100, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "opaque keyset cursor",
+                        "name": "cursor",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.EventsResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "large archived range deferred to an export",
+                        "schema": {
+                            "$ref": "#/definitions/http.ExportAcceptedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "missing_identity_headers",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "insufficient_permissions",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited (deferred export)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "dependency_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/audit/events/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "TenantRoles": []
+                    },
+                    {
+                        "TenantID": []
+                    },
+                    {
+                        "UserID": []
+                    }
+                ],
+                "description": "Within the caller's tenant (RLS) and plan window. An entry whose month was archived is read from the tenant's archive object whose id range holds it (BUILD_PLAN gap 32).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Audit"
+                ],
+                "summary": "Read one audit entry (AL-2)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "entry id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.EventDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "insufficient_permissions",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "audit_entry_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "dependency_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/audit/exports": {
+            "post": {
+                "security": [
+                    {
+                        "TenantRoles": []
+                    },
+                    {
+                        "TenantID": []
+                    },
+                    {
+                        "UserID": []
+                    }
+                ],
+                "description": "Body is the AL-1 filter (all optional), clamped to the plan window. Creates a pending job; poll AL-4. Rate-limited per tenant (§10.5).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Audit"
+                ],
+                "summary": "Request an asynchronous export (AL-3)",
+                "parameters": [
+                    {
+                        "description": "filter",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/http.ExportFilterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/http.ExportAcceptedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "insufficient_permissions",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "dependency_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/audit/exports/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "TenantRoles": []
+                    },
+                    {
+                        "TenantID": []
+                    },
+                    {
+                        "UserID": []
+                    }
+                ],
+                "description": "When ready, download_url is a freshly presigned short-lived URL (EXPORT_DOWNLOAD_URL_TTL) re-issued on every poll until expires_at (7 days, decision D-11).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Audit"
+                ],
+                "summary": "Poll an export job (AL-4)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "export id (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.ExportStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "insufficient_permissions",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "export_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "dependency_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/internal/audit-entries": {
             "post": {
                 "security": [
@@ -417,6 +752,162 @@
                 },
                 "trace_id": {
                     "type": "string"
+                }
+            }
+        },
+        "http.EventDTO": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "granted"
+                },
+                "actor": {
+                    "$ref": "#/definitions/http.ActorDTO"
+                },
+                "entry_type": {
+                    "type": "string",
+                    "example": "membership.department.granted"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "ip_address": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "retention_tier": {
+                    "type": "string",
+                    "example": "compliance_7y"
+                },
+                "source_event_type": {
+                    "type": "string"
+                },
+                "source_service": {
+                    "type": "string",
+                    "example": "iam-org-membership"
+                },
+                "target": {
+                    "$ref": "#/definitions/http.TargetDTO"
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.EventsResponse": {
+            "type": "object",
+            "properties": {
+                "effective_from": {
+                    "type": "string"
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.EventDTO"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
+                },
+                "window_clamped": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "http.ExportAcceptedResponse": {
+            "type": "object",
+            "properties": {
+                "export_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
+                },
+                "status_url": {
+                    "type": "string",
+                    "example": "/api/v1/audit/exports/0192…"
+                }
+            }
+        },
+        "http.ExportFilterRequest": {
+            "type": "object",
+            "properties": {
+                "actor_id": {
+                    "type": "string"
+                },
+                "actor_type": {
+                    "type": "string"
+                },
+                "entry_type": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "from": {
+                    "type": "string"
+                },
+                "retention_tier": {
+                    "type": "string"
+                },
+                "source_service": {
+                    "type": "string"
+                },
+                "target_id": {
+                    "type": "string"
+                },
+                "target_type": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
+        "http.ExportStatusResponse": {
+            "type": "object",
+            "properties": {
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "download_url": {
+                    "type": "string"
+                },
+                "download_url_expires_at": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string",
+                    "example": "internal_error"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "export_id": {
+                    "type": "string"
+                },
+                "row_count": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "running",
+                        "ready",
+                        "failed",
+                        "expired"
+                    ]
                 }
             }
         },

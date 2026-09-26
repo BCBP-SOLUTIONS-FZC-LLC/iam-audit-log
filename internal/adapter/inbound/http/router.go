@@ -47,7 +47,10 @@ type RouterConfig struct {
 	// BatchLimiter rate-limits AL-6 per tenant (§10.5, D-5); nil → unlimited.
 	BatchLimiter *TenantRateLimiter
 
-	// Audit mounts AL-1..AL-4 under /api/v1/audit (tenant_admin/owner).
+	// Query serves AL-1..AL-4 (nil → not mounted).
+	Query *QueryHandler
+
+	// Audit mounts extra routes under /api/v1/audit (tenant_admin/owner).
 	Audit RouteRegistrar
 	// Internal mounts AL-5..AL-7 under /api/v1/internal (mesh peers).
 	Internal RouteRegistrar
@@ -90,6 +93,12 @@ func NewRouter(cfg RouterConfig) *Router {
 	protected := append(gincommon.ProtectedMiddlewares(cfg.GinConfig), IdentityBridgeMiddleware(), RequireJSONContentType())
 
 	audit := r.Group("/api/v1/audit", append(protected, RequireAuditReader())...)
+	if cfg.Query != nil {
+		audit.GET("/events", cfg.Query.ListEvents)     // AL-1
+		audit.GET("/events/:id", cfg.Query.GetEvent)   // AL-2
+		audit.POST("/exports", cfg.Query.CreateExport) // AL-3 (rate-limited in-handler, §10.5)
+		audit.GET("/exports/:id", cfg.Query.GetExport) // AL-4
+	}
 	if cfg.Audit != nil {
 		cfg.Audit(audit)
 	}

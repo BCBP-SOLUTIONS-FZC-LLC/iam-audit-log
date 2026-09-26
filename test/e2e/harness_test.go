@@ -27,13 +27,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/http"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
+	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/fixtures"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
@@ -43,6 +48,8 @@ import (
 const (
 	e2eMaxBatch   = 5
 	e2eBatchBurst = 3
+	// e2eExportBurst is generous: the suite asserts AL-3 behavior, not its limiter.
+	e2eExportBurst = 20
 
 	tenantA     = "11111111-1111-1111-1111-111111111111"
 	tenantB     = "22222222-2222-2222-2222-222222222222"
@@ -63,6 +70,18 @@ func (f pingerFunc) Health(ctx context.Context) error { return f(ctx) }
 
 func newE2EEnv(t *testing.T) *e2eEnv {
 	t.Helper()
+	return newE2EEnvWithS3(t, nil)
+}
+
+// e2eBucket is the archive/export bucket scripts/init-floci.sh creates.
+const e2eBucket = "iam-audit-archive"
+
+// newE2EEnvWithS3 additionally mounts the real AL-1..AL-4 stack (query
+// service, export service + in-process worker, as cmd/server wires it,
+// decision D-2). awsCfg nil → an S3 client pointed at an unreachable
+// endpoint: fine for tests that never archive or export.
+func newE2EEnvWithS3(t *testing.T, awsCfg *aws.Config) *e2eEnv {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	ctx := context.Background()
 	roles := fixtures.CreateRoles(t, fixtures.StartPostgres(t))
@@ -80,9 +99,39 @@ func newE2EEnv(t *testing.T) *e2eEnv {
 		id, err := uuid.NewV7()
 		return id.String(), err
 	}, 8192, e2eMaxBatch, nil)
+	newID := func() (string, error) {
+		id, err := uuid.NewV7()
+		return id.String(), err
+	}
+	cfgS3 := aws.Config{Region: "ap-south-1", Credentials: credentials.NewStaticCredentialsProvider("test", "test", "")}
+	endpoint := "http://127.0.0.1:1"
+	if awsCfg != nil {
+		cfgS3, endpoint = *awsCfg, *awsCfg.BaseEndpoint
+	}
+	store := s3adapter.New(awss3.NewFromConfig(cfgS3, func(o *awss3.Options) {
+		o.BaseEndpoint, o.UsePathStyle = &endpoint, true
+	}), e2eBucket, "")
+	reader := pgadapter.NewQueryRepository(pool)
+	query := service.NewQueryService(reader, store, service.QueryConfig{
+		DefaultWindowDays: 365, SyncMaxRows: 10000, SyncMaxBytes: 50 << 20,
+	}, nil)
+	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, store, store, query, newID,
+		service.ExportConfig{
+			SignedURLTTL: 7 * 24 * time.Hour, DownloadURLTTL: 15 * time.Minute,
+			PollInterval: 200 * time.Millisecond, Lease: time.Minute, WorkDir: t.TempDir(),
+		}, nil)
+	workerCtx, stopWorker := context.WithCancel(ctx)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		exports.Run(workerCtx)
+	}()
+	t.Cleanup(func() { stopWorker(); <-workerDone }) // LIFO: before pool.Close
+
 	router := httpadapter.NewRouter(httpadapter.RouterConfig{
 		GinConfig:    ginCfg,
 		Ingest:       httpadapter.NewIngestHandler(ingest),
+		Query:        httpadapter.NewQueryHandler(query, exports, httpadapter.NewTenantRateLimiterPerMinute(60, e2eExportBurst)),
 		BatchLimiter: httpadapter.NewTenantRateLimiter(1, e2eBatchBurst),
 		Docs:         httpadapter.DocsConfig{Environment: "test"},
 		Ready: map[string]httpadapter.Pinger{

@@ -17,8 +17,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsglue "github.com/aws/aws-sdk-go-v2/service/glue"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,6 +31,7 @@ import (
 	glueadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/glue"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
+	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 
@@ -132,9 +135,15 @@ func run() int {
 	ingest := service.NewIngestService(pgadapter.NewAuditRepository(pool), newUUIDv7,
 		cfg.MaxMetadataBytes, cfg.MaxIngestBatch, log)
 
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
+	if err != nil {
+		log.Error("load aws config", map[string]any{"error": err.Error()})
+		return 1
+	}
+
 	// ── 3d. SQS consumer fleet (LLD §7.1) — one platform-events consumer per
 	// inbound queue, all converging on the same ingest path (AL-INV-2).
-	fleet, err := buildFleet(ctx, cfg, ingest.WithBus(service.BusIngestConfig{
+	fleet, err := buildFleet(awsCfg, cfg, ingest.WithBus(service.BusIngestConfig{
 		Plans:             pgadapter.NewPlanWindowRepository(pool),
 		DefaultWindowDays: cfg.DefaultQueryWindowDays,
 	}), log)
@@ -147,10 +156,36 @@ func run() int {
 	})
 	log.Info("consumer fleet started", map[string]any{"consumers": fleet.Len()})
 
+	// ── 3e. Query + export (LLD §5.4 AL-1..AL-4; decisions D-2, D-10..D-12).
+	// The export worker runs here as audit_app and claims jobs through the
+	// claim_export_job() definer function (D-2).
+	store := buildStore(awsCfg, cfg)
+	reader := pgadapter.NewQueryRepository(pool)
+	query := service.NewQueryService(reader, store, service.QueryConfig{
+		DefaultWindowDays: cfg.DefaultQueryWindowDays,
+		SyncMaxRows:       cfg.ArchiveSyncMaxRows,
+		SyncMaxBytes:      cfg.ArchiveSyncMaxBytes,
+	}, log)
+	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, store, store, query, newUUIDv7,
+		service.ExportConfig{
+			SignedURLTTL:   cfg.ExportSignedURLTTL,
+			DownloadURLTTL: cfg.ExportDownloadURLTTL,
+			PollInterval:   cfg.ExportPollInterval,
+			Lease:          cfg.ExportJobLease,
+			WorkDir:        cfg.ExportWorkDir,
+		}, log)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		exports.Run(ctx)
+	}()
+
 	// ── 4. Router ─────────────────────────────────────────────────────────
 	router := httpadapter.NewRouter(httpadapter.RouterConfig{
-		GinConfig:    ginCfg,
-		Ingest:       httpadapter.NewIngestHandler(ingest),
+		GinConfig: ginCfg,
+		Ingest:    httpadapter.NewIngestHandler(ingest),
+		Query: httpadapter.NewQueryHandler(query, exports,
+			httpadapter.NewTenantRateLimiterPerMinute(cfg.ExportRateLimitPerMin, cfg.ExportRateLimitBurst)),
 		BatchLimiter: httpadapter.NewTenantRateLimiter(cfg.IngestBatchRateLimitRPS, cfg.IngestBatchRateLimitBurst),
 		Docs: httpadapter.DocsConfig{
 			Environment: cfg.AppEnv,
@@ -218,6 +253,7 @@ func run() int {
 		log.Error("consumer fleet stop error", map[string]any{"error": err.Error()})
 	}
 	cancelBackground()
+	<-workerDone // an interrupted export records its failure before the pool drains
 	if err := pool.DrainAndClose(shutdownCtx); err != nil {
 		log.Error("pool drain error", map[string]any{"error": err.Error()})
 	}
@@ -233,16 +269,12 @@ const consumerConcurrency = 4
 // is the only place a raw *sqs.Client is built (arch-lint), solely to hand
 // to events.NewSQSConsumerWithClient; the Glue codec resolves schema
 // versions read-only (glue:GetSchemaVersion, §7.3.1).
-func buildFleet(ctx context.Context, cfg config.Server, ingest consumer.BusIngester, log interface {
+func buildFleet(awsCfg aws.Config, cfg config.Server, ingest consumer.BusIngester, log interface {
 	Debug(string, map[string]any)
 	Info(string, map[string]any)
 	Warn(string, map[string]any)
 	Error(string, map[string]any)
 }) (*consumer.Fleet, error) {
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
-	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
-	}
 	var sqsOpts []func(*sqs.Options)
 	glueOpts := []func(*awsglue.Options){func(o *awsglue.Options) { o.Region = cfg.GlueRegistryRegion }}
 	if cfg.AWSEndpoint != "" {
@@ -267,6 +299,21 @@ func buildFleet(ctx context.Context, cfg config.Server, ingest consumer.BusInges
 	return consumer.NewFleet(queues, build, codec, metrics.Consumer{},
 		func(q consumer.Queue) events.Handler { return consumer.Handler(q, ingest) },
 		events.WithVisibilityTimeout(cfg.SQSVisibilityTimeout))
+}
+
+// buildStore wires the S3 archive/export adapter. Against an emulator
+// endpoint (AWS_ENDPOINT_URL — floci/LocalStack) it uses path-style
+// addressing and omits SSE-KMS, which the emulator has no key for; in AWS
+// every export is SSE-KMS encrypted with AUDIT_ARCHIVE_KMS_KEY (§5.4).
+func buildStore(awsCfg aws.Config, cfg config.Server) *s3adapter.Store {
+	kmsKey := cfg.ArchiveKMSKey
+	var opts []func(*awss3.Options)
+	if cfg.AWSEndpoint != "" {
+		ep := cfg.AWSEndpoint
+		opts = append(opts, func(o *awss3.Options) { o.BaseEndpoint = &ep; o.UsePathStyle = true })
+		kmsKey = ""
+	}
+	return s3adapter.New(awss3.NewFromConfig(awsCfg, opts...), cfg.ArchiveBucket, kmsKey)
 }
 
 // newUUIDv7 mints audit_events.id (UUIDv7: recorded order within a

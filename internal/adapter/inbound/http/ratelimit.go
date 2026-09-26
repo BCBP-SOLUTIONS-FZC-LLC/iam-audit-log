@@ -26,6 +26,15 @@ func NewTenantRateLimiter(rps, burst int) *TenantRateLimiter {
 	return &TenantRateLimiter{buckets: map[string]*rate.Limiter{}, rps: rate.Limit(rps), burst: burst}
 }
 
+// NewTenantRateLimiterPerMinute allows perMinute sustained with the given
+// burst per tenant (AL-3 export creation, §10.5).
+func NewTenantRateLimiterPerMinute(perMinute, burst int) *TenantRateLimiter {
+	return &TenantRateLimiter{buckets: map[string]*rate.Limiter{}, rps: rate.Limit(float64(perMinute) / 60), burst: burst}
+}
+
+// Allow consumes one token from tenant's bucket.
+func (l *TenantRateLimiter) Allow(tenant string) bool { return l.bucket(tenant).Allow() }
+
 func (l *TenantRateLimiter) bucket(tenant string) *rate.Limiter {
 	l.mu.Lock()
 	defer l.mu.Unlock()

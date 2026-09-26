@@ -94,6 +94,20 @@ type Server struct {
 	// addition).
 	IngestBatchRateLimitRPS   int
 	IngestBatchRateLimitBurst int
+
+	// Archived-read sync bounds (decision D-10): an archived AL-1 read
+	// estimated above either bound becomes an export (202).
+	ArchiveSyncMaxRows  int64
+	ArchiveSyncMaxBytes int64
+
+	// Export API + worker (LLD §5.4 AL-3/AL-4; decisions D-2, D-11 — LLD
+	// §12 additions).
+	ExportDownloadURLTTL  time.Duration // per-poll presigned URL lifetime (D-11)
+	ExportRateLimitPerMin int           // AL-3 per-tenant bucket (§10.5)
+	ExportRateLimitBurst  int
+	ExportPollInterval    time.Duration
+	ExportJobLease        time.Duration
+	ExportWorkDir         string // "" → os.TempDir()
 }
 
 // Reconciler is cmd/reconciler's configuration (archival, partitions, prune).
@@ -158,6 +172,15 @@ func LoadServer(buildVersion string) (Server, error) {
 
 		IngestBatchRateLimitRPS:   envInt("INGEST_BATCH_RATE_LIMIT_RPS", 10),
 		IngestBatchRateLimitBurst: envInt("INGEST_BATCH_RATE_LIMIT_BURST", 20),
+
+		ArchiveSyncMaxRows:    int64(envInt("ARCHIVE_SYNC_MAX_ROWS", 10000)),
+		ArchiveSyncMaxBytes:   int64(envInt("ARCHIVE_SYNC_MAX_BYTES", 50<<20)),
+		ExportDownloadURLTTL:  envDuration("EXPORT_DOWNLOAD_URL_TTL", 15*time.Minute),
+		ExportRateLimitPerMin: envInt("EXPORT_RATE_LIMIT_PER_MINUTE", 10),
+		ExportRateLimitBurst:  envInt("EXPORT_RATE_LIMIT_BURST", 5),
+		ExportPollInterval:    envDuration("EXPORT_POLL_INTERVAL", 5*time.Second),
+		ExportJobLease:        envDuration("EXPORT_JOB_LEASE", 15*time.Minute),
+		ExportWorkDir:         os.Getenv("EXPORT_WORK_DIR"),
 	}
 	for _, q := range InboundQueues() {
 		q.URL = os.Getenv(q.EnvVar)
@@ -177,6 +200,12 @@ func LoadServer(buildVersion string) (Server, error) {
 				problems = append(problems, q.EnvVar+": inbound queue URL for "+q.Name+" is required outside dev (LLD §7.1)")
 			}
 		}
+	}
+	if c.ExportJobLease < time.Minute || c.ExportJobLease > 24*time.Hour {
+		problems = append(problems, "EXPORT_JOB_LEASE: must be between 1m and 24h (claim_export_job bound)")
+	}
+	if c.ExportDownloadURLTTL > 7*24*time.Hour {
+		problems = append(problems, "EXPORT_DOWNLOAD_URL_TTL: must not exceed 168h (SigV4 presign limit)")
 	}
 	problems = append(problems, validateCommon(c.Common)...)
 	return c, joinProblems(problems)
