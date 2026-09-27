@@ -20,6 +20,41 @@ type IngestService struct {
 	maxBatch    int
 	log         port.Logger
 	bus         *BusIngestConfig
+	metrics     port.IngestMetrics
+}
+
+// WithMetrics enables the write-path metrics (LLD §11).
+func (s *IngestService) WithMetrics(m port.IngestMetrics) *IngestService {
+	s.metrics = m
+	return s
+}
+
+// observe records one persisted-or-replayed entry.
+func (s *IngestService) observe(e domain.AuditEntry, created bool, consumer string) {
+	if s.metrics == nil {
+		return
+	}
+	if created {
+		s.metrics.Ingested(e)
+	} else {
+		s.metrics.Duplicate(consumer)
+	}
+}
+
+// directWriteResult classifies an AL-5/AL-6 entry outcome for
+// directwrite_requests_total (RB-6).
+func directWriteResult(created bool, err error) string {
+	var de *domain.Error
+	switch {
+	case err == nil && created:
+		return "created"
+	case err == nil:
+		return "duplicate"
+	case errors.As(err, &de) && de.Status() < 500:
+		return "rejected"
+	default:
+		return "error"
+	}
 }
 
 // NewIngestService wires the service. maxMetadata is MAX_METADATA_BYTES and
@@ -33,7 +68,14 @@ func (s *IngestService) MaxBatch() int { return s.maxBatch }
 
 // DirectWrite validates and persists one AL-5 entry. created=false means an
 // idempotent replay of an already-persisted entry (LLD §5.4 → 200).
-func (s *IngestService) DirectWrite(ctx context.Context, cmd domain.DirectWriteCommand) (domain.AuditEntry, bool, error) {
+func (s *IngestService) DirectWrite(ctx context.Context, cmd domain.DirectWriteCommand) (stored domain.AuditEntry, created bool, err error) {
+	if s.metrics != nil {
+		defer func() { s.metrics.DirectWrite(cmd.SourceService, directWriteResult(created, err)) }()
+	}
+	return s.directWrite(ctx, cmd)
+}
+
+func (s *IngestService) directWrite(ctx context.Context, cmd domain.DirectWriteCommand) (domain.AuditEntry, bool, error) {
 	entry, err := domain.BuildDirectWriteEntry(cmd, s.maxMetadata)
 	if err != nil {
 		return domain.AuditEntry{}, false, err
@@ -47,6 +89,7 @@ func (s *IngestService) DirectWrite(ctx context.Context, cmd domain.DirectWriteC
 	if err != nil {
 		return domain.AuditEntry{}, false, err
 	}
+	s.observe(stored, created, domain.ConsumerDirectWrite)
 	if s.log != nil {
 		// IDs only — never metadata / payload at info level (LLD §11).
 		s.log.Info("direct-write entry ingested", map[string]any{

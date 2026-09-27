@@ -109,6 +109,11 @@ type Server struct {
 	ExportPollInterval    time.Duration
 	ExportJobLease        time.Duration
 	ExportWorkDir         string // "" → os.TempDir()
+
+	// Ops gauges from cmd/server (decision D-21, gaps 40/41).
+	OpsStatsInterval       time.Duration // OPS_STATS_INTERVAL
+	OpsStallGrace          time.Duration // OPS_ARCHIVE_STALL_GRACE: past eligibility before "stalled"
+	OpsRedactionPendingAge time.Duration // OPS_REDACTION_PENDING_AGE: pending longer than this is stuck
 }
 
 // Reconciler is cmd/reconciler's configuration (archival, partitions, prune).
@@ -198,6 +203,10 @@ func LoadServer(buildVersion string) (Server, error) {
 		ExportPollInterval:    envDuration("EXPORT_POLL_INTERVAL", 5*time.Second),
 		ExportJobLease:        envDuration("EXPORT_JOB_LEASE", 15*time.Minute),
 		ExportWorkDir:         os.Getenv("EXPORT_WORK_DIR"),
+
+		OpsStatsInterval:       envDuration("OPS_STATS_INTERVAL", time.Minute),
+		OpsStallGrace:          envDuration("OPS_ARCHIVE_STALL_GRACE", 48*time.Hour),
+		OpsRedactionPendingAge: envDuration("OPS_REDACTION_PENDING_AGE", 15*time.Minute),
 	}
 	for _, q := range InboundQueues() {
 		q.URL = os.Getenv(q.EnvVar)

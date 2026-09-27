@@ -83,7 +83,7 @@ func (c *Codec) Decode(ctx context.Context, _ string, encoded []byte) (json.RawM
 		return nil, fmt.Errorf("glue codec: decode payload: %w", err)
 	}
 	if err := schema.Validate(inst); err != nil {
-		return nil, fmt.Errorf("glue codec: payload fails schema version %s: %w", versionID, err)
+		return nil, fmt.Errorf("glue codec: payload fails schema version %s: %s", versionID, violations(err))
 	}
 	return json.RawMessage(payload), nil
 }
@@ -153,4 +153,32 @@ func (c *Codec) schema(ctx context.Context, id string) (*jsonschema.Schema, erro
 	c.compiled[id] = s
 	c.mu.Unlock()
 	return s, nil
+}
+
+// violations renders a validation failure as instance locations plus the
+// failed schema keywords only. The validator's own messages quote payload
+// values (e.g. a non-matching email), and this error reaches logs via the
+// consumer's retry/DLQ path, so values must never appear in it (LLD §11 log
+// hygiene: IDs only, never payload).
+func violations(err error) string {
+	var ve *jsonschema.ValidationError
+	if !errors.As(err, &ve) {
+		return "invalid"
+	}
+	var out []string
+	var walk func(*jsonschema.ValidationError)
+	walk = func(e *jsonschema.ValidationError) {
+		if len(e.Causes) == 0 {
+			out = append(out, "/"+strings.Join(e.InstanceLocation, "/")+": "+strings.Join(e.ErrorKind.KeywordPath(), "/"))
+			return
+		}
+		for _, c := range e.Causes {
+			walk(c)
+		}
+	}
+	walk(ve)
+	if len(out) > 10 {
+		out = append(out[:10], fmt.Sprintf("… %d more", len(out)-10))
+	}
+	return strings.Join(out, "; ")
 }

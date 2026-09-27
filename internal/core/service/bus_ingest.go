@@ -71,6 +71,10 @@ func (s *IngestService) IngestBus(ctx context.Context, ev domain.BusEvent, consu
 	if err != nil {
 		return BusResult{}, err
 	}
+	s.observe(stored, created, consumer)
+	if !known && created && s.metrics != nil {
+		s.metrics.Unknown(stored.SourceService)
+	}
 	if s.log != nil {
 		fields := map[string]any{
 			"entry_id": stored.ID, "entry_type": stored.EntryType, "source_event_type": ev.Type,

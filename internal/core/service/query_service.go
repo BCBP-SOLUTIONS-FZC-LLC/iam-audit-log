@@ -21,6 +21,7 @@ type QueryConfig struct {
 	// Phase 5 poller is wired, in which case the stored row value is used.
 	Windows port.PlanWindows
 	Now     port.Clock
+	Metrics port.QueryMetrics // may be nil
 }
 
 // QueryService serves AL-1/AL-2: the plan-window clamp on top of RLS
@@ -64,12 +65,25 @@ func (s *QueryService) window(ctx context.Context, tenantID string, f domain.Que
 	if err != nil {
 		return domain.Window{}, err
 	}
-	var live func(string) (int, bool)
-	if s.cfg.Windows != nil {
-		live = s.cfg.Windows.WindowDays
+
+	days := domain.ResolveWindowDays(row, s.live(), s.cfg.DefaultWindowDays)
+	w := domain.ClampWindow(f.From, f.To, s.cfg.Now().UTC(), days)
+	// A product signal: an explicit range cut short, not a defaulted from.
+	if w.Clamped && f.From != nil && s.cfg.Metrics != nil {
+		plan := ""
+		if row != nil {
+			plan = row.PlanCode
+		}
+		s.cfg.Metrics.WindowClamped(plan)
 	}
-	days := domain.ResolveWindowDays(row, live, s.cfg.DefaultWindowDays)
-	return domain.ClampWindow(f.From, f.To, s.cfg.Now().UTC(), days), nil
+	return w, nil
+}
+
+func (s *QueryService) live() func(string) (int, bool) {
+	if s.cfg.Windows == nil {
+		return nil
+	}
+	return s.cfg.Windows.WindowDays
 }
 
 // validateRequest checks the filter, limit and cursor shared by AL-1/AL-7.
@@ -155,6 +169,9 @@ func (s *QueryService) page(ctx context.Context, req QueryRequest, w domain.Wind
 	cold, err := s.readArchived(ctx, objects, req.Filter, w, cursor, limit+1)
 	if err != nil {
 		return QueryResult{}, err
+	}
+	if len(objects) > 0 && s.cfg.Metrics != nil {
+		s.cfg.Metrics.ArchivedRead()
 	}
 	merged := mergeNewestFirst(hot, cold)
 	if len(merged) > limit {
@@ -265,6 +282,9 @@ func (s *QueryService) getArchived(ctx context.Context, tenantID, id string, fro
 		})
 		switch {
 		case errors.Is(err, errFound):
+			if s.cfg.Metrics != nil {
+				s.cfg.Metrics.ArchivedRead()
+			}
 			return found, nil
 		case errors.Is(err, port.ErrObjectMissing):
 			s.warnMissing(o, err)

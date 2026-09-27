@@ -21,6 +21,7 @@ type ExportConfig struct {
 	Lease          time.Duration // EXPORT_JOB_LEASE
 	WorkDir        string        // EXPORT_WORK_DIR ("" → os.TempDir())
 	Now            port.Clock
+	Metrics        port.QueryMetrics // export_jobs_total; may be nil
 }
 
 // ExportService serves AL-3/AL-4 and runs the export worker (decision D-2:
@@ -74,6 +75,7 @@ func (s *ExportService) Request(ctx context.Context, tenantID, requestedBy strin
 	if err != nil {
 		return domain.ExportJob{}, err
 	}
+	s.exportMetric(domain.ExportPending)
 	if s.log != nil {
 		s.log.Info("export requested", map[string]any{"export_id": job.ID, "tenant_id": tenantID})
 	}
@@ -119,6 +121,7 @@ func (s *ExportService) Status(ctx context.Context, tenantID, id string) (Export
 			s.log.Warn("mark export expired failed", map[string]any{"export_id": id, "error": err.Error()})
 		}
 		job.Status = domain.ExportExpired
+		s.exportMetric(domain.ExportExpired)
 	}
 	return ExportView{Job: job}, nil
 }
@@ -165,6 +168,7 @@ func (s *ExportService) ProcessNext(ctx context.Context) (bool, error) {
 		// lease would otherwise re-run the job after it lapses.
 		failCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
+		s.exportMetric(domain.ExportFailed)
 		if ferr := s.jobs.Fail(failCtx, job.TenantID, job.ID, failureReason(err)); ferr != nil && s.log != nil {
 			s.log.Error("record export failure", map[string]any{"export_id": job.ID, "error": ferr.Error()})
 		}
@@ -173,6 +177,7 @@ func (s *ExportService) ProcessNext(ctx context.Context) (bool, error) {
 	if err := s.jobs.Complete(ctx, job.TenantID, job.ID, key, rows, s.cfg.Now().Add(s.cfg.SignedURLTTL)); err != nil {
 		return true, err
 	}
+	s.exportMetric(domain.ExportReady)
 	if s.log != nil {
 		s.log.Info("export ready", map[string]any{"export_id": job.ID, "tenant_id": job.TenantID, "row_count": rows})
 	}
@@ -287,4 +292,10 @@ func (s *ExportService) produce(ctx context.Context, job domain.ExportJob) (key 
 		return "", 0, err
 	}
 	return key, rows, nil
+}
+
+func (s *ExportService) exportMetric(status domain.ExportStatus) {
+	if s.cfg.Metrics != nil {
+		s.cfg.Metrics.ExportJob(string(status))
+	}
 }

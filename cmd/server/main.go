@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -22,6 +23,7 @@ import (
 	awsglue "github.com/aws/aws-sdk-go-v2/service/glue"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -34,6 +36,7 @@ import (
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
 	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
@@ -135,7 +138,7 @@ func run() int {
 	// AL-5/AL-6 now and the Phase 3 consumer fleet (AL-INV-2).
 	auditRepo := pgadapter.NewAuditRepository(pool)
 	ingest := service.NewIngestService(auditRepo, newUUIDv7,
-		cfg.MaxMetadataBytes, cfg.MaxIngestBatch, log)
+		cfg.MaxMetadataBytes, cfg.MaxIngestBatch, log).WithMetrics(metrics.Ingest{})
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
 	if err != nil {
@@ -184,6 +187,7 @@ func run() int {
 		Windows:           plans,
 		SyncMaxRows:       cfg.ArchiveSyncMaxRows,
 		SyncMaxBytes:      cfg.ArchiveSyncMaxBytes,
+		Metrics:           metrics.Query{},
 	}, log)
 	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, store, store, query, newUUIDv7,
 		service.ExportConfig{
@@ -192,11 +196,30 @@ func run() int {
 			PollInterval:   cfg.ExportPollInterval,
 			Lease:          cfg.ExportJobLease,
 			WorkDir:        cfg.ExportWorkDir,
+			Metrics:        metrics.Query{},
 		}, log)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
 		exports.Run(ctx)
+	}()
+
+	// ── 3f. Ops gauges (LLD §11, §20; decision D-21, gaps 40/41): the
+	// archival, DEFAULT-partition and redaction state the reconciler CronJob
+	// cannot expose, plus DLQ depth, published from this always-scraped root.
+	ops := service.NewOpsMonitor(pgadapter.NewOpsRepository(pool), sqsDepth{c: newSQSClient(awsCfg, cfg)}, metrics.Ops{},
+		service.OpsMonitorConfig{
+			Interval: cfg.OpsStatsInterval,
+			Query: domain.OpsStatsQuery{
+				HotWindowDays: cfg.HotWindowDays, WritableTrailingMonths: cfg.WritableTrailingMonths,
+				StallGrace: cfg.OpsStallGrace, PendingAge: cfg.OpsRedactionPendingAge,
+			},
+			DLQs: dlqURLs(cfg),
+		}, log)
+	opsDone := make(chan struct{})
+	go func() {
+		defer close(opsDone)
+		ops.Run(ctx)
 	}()
 
 	// ── 4. Router ─────────────────────────────────────────────────────────
@@ -274,6 +297,7 @@ func run() int {
 	cancelBackground()
 	<-workerDone // an interrupted export records its failure before the pool drains
 	<-pollerDone
+	<-opsDone
 	if err := pool.DrainAndClose(shutdownCtx); err != nil {
 		log.Error("pool drain error", map[string]any{"error": err.Error()})
 	}
@@ -295,14 +319,12 @@ func buildFleet(awsCfg aws.Config, cfg config.Server, ingest consumer.BusIngeste
 	Warn(string, map[string]any)
 	Error(string, map[string]any)
 }) (*consumer.Fleet, error) {
-	var sqsOpts []func(*sqs.Options)
 	glueOpts := []func(*awsglue.Options){func(o *awsglue.Options) { o.Region = cfg.GlueRegistryRegion }}
 	if cfg.AWSEndpoint != "" {
 		ep := cfg.AWSEndpoint
-		sqsOpts = append(sqsOpts, func(o *sqs.Options) { o.BaseEndpoint = &ep })
 		glueOpts = append(glueOpts, func(o *awsglue.Options) { o.BaseEndpoint = &ep })
 	}
-	sqsClient := sqs.NewFromConfig(awsCfg, sqsOpts...)
+	sqsClient := newSQSClient(awsCfg, cfg)
 	codec := glueadapter.NewCodec(glueadapter.NewRegistryResolver(awsglue.NewFromConfig(awsCfg, glueOpts...)))
 
 	queues := make([]consumer.Queue, 0, len(cfg.Queues))
@@ -319,6 +341,43 @@ func buildFleet(awsCfg aws.Config, cfg config.Server, ingest consumer.BusIngeste
 	return consumer.NewFleet(queues, build, codec, metrics.Consumer{},
 		func(q consumer.Queue) events.Handler { return consumer.Handler(q, ingest) },
 		events.WithVisibilityTimeout(cfg.SQSVisibilityTimeout))
+}
+
+// newSQSClient is the one raw *sqs.Client constructor (arch-lint), shared by
+// the consumer fleet and the DLQ depth probe.
+func newSQSClient(awsCfg aws.Config, cfg config.Server) *sqs.Client {
+	var opts []func(*sqs.Options)
+	if cfg.AWSEndpoint != "" {
+		ep := cfg.AWSEndpoint
+		opts = append(opts, func(o *sqs.Options) { o.BaseEndpoint = &ep })
+	}
+	return sqs.NewFromConfig(awsCfg, opts...)
+}
+
+// sqsDepth implements port.QueueDepths (sqs:GetQueueAttributes, the IAM
+// policy's ReadDLQDepthForAlerting statement).
+type sqsDepth struct{ c *sqs.Client }
+
+func (d sqsDepth) Depth(ctx context.Context, url string) (int64, error) {
+	out, err := d.c.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(url),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameApproximateNumberOfMessages},
+	})
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(out.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessages)], 10, 64)
+}
+
+// dlqURLs derives each configured queue's DLQ (<queue>-dlq, LLD §25).
+func dlqURLs(cfg config.Server) map[string]string {
+	out := map[string]string{}
+	for _, q := range cfg.Queues {
+		if q.URL != "" {
+			out[q.Name+"-dlq"] = q.URL + "-dlq"
+		}
+	}
+	return out
 }
 
 // buildStore wires the S3 archive/export adapter. Against an emulator

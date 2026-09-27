@@ -133,10 +133,25 @@ Pinned (from sibling `go.mod`, matches LLD §3.1): Go `1.26.6`, `platform-events
   - Merged coverage is 96.3%.
 - **Carried to Phase 8:** a metrics path for the reconciler CronJob (gap 40), `archive_lag_seconds` and `default_partition_rows_total` (gap 41).
 
-### Phase 8 — Observability & hardening (§11, §20, §24)
-- [ ] Full Tier-1/2/3 metric set; registry + naming test; `deploy/monitoring/app-alerts.yml` (DLQ > 0 Critical, default-partition > 0 Critical, stale thresholds 2×/10×, etc.).
-- [ ] `docs/runbook.md` RB-1..RB-8.
-- [ ] Log hygiene: IDs only at info, never `metadata`.
+### Phase 8 — Observability & hardening (§11, §20, §24; decision D-21) — ✅ done, awaiting review
+- [x] Full Tier-3 set per §11:
+  - write path: `events_ingested_total`, `duplicate_events_total`, `unknown_event_total`, `ingest_lag_seconds`, `directwrite_requests_total`;
+  - read path: `query_window_clamped_total` (explicit ranges only), `query_archived_reads_total`, `export_jobs_total`;
+  - DB/SQS gauges (D-21).
+
+  Caller-supplied label values (`source_service`, `plan_code`) are bounded to slugs, else `other`, so cardinality can't explode.
+- [x] Log hygiene: an audit of every log call found IDs only, no metadata or payload. Schema-validation errors are now rendered as instance paths plus keywords only, because the validator's messages quote payload values and reach logs through the retry/DLQ path.
+- [x] Alerts: `deploy/helm/templates/prometheusrule.yaml` (`prometheusRule.enabled`) plus the static mirror `deploy/monitoring/app-alerts.yml`, 19 rules:
+  - DLQ > 0, malformed envelopes > 0 (D-3), DEFAULT rows > 0, archive stalled, stuck pending redactions and RLS cross-tenant are Critical;
+  - catalog stale 2×/10×, archive lag 1 d/3 d, unknown types, direct-write errors, ingest-lag SLO and CronJob failures (gap 40 ops note) are graded.
+  Each carries a `runbook_url`.
+- [x] `docs/runbook.md`: RB-1..RB-8 made actionable (SQL, kubectl/aws, verify), plus **RB-9** (reconciler CronJob failed) and **RB-10** (malformed envelopes). LLD rev 0.24 records D-21 and adds the `redaction_pending_tasks` row to §11; §24 links the runbook.
+- [x] Tests:
+  - contract: `TestMetrics_LLDTier3Registered` (the LLD §11 table ↔ `business.go`), `TestAlerts_ReferenceKnownMetrics`, `TestAlerts_StaticMirrorMatchesHelm`, and `TestLogHygiene_NoPayloadFields` (an AST denylist over every log call);
+  - unit: the metric hooks and label bounding, `OpsMonitor`, and the validator sanitizer (the email never appears);
+  - postgres: `audit_ops_stats` (counts, grants, **SQL eligibility equals `domain.ArchiveEligible`** across 11 combinations);
+  - integration: the DLQ depth gauge against floci.
+  - Merged coverage is 96.5%.
 
 ---
 
@@ -197,6 +212,14 @@ Pinned (from sibling `go.mod`, matches LLD §3.1): Go `1.26.6`, `platform-events
   - DEFAULT rows for a month that was never dropped (a bad clock) stay with RB-3. **This goes beyond the LLD's manual RB-3; needs an LLD §4.2/RB-3 note.**
 - **D-20 (2026-09-26, user): a re-archive rewrites the whole tier, and a manifest row is sealed at drop.** A re-archive re-uploads the tier's **unsealed** parts under the same deterministic keys, as new object versions. The bucket is versioned with Object Lock, so earlier versions stay locked until they expire; that is a storage cost only. Stale unsealed manifest rows are deleted. `audit_archive_objects.sealed` is set by the drop gate: a sealed object's rows exist only in S3, and it is never rewritten. A re-opened month appends new parts after its sealed ones (`NextParts`), because its partition now holds only the late rows. **D-12 is refined accordingly:** archived reads, AL-2, and redaction's `missed` check route on `sealed`, not on partition existence. Otherwise a re-opened month would hide its earlier, S3-only rows.
 - **Stale-PII guard (Phase 7, resolution applied):** `apply_redaction()` and `sweep_redactions()` reset the `security_3y` archive state of every partition whose rows they rewrote (`invalidate_security_archive`). An object uploaded before a redaction is therefore re-archived and can never be sealed with pre-redaction PII. `MarkVerified` only promotes a tier that is still `archived`.
+- **D-21 (gap 40/41, 2026-09-27, user): DB-derived ops gauges come from cmd/server.** `cmd/server` is always scraped, so it computes the alerting gauges every `OPS_STATS_INTERVAL` (60 s). They come from `audit_ops_stats()` (`000009`; SECURITY DEFINER owned by the migrator; aggregate numbers only, no tenant data; EXECUTE for `audit_app`), plus `sqs:GetQueueAttributes` on each `<queue>-dlq`:
+  - `archive_stalled`: eligible partitions still attached past `OPS_ARCHIVE_STALL_GRACE` (48 h).
+  - `archive_lag_seconds`: the oldest still-attached eligible partition's age past eligibility.
+  - `default_partition_rows_total`.
+  - `redaction_pending_tasks`: pending longer than `OPS_REDACTION_PENDING_AGE` (15 m). **This gauge is new** (RB-7 needs a level, not the `pending` outcome counter). **Needs an LLD §11 addition.**
+  - `dlq_messages_total{queue}`.
+
+  Eligibility is identical to `domain.ArchiveEligible`. Reconciler-only counters (`archive_partitions_total`, `retention_pruned_total`, `redaction_blocked_archive_total`) stay internal, and the CronJob-failure alert covers them.
 - **D-3 (gap 3):** Keep the library consumer. Add a Critical alert on `events_consumed_total{status="malformed"} > 0`
   and a runbook entry, and file a platform-events fix so malformed messages are left for the DLQ. This is a known gap against AL-EVT-4.
 
@@ -261,3 +284,7 @@ Found during Phase 7 (resolution applied; flag for LLD):
 39. **The reconciler cannot read partitions directly.** Grants on the parent `audit_events` do not extend to naming a partition table. The archive repository therefore reads through the parent, bounded to the month (`occurred_at >= m AND < m+1`), which PostgreSQL prunes to that one partition. The postgres tier caught this before merge. The definer functions (`audit_drop_partition`, `audit_reopen_partition`) are migrator-owned and address partitions directly.
 40. **Reconciler metrics have no scrape endpoint — accepted as a known observability limitation until Phase 8 (2026-09-27, user; severity Medium; LLD rev 0.23 §11; not a design flaw and not blocking approval).** `archive_stalled`, `archive_partitions_total`, `redaction_blocked_archive_total`, `retention_pruned_total` and `redaction_tasks_total` (from the retry job) are incremented in a CronJob that exposes no `/metrics`. A Critical alert cannot fire from them until **Phase 8** adds a push path, or has cmd/server export gauges derived from `audit_event_archive_state`. Meanwhile, a blocked or stalled run exits non-zero, so the CronJob failure is the signal.
 41. **`archive_lag_seconds` and `default_partition_rows_total`** (§11) are deferred to Phase 8 for the same reason.
+
+Found during Phase 8:
+
+42. **platform-events logs the raw body of a malformed envelope** (`sqs: failed to unmarshal message body`, with a `body` field) at error level. That is library behavior outside this repo. It sits alongside D-3's upstream fix; ask the library to log the message id only. A malformed envelope is not a valid audit event, but it could still carry PII.

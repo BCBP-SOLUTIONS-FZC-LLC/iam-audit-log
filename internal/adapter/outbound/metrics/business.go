@@ -73,6 +73,39 @@ var (
 	// not an alarm; pending is the one to alert on (RB-7).
 	RedactionTasks *prometheus.CounterVec
 
+	// ── Tier 3: write path ──
+
+	// EventsIngested counts persisted rows {source_service,ingest_mode,entry_type}.
+	EventsIngested *prometheus.CounterVec
+	// DuplicateEvents counts dedup hits {consumer} (AL-INV-4).
+	DuplicateEvents *prometheus.CounterVec
+	// UnknownEvents counts rows persisted as <domain>.unknown {source_service}.
+	UnknownEvents *prometheus.CounterVec
+	// IngestLag observes recorded_at − occurred_at.
+	IngestLag prometheus.Histogram
+	// DirectWriteCalls counts AL-5/AL-6 entry outcomes {source_service,result}.
+	DirectWriteCalls *prometheus.CounterVec
+
+	// ── Tier 3: read path ──
+
+	// QueryWindowClamped counts explicit ranges cut to the plan window {plan_code}.
+	QueryWindowClamped *prometheus.CounterVec
+	// QueryArchivedReads counts reads served from S3.
+	QueryArchivedReads prometheus.Counter
+	// ExportJobs counts the export lifecycle {status}.
+	ExportJobs *prometheus.CounterVec
+
+	// ── Tier 3: DB/SQS-derived gauges, set by cmd/server (D-21) ──
+
+	// DLQMessagesGauge is each DLQ's depth {queue} — Critical at > 0 (AL-EVT-4).
+	DLQMessagesGauge *prometheus.GaugeVec
+	// DefaultPartitionRows is the DEFAULT partition's row count — Critical at > 0 (RB-3).
+	DefaultPartitionRows prometheus.Gauge
+	// ArchiveLag is the oldest attached eligible partition's age past eligibility (RB-2).
+	ArchiveLag prometheus.Gauge
+	// PendingRedactions counts stuck pending redaction tasks — Critical (RB-7).
+	PendingRedactions prometheus.Gauge
+
 	// ArchivePartitions counts per-tier archival outcomes (verified|failed).
 	ArchivePartitions *prometheus.CounterVec
 	// RedactionBlockedArchive counts archival refused for a pending
@@ -80,9 +113,10 @@ var (
 	RedactionBlockedArchive prometheus.Counter
 	// RetentionPruned counts partition drops per tier (§8.6).
 	RetentionPruned *prometheus.CounterVec
-	// ArchiveStalled is the number of eligible partitions the last run
-	// could not drop (a failed tier or persistent late writes; AL-INV-9) —
-	// Critical when > 0.
+	// ArchiveStalled is the number of eligible partitions past the stall
+	// grace that are still attached (AL-INV-9) — Critical when > 0. cmd/server
+	// sets it from audit_ops_stats() (D-21); the reconciler's own in-process
+	// value is not scraped.
 	ArchiveStalled prometheus.Gauge
 
 	// catalogLastSuccess is the unix-nano time CatalogPlansStale measures from.
@@ -165,6 +199,79 @@ func registerMetrics(environment string) {
 		ConstLabels: sLabels,
 	}, []string{"result"})
 
+	EventsIngested = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_events_ingested_total",
+		Help:        "Audit rows persisted, by source_service, ingest_mode and entry_type.",
+		ConstLabels: sLabels,
+	}, []string{"source_service", "ingest_mode", "entry_type"})
+
+	DuplicateEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_duplicate_events_total",
+		Help:        "Dedup hits (redeliveries / idempotent replays), by consumer (AL-INV-4).",
+		ConstLabels: sLabels,
+	}, []string{"consumer"})
+
+	UnknownEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_unknown_event_total",
+		Help:        "Unrecognized event types persisted as <domain>.unknown, by source_service (AL-EVT-4). Warning: extend the taxonomy.",
+		ConstLabels: sLabels,
+	}, []string{"source_service"})
+
+	IngestLag = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:        "iam_audit_log_ingest_lag_seconds",
+		Help:        "recorded_at − occurred_at of newly persisted rows (HLD §3.4 SLO p99 < 50 ms async).",
+		Buckets:     []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 30, 60, 300, 3600, 86400},
+		ConstLabels: sLabels,
+	})
+
+	DirectWriteCalls = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_directwrite_requests_total",
+		Help:        "AL-5/AL-6 entry outcomes, by source_service and result (created|duplicate|rejected|error). RB-6.",
+		ConstLabels: sLabels,
+	}, []string{"source_service", "result"})
+
+	QueryWindowClamped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_query_window_clamped_total",
+		Help:        "Queries whose explicit range was cut to the plan window, by plan_code (product signal, AL-INV-8).",
+		ConstLabels: sLabels,
+	}, []string{"plan_code"})
+
+	QueryArchivedReads = prometheus.NewCounter(prometheus.CounterOpts{
+		Name:        "iam_audit_log_query_archived_reads_total",
+		Help:        "Reads served (partly) from the S3 archive.",
+		ConstLabels: sLabels,
+	})
+
+	ExportJobs = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name:        "iam_audit_log_export_jobs_total",
+		Help:        "Export job lifecycle, by status (pending|ready|failed|expired).",
+		ConstLabels: sLabels,
+	}, []string{"status"})
+
+	DLQMessagesGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name:        "iam_audit_log_dlq_messages_total",
+		Help:        "Approximate visible depth of each *-audit-q-dlq. Critical at > 0 (a potentially lost audit record, AL-EVT-4, RB-1).",
+		ConstLabels: sLabels,
+	}, []string{"queue"})
+
+	DefaultPartitionRows = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:        "iam_audit_log_default_partition_rows_total",
+		Help:        "Rows in audit_events_default. Critical at > 0 (RB-3).",
+		ConstLabels: sLabels,
+	})
+
+	ArchiveLag = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:        "iam_audit_log_archive_lag_seconds",
+		Help:        "Seconds past archival eligibility of the oldest still-attached partition (0 when none; RB-2).",
+		ConstLabels: sLabels,
+	})
+
+	PendingRedactions = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name:        "iam_audit_log_redaction_pending_tasks",
+		Help:        "Redaction tasks pending longer than OPS_REDACTION_PENDING_AGE. Critical at > 0 (RB-7).",
+		ConstLabels: sLabels,
+	})
+
 	RedactionTasks = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name:        "iam_audit_log_redaction_tasks_total",
 		Help:        "GDPR redaction task outcomes, by status (applied|not_applicable|missed|pending=apply failed). missed = archived rows retained (AL-Q15), routine; pending needs action (RB-7).",
@@ -207,5 +314,8 @@ func registerMetrics(environment string) {
 		DependencyRequestSeconds, RLSViolations,
 		CatalogPlansPolls, CatalogPlansStale, RedactionTasks,
 		ArchivePartitions, RedactionBlockedArchive, RetentionPruned, ArchiveStalled,
+		EventsIngested, DuplicateEvents, UnknownEvents, IngestLag, DirectWriteCalls,
+		QueryWindowClamped, QueryArchivedReads, ExportJobs,
+		DLQMessagesGauge, DefaultPartitionRows, ArchiveLag, PendingRedactions,
 	)
 }

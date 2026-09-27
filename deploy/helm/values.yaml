@@ -100,6 +100,9 @@ serverEnv:
   EXPORT_RATE_LIMIT_BURST: "5"
   EXPORT_POLL_INTERVAL: "5s"            # export worker claim poll (D-2)
   EXPORT_JOB_LEASE: "15m"               # running-job lease; heartbeated at lease/3
+  OPS_STATS_INTERVAL: "60s"             # DB/SQS-derived ops gauges (D-21)
+  OPS_ARCHIVE_STALL_GRACE: "48h"        # past archival eligibility before "stalled" (RB-2)
+  OPS_REDACTION_PENDING_AGE: "15m"      # pending redaction older than this is stuck (RB-7)
   DOCS_ENABLED: "false"
 
 # Reconciler-only env.
@@ -191,6 +194,10 @@ networkPolicy:
       app.kubernetes.io/name: prometheus
   additionalIngressRules: []
   additionalEgressRules: []
+
+prometheusRule:
+  enabled: true            # LLD §11 alert rules (deploy/monitoring/app-alerts.yml mirror)
+  additionalLabels: {}     # e.g. release: kube-prometheus-stack
 
 serviceMonitor:
   enabled: true
