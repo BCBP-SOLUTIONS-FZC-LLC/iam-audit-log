@@ -24,9 +24,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/consumer"
 	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/http"
@@ -35,10 +33,12 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
 	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/telemetry"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 
+	eventsconfig "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
@@ -60,21 +60,22 @@ func main() { os.Exit(run()) }
 // run holds all deferred cleanup so every exit path runs it via a normal
 // return rather than an os.Exit that would skip it.
 func run() int {
-	cfg, err := config.LoadServer(buildVersion)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
-	}
-	if !config.IsDev(cfg.AppEnv) {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
 	// ── 1. Logger + tracing (platform-gincommon) ──────────────────────────
-	log, err := logger.NewLogger(cfg.AppEnv)
+	// The logger comes first so every later line, configuration errors
+	// included, goes through it. Stderr is used only when the logger itself
+	// cannot be built (BUILD_PLAN gap 43).
+	log, err := logger.NewLogger(config.AppEnv())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "init logger: "+err.Error())
 		return 1
 	}
+	cfg, err := config.LoadServer(buildVersion)
+	if err != nil {
+		log.Error("invalid configuration", map[string]any{"error": err.Error()})
+		return 1
+	}
+	// gin writes nothing itself; requests are logged by gincommon (gap 43).
+	telemetry.QuietGin()
 	shutdownTracing := gincommon.InitTracingFromEnv()
 	defer shutdownTracing()
 	defer func() {
@@ -107,7 +108,7 @@ func run() int {
 	}
 
 	// ── 3. audit_app pool (RLS GUC bound per checkout — LLD §3.3.2) ───────
-	pgCfg, pgWarnings := pgadapter.AppPoolConfig(cfg.DatabaseURL, log, pgadapter.NewOTelTracer(cfg.ServiceName))
+	pgCfg, pgWarnings := pgadapter.AppPoolConfig(cfg.DatabaseURL, log, telemetry.NewTracer(cfg.ServiceName))
 	for _, w := range pgWarnings {
 		log.Warn("postgres config warning", map[string]any{"key": w.Key, "reason": w.Reason})
 	}
@@ -181,15 +182,18 @@ func run() int {
 	// The export worker runs here as audit_app and claims jobs through the
 	// claim_export_job() definer function (D-2).
 	store := buildStore(awsCfg, cfg)
+	// S3 calls are timed as platform_dependency_request_seconds{dependency="s3"}.
+	archiveReader := metrics.InstrumentedArchiveReader{Inner: store}
+	exportStore := metrics.InstrumentedExportStore{Inner: store}
 	reader := pgadapter.NewQueryRepository(pool)
-	query := service.NewQueryService(reader, store, service.QueryConfig{
+	query := service.NewQueryService(reader, archiveReader, service.QueryConfig{
 		DefaultWindowDays: cfg.DefaultQueryWindowDays,
 		Windows:           plans,
 		SyncMaxRows:       cfg.ArchiveSyncMaxRows,
 		SyncMaxBytes:      cfg.ArchiveSyncMaxBytes,
 		Metrics:           metrics.Query{},
 	}, log)
-	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, store, store, query, newUUIDv7,
+	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, archiveReader, exportStore, query, newUUIDv7,
 		service.ExportConfig{
 			SignedURLTTL:   cfg.ExportSignedURLTTL,
 			DownloadURLTTL: cfg.ExportDownloadURLTTL,
@@ -214,7 +218,7 @@ func run() int {
 				HotWindowDays: cfg.HotWindowDays, WritableTrailingMonths: cfg.WritableTrailingMonths,
 				StallGrace: cfg.OpsStallGrace, PendingAge: cfg.OpsRedactionPendingAge,
 			},
-			DLQs: dlqURLs(cfg),
+			Queues: opsQueues(cfg),
 		}, log)
 	opsDone := make(chan struct{})
 	go func() {
@@ -249,13 +253,15 @@ func run() int {
 	srv := &http.Server{
 		Addr:         ":" + cfg.AppPort,
 		Handler:      router.Handler(),
+		ErrorLog:     telemetry.HTTPErrorLog(log, "api"),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 35 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.Handler())
-	metricsServer := &http.Server{Addr: ":" + cfg.MetricsPort, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second}
+	metricsMux.Handle("/metrics", telemetry.MetricsHandler()) // gincommon's registry only
+	metricsServer := &http.Server{Addr: ":" + cfg.MetricsPort, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second,
+		ErrorLog: telemetry.HTTPErrorLog(log, "metrics")}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -304,15 +310,15 @@ func run() int {
 	return 0
 }
 
-// consumerConcurrency is each queue's handler concurrency. Audit volume is
-// ~5,000 events/day (HLD §14.1) with offboarding bursts absorbed by
-// redelivery; the LLD fixes no per-queue knob.
-const consumerConcurrency = 4
-
-// buildFleet wires one platform-events consumer per configured queue. This
-// is the only place a raw *sqs.Client is built (arch-lint), solely to hand
-// to events.NewSQSConsumerWithClient; the Glue codec resolves schema
-// versions read-only (glue:GetSchemaVersion, §7.3.1).
+// buildFleet wires one platform-events consumer per configured queue (gap
+// 45). The library owns everything about consumption: it builds the SQS
+// client (events.NewSQSConsumer), loads every SQS_* setting (config.LoadSQS:
+// region, endpoint, batch size, long-poll, visibility timeout, concurrency,
+// max receive), decodes the envelope, and receives/deletes/extends
+// visibility. The service supplies only each queue's URL, the handler, the
+// Glue codec (WithConsumerCodec) and the dead-letter observer. Dedup is the
+// handler's job per the library contract, keyed on Envelope.ID
+// (processed_events, AL-INV-4).
 func buildFleet(awsCfg aws.Config, cfg config.Server, ingest consumer.BusIngester, log interface {
 	Debug(string, map[string]any)
 	Info(string, map[string]any)
@@ -324,27 +330,36 @@ func buildFleet(awsCfg aws.Config, cfg config.Server, ingest consumer.BusIngeste
 		ep := cfg.AWSEndpoint
 		glueOpts = append(glueOpts, func(o *awsglue.Options) { o.BaseEndpoint = &ep })
 	}
-	sqsClient := newSQSClient(awsCfg, cfg)
 	codec := glueadapter.NewCodec(glueadapter.NewRegistryResolver(awsglue.NewFromConfig(awsCfg, glueOpts...)))
+
+	sqsEnv := eventsconfig.LoadSQS()
+	eventsconfig.LogWarningsTo(log, sqsEnv.Warnings)
+	// SQS_MAX_RECEIVE_COUNT is the queues' redrive count (LLD §12); the
+	// dead-letter handler fires one short of it so SQS performs the move.
+	observeAt := consumer.DeadLetterObserveAt(sqsEnv.MaxReceiveCount)
+	libEnv := sqsEnv
+	libEnv.MaxReceiveCount = 0 // set explicitly below, not as the raw redrive count
+	opts := append(eventsconfig.SQSConsumerOptions(libEnv), events.WithMaxReceiveCount(observeAt))
 
 	queues := make([]consumer.Queue, 0, len(cfg.Queues))
 	for _, q := range cfg.Queues {
 		if q.URL == "" {
 			log.Warn(q.Name+" consumer disabled — queue URL unset", nil)
 		}
-		queues = append(queues, consumer.Queue{Name: q.Name, URL: q.URL, Topic: q.Topic, Consumer: q.Consumer, Concurrency: consumerConcurrency})
+		queues = append(queues, consumer.Queue{Name: q.Name, URL: q.URL, Topic: q.Topic, Consumer: q.Consumer, Concurrency: sqsEnv.Concurrency})
 	}
-	build := func(url string, h events.Handler, opts ...events.ConsumerOption) (events.Consumer, error) {
-		return events.NewSQSConsumerWithClient(
-			events.SQSConfig{QueueURL: url, Region: cfg.AWSRegion, Logger: log}, sqsClient, h, opts...)
+	build := func(url string, h events.Handler, o ...events.ConsumerOption) (events.Consumer, error) {
+		c := eventsconfig.SQSConfigFromEnv(sqsEnv, log)
+		c.QueueURL = url // one consumer per inbound queue; everything else is the library's
+		return events.NewSQSConsumer(c, h, o...)
 	}
 	return consumer.NewFleet(queues, build, codec, metrics.Consumer{},
-		func(q consumer.Queue) events.Handler { return consumer.Handler(q, ingest) },
-		events.WithVisibilityTimeout(cfg.SQSVisibilityTimeout))
+		func(q consumer.Queue) events.Handler { return consumer.Handler(q, ingest) }, opts...)
 }
 
-// newSQSClient is the one raw *sqs.Client constructor (arch-lint), shared by
-// the consumer fleet and the DLQ depth probe.
+// newSQSClient is the one raw *sqs.Client constructor (arch-lint). It is used
+// only for the DLQ depth gauge (GetQueueAttributes); consumption never
+// touches it, since platform-events builds its own client (gap 45).
 func newSQSClient(awsCfg aws.Config, cfg config.Server) *sqs.Client {
 	var opts []func(*sqs.Options)
 	if cfg.AWSEndpoint != "" {
@@ -369,12 +384,13 @@ func (d sqsDepth) Depth(ctx context.Context, url string) (int64, error) {
 	return strconv.ParseInt(out.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessages)], 10, 64)
 }
 
-// dlqURLs derives each configured queue's DLQ (<queue>-dlq, LLD §25).
-func dlqURLs(cfg config.Server) map[string]string {
-	out := map[string]string{}
+// opsQueues lists each configured inbound queue with its DLQ
+// (<queue>-dlq, LLD §25) for the depth gauges.
+func opsQueues(cfg config.Server) []service.OpsQueue {
+	var out []service.OpsQueue
 	for _, q := range cfg.Queues {
 		if q.URL != "" {
-			out[q.Name+"-dlq"] = q.URL + "-dlq"
+			out = append(out, service.OpsQueue{Name: q.Name, URL: q.URL, DLQURL: q.URL + "-dlq"})
 		}
 	}
 	return out

@@ -113,7 +113,7 @@ func (s *recStack) jctx(t *testing.T, store port.ArchiveStore) *jobs.Context {
 	log, err := logger.NewLogger("test")
 	require.NoError(t, err)
 	return &jobs.Context{
-		Pool: s.reconPool, RawLogger: log, Logger: port.NewSlogStyleLogger(log),
+		Pool: s.reconPool, RawLogger: log, Logger: port.NewSlogStyleLogger(log, nil),
 		Partitions: pgadapter.NewPartitionRepository(s.reconPool),
 		Archives:   archives, ArchiveStore: store, Ledger: archives,
 		HotWindowDays: 90, PrecreateMonths: 3, WritableTrailingMonths: 3,

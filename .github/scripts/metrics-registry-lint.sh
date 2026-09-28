@@ -17,7 +17,10 @@ cd "$(dirname "$0")/../.."
 REGISTRY_GO="internal/adapter/outbound/metrics/registry.go"
 RULE_FILES=(
   deploy/monitoring/app-alerts.yml
+  deploy/monitoring/recording-rules.yml
   deploy/monitoring/slo-rules.yml
+  deploy/monitoring/prometheus-adapter-rule.yaml
+  deploy/monitoring/dashboard-audit-log.json
   deploy/helm/templates/prometheusrule.yaml
 )
 

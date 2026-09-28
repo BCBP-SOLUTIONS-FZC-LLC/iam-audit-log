@@ -1,0 +1,99 @@
+erDiagram
+    audit_events {
+        uuid id PK "UUIDv7, composite PK with occurred_at"
+        timestamptz occurred_at PK "RANGE partition key (monthly)"
+        uuid tenant_id "RLS scope (AL-INV-3)"
+        text entry_type "§7.1 taxonomy"
+        text action
+        audit_actor_type actor_type "user · service_account · iam_system · anonymous"
+        uuid actor_id "NULL iff anonymous (chk_anonymous_actor)"
+        text actor_display "cleared by redaction"
+        text target_type
+        text target_id
+        text source_service
+        text source_topic "NULL for direct_write"
+        text source_event_type "producer verbatim (AL-INV-5)"
+        text source_event_id "idempotency key, uq with occurred_at"
+        timestamptz recorded_at
+        audit_retention_tier retention_tier "compliance_7y · security_3y · access_90d"
+        audit_ingest_mode ingest_mode "bus · direct_write"
+        inet ip_address
+        text user_agent
+        text trace_id
+        jsonb metadata "object, ≤ 8 KiB"
+    }
+    processed_events {
+        text event_id PK "Envelope.ID / Idempotency-Key"
+        text consumer PK "queue consumer or direct_write"
+        timestamptz processed_at "pruned after 8 d"
+    }
+    tenant_plan_window {
+        uuid tenant_id PK
+        text plan_code
+        int query_window_days "last-known-good (D-13)"
+        timestamptz last_event_at "recency guard (AL-EVT-3)"
+    }
+    audit_export_jobs {
+        uuid id PK
+        uuid tenant_id "RLS"
+        uuid requested_by
+        jsonb filter "stored clamped (AL-INV-8)"
+        audit_export_status status "pending · running · ready · failed · expired"
+        text s3_key
+        timestamptz signed_url_expires_at
+        bigint row_count
+        timestamptz updated_at "lease heartbeat"
+    }
+    audit_redaction_tasks {
+        uuid id PK
+        uuid tenant_id
+        uuid subject_actor_id
+        text trigger_event_type "UserDeleted (D-16)"
+        text trigger_source_event_id UK "uq_redaction_trigger"
+        audit_redaction_status status "pending · applied · not_applicable · missed"
+        bigint rows_redacted
+    }
+    redacted_subjects {
+        uuid tenant_id PK "RLS"
+        uuid subject_id PK
+        uuid task_id
+        timestamptz redaction_completed_at
+    }
+    audit_event_archive_state {
+        text partition_name PK
+        audit_retention_tier retention_tier PK
+        date period_month
+        audit_archive_status status "pending · archiving · archived · verified · dropped · expired · failed"
+        text sha256_manifest
+        int object_count
+    }
+    audit_archive_objects {
+        text partition_name PK
+        audit_retention_tier retention_tier PK
+        uuid tenant_id PK "RLS"
+        int part PK
+        text s3_key UK "tier/tenant/yyyy/mm/…-part-NNNN.jsonl.gz"
+        bigint row_count
+        bigint byte_size
+        uuid min_id
+        uuid max_id
+        uuid_array subject_ids "D-17"
+        bool sealed "set at drop (D-20)"
+        text sha256
+    }
+    rls_violation_log {
+        bigserial id PK
+        text violation_type "cross_tenant_access · missing_or_invalid_guc"
+        timestamptz occurred_at "1 % sampled"
+    }
+    ops_export_watermark {
+        text name PK "rls_violation_log"
+        bigint last_id "exactly-once metric feed"
+    }
+
+    audit_events ||..o{ audit_event_archive_state : "monthly partition archived as"
+    audit_event_archive_state ||..o{ audit_archive_objects : "per-tenant objects"
+    audit_events ||..o{ audit_redaction_tasks : "subject matches actor or user target"
+    audit_redaction_tasks ||..|| redacted_subjects : "finished task records"
+    processed_events ||..|| audit_events : "ledger key = source_event_id"
+    rls_violation_log ||..|| ops_export_watermark : "counted up to last_id"

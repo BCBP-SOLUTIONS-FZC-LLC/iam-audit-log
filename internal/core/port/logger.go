@@ -2,12 +2,7 @@
 // AuditReader, ArchiveStore, Clock, Ledger, …). It imports core/domain only.
 package port
 
-import (
-	"context"
-	"log/slog"
-
-	"go.opentelemetry.io/otel/trace"
-)
+import "context"
 
 // Logger is the structured logging port this service funnels through: HTTP
 // middleware (via platform-gincommon), core services, the SQS consumer
@@ -24,84 +19,88 @@ type Logger interface {
 	Error(msg string, fields map[string]any)
 }
 
-// SlogStyleLogger adapts a Logger to log/slog's call conventions — both the
+// SlogStyleLogger adapts a Logger to slog-style call conventions — both the
 // plain (msg, "key", val, ...) and *Context (ctx, msg, "key", val, ...)
-// variants. The zero value is safe to use directly and falls back to the
-// top-level slog functions.
+// variants — while still writing only through the wrapped Logger, which is
+// always platform-gincommon's (BUILD_PLAN gap 43). A nil Logger drops lines
+// rather than falling back to another sink.
 type SlogStyleLogger struct {
-	log Logger
+	log     Logger
+	traceID TraceIDFunc
 }
 
-// NewSlogStyleLogger wraps log for slog-style call sites. A nil log behaves
-// exactly like the zero value (falls back to top-level slog).
-func NewSlogStyleLogger(log Logger) SlogStyleLogger {
-	return SlogStyleLogger{log: log}
+// NewSlogStyleLogger wraps log for slog-style call sites. traceID (may be
+// nil) supplies the trace_id field on the *Context variants.
+func NewSlogStyleLogger(log Logger, traceID TraceIDFunc) SlogStyleLogger {
+	return SlogStyleLogger{log: log, traceID: traceID}
 }
+
+type level int
+
+const (
+	levelDebug level = iota
+	levelInfo
+	levelWarn
+	levelError
+)
 
 // Debug logs at debug level with slog-style alternating key/value args.
 func (s SlogStyleLogger) Debug(msg string, args ...any) {
-	s.log4(context.Background(), slog.LevelDebug, msg, args, false)
+	s.write(context.Background(), false, levelDebug, msg, args)
 }
 
 // Info logs at info level with slog-style alternating key/value args.
 func (s SlogStyleLogger) Info(msg string, args ...any) {
-	s.log4(context.Background(), slog.LevelInfo, msg, args, false)
+	s.write(context.Background(), false, levelInfo, msg, args)
 }
 
 // Warn logs at warn level with slog-style alternating key/value args.
 func (s SlogStyleLogger) Warn(msg string, args ...any) {
-	s.log4(context.Background(), slog.LevelWarn, msg, args, false)
+	s.write(context.Background(), false, levelWarn, msg, args)
 }
 
 // Error logs at error level with slog-style alternating key/value args.
 func (s SlogStyleLogger) Error(msg string, args ...any) {
-	s.log4(context.Background(), slog.LevelError, msg, args, false)
+	s.write(context.Background(), false, levelError, msg, args)
 }
 
-// DebugContext logs at debug level, adding a trace_id field from ctx's span
-// when present.
+// DebugContext logs at debug level, adding trace_id from ctx when present.
 func (s SlogStyleLogger) DebugContext(ctx context.Context, msg string, args ...any) {
-	s.log4(ctx, slog.LevelDebug, msg, args, true)
+	s.write(ctx, true, levelDebug, msg, args)
 }
 
-// InfoContext logs at info level, adding a trace_id field from ctx's span
-// when present.
+// InfoContext logs at info level, adding trace_id from ctx when present.
 func (s SlogStyleLogger) InfoContext(ctx context.Context, msg string, args ...any) {
-	s.log4(ctx, slog.LevelInfo, msg, args, true)
+	s.write(ctx, true, levelInfo, msg, args)
 }
 
-// WarnContext logs at warn level, adding a trace_id field from ctx's span
-// when present.
+// WarnContext logs at warn level, adding trace_id from ctx when present.
 func (s SlogStyleLogger) WarnContext(ctx context.Context, msg string, args ...any) {
-	s.log4(ctx, slog.LevelWarn, msg, args, true)
+	s.write(ctx, true, levelWarn, msg, args)
 }
 
-// ErrorContext logs at error level, adding a trace_id field from ctx's span
-// when present.
+// ErrorContext logs at error level, adding trace_id from ctx when present.
 func (s SlogStyleLogger) ErrorContext(ctx context.Context, msg string, args ...any) {
-	s.log4(ctx, slog.LevelError, msg, args, true)
+	s.write(ctx, true, levelError, msg, args)
 }
 
-func (s SlogStyleLogger) log4(ctx context.Context, level slog.Level, msg string, args []any, withCtx bool) {
-	if withCtx {
-		if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
-			args = append(append([]any{}, args...), "trace_id", span.SpanContext().TraceID().String())
-		}
-	}
+func (s SlogStyleLogger) write(ctx context.Context, withTrace bool, lvl level, msg string, args []any) {
 	if s.log == nil {
-		slog.Default().Log(ctx, level, msg, args...)
 		return
 	}
 	fields := kvToFields(args)
-	switch level {
-	case slog.LevelDebug:
+	if withTrace && s.traceID != nil {
+		if id := s.traceID(ctx); id != "" {
+			fields["trace_id"] = id
+		}
+	}
+	switch lvl {
+	case levelDebug:
 		s.log.Debug(msg, fields)
-	case slog.LevelInfo:
+	case levelInfo:
 		s.log.Info(msg, fields)
-	case slog.LevelWarn:
+	case levelWarn:
 		s.log.Warn(msg, fields)
-	case slog.LevelError:
-		s.log.Error(msg, fields)
 	default:
 		s.log.Error(msg, fields)
 	}

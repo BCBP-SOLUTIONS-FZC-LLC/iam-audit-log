@@ -1,6 +1,10 @@
 package metrics
 
-import "time"
+import (
+	"time"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
+)
 
 // CatalogPoll implements port.PollMetrics for the CAT-I2 poller (AL-D15).
 type CatalogPoll struct{}
@@ -8,7 +12,7 @@ type CatalogPoll struct{}
 // PollResult counts one poll and times the dependency call.
 func (CatalogPoll) PollResult(result string, took time.Duration) {
 	CatalogPlansPolls.WithLabelValues(result).Inc()
-	DependencyRequestSeconds.WithLabelValues("iam-catalog-admin", "plans").Observe(took.Seconds())
+	Dependency{}.ObserveDependency(port.DependencyCatalogAdmin, port.OperationListPlans, result, took)
 }
 
 // PollSucceeded resets the staleness clock.

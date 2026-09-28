@@ -32,8 +32,6 @@ func TestLoadServer_Defaults(t *testing.T) {
 		"SERVICE_NAME":                    {c.ServiceName, "iam-audit-log"},
 		"APP_PORT":                        {c.AppPort, "8080"},
 		"METRICS_PORT":                    {c.MetricsPort, "9090"},
-		"SQS_MAX_RECEIVE_COUNT":           {c.SQSMaxReceiveCount, 5},
-		"SQS_VISIBILITY_TIMEOUT":          {c.SQSVisibilityTimeout, 30 * time.Second},
 		"GLUE_REGISTRY_REGION":            {c.GlueRegistryRegion, "ap-south-1"},
 		"AUDIT_ARCHIVE_BUCKET":            {c.ArchiveBucket, "iam-audit-archive"},
 		"AUDIT_ARCHIVE_KMS_KEY":           {c.ArchiveKMSKey, "alias/iam-audit-archive"},
@@ -140,8 +138,8 @@ func TestEnvParsing_ValidOverridesAndInvalidFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.SQSVisibilityTimeout != 45*time.Second || c.MaxIngestBatch != 250 {
-		t.Errorf("valid overrides ignored: %v %d", c.SQSVisibilityTimeout, c.MaxIngestBatch)
+	if c.MaxIngestBatch != 250 {
+		t.Errorf("valid overrides ignored: %d", c.MaxIngestBatch)
 	}
 	if c.CatalogPollInterval != 600*time.Second || c.MaxMetadataBytes != 8192 {
 		t.Errorf("invalid values must fall back to LLD defaults: %v %d", c.CatalogPollInterval, c.MaxMetadataBytes)

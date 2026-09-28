@@ -21,22 +21,45 @@ o=$(grep -rlE 'otel\.SetTracerProvider\(|sdktrace\.NewTracerProvider\(|"go\.open
 [ -z "$o" ] || fail "a TracerProvider is configured outside gincommon.InitTracingFromEnv():" "$o"
 echo "OK"
 
-# ── Database: pgx via platform-pgcommon only (tests included) ──────────────
+# ── Database: every connection, configuration and operation goes through
+# platform-pgcommon (tests included; BUILD_PLAN gap 44) ─────────────────────
+#   connection:    pools only via pgcommon.NewPool; no other driver, no
+#                  pgx.Connect / pgxpool.New* / ParseConfig (DSN parsing).
+#   configuration: pool config only from pgcommon.ConfigFromEnv (production)
+#                  — the service injects just the per-role DSN; PG_* tuning is
+#                  never read by this repo; migrations only via
+#                  platform-pgcommon/pkg/migrate.
+#   operation:     transactions only via pgcommon (RunInTx*, Pool.WithTx,
+#                  Pool.WithConn) — no raw Begin/BeginTx/Acquire; Postgres
+#                  errors classified only via pgcommon.Is*/ConstraintName —
+#                  no pgconn.PgError; raw SQL only in the postgres adapter.
 echo "Checking database invariant (platform-pgcommon only)..."
-o=$(grep -rlE '"database/sql"|"github\.com/lib/pq"|"github\.com/jackc/pgx/v5/stdlib"' --include="*.go" . 2>/dev/null || true)
+all()  { grep -rlE "$1" --include="*.go" . 2>/dev/null || true; }
+prod() { grep -rlE "$1" --include="*.go" cmd internal pkg api 2>/dev/null | grep -v "_test\.go" || true; }
+
+o=$(all '"database/sql"|"github\.com/lib/pq"|"github\.com/jackc/pgx/v5/stdlib"')
 [ -z "$o" ] || fail "a Postgres driver other than pgx-via-pgcommon is imported:" "$o"
-o=$(grep -rlE 'pgxpool\.New\(|pgxpool\.NewWithConfig\(|pgx\.Connect\(|pgx\.ConnectConfig\(' --include="*.go" . 2>/dev/null || true)
-[ -z "$o" ] || fail "a pool/connection is constructed outside pgcommon.NewPool:" "$o"
-o=$(grep -rlE '"github\.com/golang-migrate/migrate' --include="*.go" . 2>/dev/null || true)
+o=$(all 'pgxpool\.(New|NewWithConfig|ParseConfig)\(|pgx\.(Connect|ConnectConfig|ParseConfig)\(|pgconn\.(Connect|ParseConfig)\(')
+[ -z "$o" ] || fail "a connection/pool is constructed or configured outside pgcommon.NewPool:" "$o"
+o=$(all '"github\.com/golang-migrate/migrate')
 [ -z "$o" ] || fail "golang-migrate imported directly instead of platform-pgcommon/pkg/migrate:" "$o"
-# Raw SQL lives only in the postgres adapter (LLD §3.2).
-o=$(grep -rlE '"github\.com/jackc/pgx/v5"' --include="*.go" internal/ pkg/ 2>/dev/null | grep -v "_test.go" | grep -v "^internal/adapter/outbound/postgres/" || true)
+o=$(prod '"github\.com/jackc/pgx/v5' | grep -v "^internal/adapter/outbound/postgres/" || true)
 [ -z "$o" ] || fail "pgx imported outside internal/adapter/outbound/postgres (raw SQL is confined there, LLD §3.2):" "$o"
+o=$(prod '\.(Begin|BeginTx|BeginFunc|BeginTxFunc|Acquire|AcquireFunc)\(ctx')
+[ -z "$o" ] || fail "a transaction/connection is opened directly instead of via pgcommon RunInTx/WithTx/WithConn:" "$o"
+o=$(prod 'pgconn\.PgError')   # tests may fabricate PgErrors to simulate failures
+[ -z "$o" ] || fail "a Postgres error is classified directly instead of via pgcommon.Is*/ConstraintName:" "$o"
+o=$(prod 'pgcommon\.Config\{')
+[ -z "$o" ] || fail "a pool config is built by hand in production code instead of from pgcommon.ConfigFromEnv:" "$o"
+o=$(prod 'Getenv\("PG_|LookupEnv\("PG_')
+[ -z "$o" ] || fail "a PG_* pool setting is read by this repo instead of by pgcommon.ConfigFromEnv:" "$o"
+o=$(prod 'pgcommon\.ConfigFromEnv\(' | grep -v "^internal/adapter/outbound/postgres/" || true)
+[ -z "$o" ] || fail "pgcommon.ConfigFromEnv called outside the postgres adapter's pool-config builders:" "$o"
 echo "OK"
 
 # ── Transport confinement (LLD §3.2) ───────────────────────────────────────
-# SQS: only cmd/server/main.go builds the *sqs.Client handed to
-# events.NewSQSConsumerWithClient. S3: only the s3 adapter + composition
+# SQS: only cmd/server/main.go builds a *sqs.Client, and only for the DLQ
+# depth gauge; consumers are built by platform-events (events.NewSQSConsumer). S3: only the s3 adapter + composition
 # roots (client construction). Glue: only the glue adapter + cmd/server.
 # test/ is exempt: harnesses (test/fixtures, test/integration) play the
 # external producer / AWS side — same exemption iam-org-membership's

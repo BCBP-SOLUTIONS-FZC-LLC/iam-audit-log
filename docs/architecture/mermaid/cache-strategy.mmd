@@ -1,0 +1,22 @@
+flowchart TD
+    subgraph none["Request path — NO cache (AL-D5)"]
+        Q1([AL-1 / AL-2 / AL-7 read]) --> Q2["PostgreSQL under RLS\n(+ sealed S3 objects for archived months)"]
+        Q2 --> Q3["response — always the store's current state\n(a compliance store must not serve stale history)"]
+    end
+
+    subgraph plans["In-process CAT-I2 plan-window map (AL-D15) — not a request-path cache"]
+        P1["PlanPoller.Run\npoll once at startup, then every CATALOG_PLANS_POLL_INTERVAL (600 s)"] --> P2["GET /api/v1/internal/plans\n(iam-system headers, CATALOG_PLANS_POLL_TIMEOUT 3 s, 1 MiB cap)"]
+        P2 --> P3{"valid response and\nrecord_versions changed?"}
+        P3 -- yes --> P4["atomic swap of the plan_code → days snapshot"]
+        P3 -- "unchanged" --> P5["keep current snapshot"]
+        P2 -. "error / timeout / malformed" .-> P6["stale-if-error:\nkeep last good snapshot\ncatalog_plans_stale_seconds climbs (RB-8)"]
+        P4 --> W["QueryService / bus projection\nwindow = map → tenant row value → default (D-13)"]
+        P5 --> W
+        P6 --> W
+    end
+
+    subgraph exports["Export downloads (D-11)"]
+        E1["export object retained 7 d (EXPORT_SIGNED_URL_TTL)"] --> E2["each AL-4 poll presigns a FRESH short-lived URL\n(EXPORT_DOWNLOAD_URL_TTL, 15 m) — nothing cached"]
+    end
+
+    note1["No Valkey dependency (LLD §3.1). Every replica holds its own plan snapshot;\na cold replica falls back to the stored tenant_plan_window value, never shrinking a window."]

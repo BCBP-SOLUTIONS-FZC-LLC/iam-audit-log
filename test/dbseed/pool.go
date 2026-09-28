@@ -18,7 +18,6 @@ import (
 // (copied from iam-org-membership/test/dbseed).
 type Pool struct {
 	inner *pgcommon.Pool
-	dsn   string
 }
 
 // New opens a pgcommon pool against dsn (typically the testcontainer
@@ -32,7 +31,7 @@ func New(ctx context.Context, dsn string) (*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Pool{inner: inner, dsn: dsn}, nil
+	return &Pool{inner: inner}, nil
 }
 
 // Close releases the pool.
@@ -117,16 +116,6 @@ func (p *Pool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, er
 // WithTx runs fn in a transaction.
 func (p *Pool) WithTx(ctx context.Context, fn func(ctx context.Context, tx pgx.Tx) error) error {
 	return p.inner.WithTx(ctx, pgx.TxOptions{}, fn)
-}
-
-// Config matches pgxpool.Pool.Config() for tests that extract the DSN
-// (migrations round-trip).
-func (p *Pool) Config() *pgxpool.Config {
-	cfg, err := pgxpool.ParseConfig(p.dsn)
-	if err != nil {
-		return &pgxpool.Config{}
-	}
-	return cfg
 }
 
 type bufferedRows struct {

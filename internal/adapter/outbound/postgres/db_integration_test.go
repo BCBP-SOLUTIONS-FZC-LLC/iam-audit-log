@@ -18,7 +18,7 @@ import (
 
 func openPool(ctx context.Context, t *testing.T, dsn string) *pgcommon.Pool {
 	t.Helper()
-	cfg, _ := AppPoolConfig(dsn, &recLogger{}, NewOTelTracer("test"))
+	cfg, _ := AppPoolConfig(dsn, &recLogger{}, stubTracer{})
 	pool, err := pgcommon.NewPool(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

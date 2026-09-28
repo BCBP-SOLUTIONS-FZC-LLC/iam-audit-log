@@ -3,8 +3,6 @@ package port
 import (
 	"context"
 	"testing"
-
-	"go.opentelemetry.io/otel/trace"
 )
 
 type entry struct {
@@ -22,17 +20,24 @@ func (r *recLogger) Info(m string, f map[string]any)  { r.add("info", m, f) }
 func (r *recLogger) Warn(m string, f map[string]any)  { r.add("warn", m, f) }
 func (r *recLogger) Error(m string, f map[string]any) { r.add("error", m, f) }
 
+type traceKey struct{}
+
+const testTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+
+// fakeTraceID stands in for telemetry.TraceID: the port never touches OTel.
+func fakeTraceID(ctx context.Context) string {
+	id, _ := ctx.Value(traceKey{}).(string)
+	return id
+}
+
 func spanCtx(t *testing.T) (context.Context, string) {
 	t.Helper()
-	tid, _ := trace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
-	sid, _ := trace.SpanIDFromHex("00f067aa0ba902b7")
-	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid, TraceFlags: trace.FlagsSampled})
-	return trace.ContextWithSpanContext(context.Background(), sc), tid.String()
+	return context.WithValue(context.Background(), traceKey{}, testTraceID), testTraceID
 }
 
 func TestSlogStyleLogger_RoutesLevelsAndFields(t *testing.T) {
 	rec := &recLogger{}
-	l := NewSlogStyleLogger(rec)
+	l := NewSlogStyleLogger(rec, fakeTraceID)
 	l.Debug("d", "k", 1)
 	l.Info("i", "k", 2)
 	l.Warn("w", "k", 3)
@@ -54,7 +59,7 @@ func TestSlogStyleLogger_RoutesLevelsAndFields(t *testing.T) {
 
 func TestSlogStyleLogger_ContextVariantsAddTraceID(t *testing.T) {
 	rec := &recLogger{}
-	l := NewSlogStyleLogger(rec)
+	l := NewSlogStyleLogger(rec, fakeTraceID)
 	ctx, tid := spanCtx(t)
 	l.DebugContext(ctx, "d")
 	l.InfoContext(ctx, "i")
@@ -73,11 +78,22 @@ func TestSlogStyleLogger_ContextVariantsAddTraceID(t *testing.T) {
 	}
 }
 
-func TestSlogStyleLogger_ZeroValueFallsBackToSlog(t *testing.T) {
-	var l SlogStyleLogger // nil Logger
+// A nil Logger drops lines: there is no fallback sink outside
+// platform-gincommon's logger (BUILD_PLAN gap 43).
+func TestSlogStyleLogger_ZeroValueDropsNoFallback(t *testing.T) {
+	var l SlogStyleLogger
 	ctx, _ := spanCtx(t)
-	l.Info("fallback", "k", "v")
-	l.ErrorContext(ctx, "fallback")
+	l.Info("dropped", "k", "v")
+	l.ErrorContext(ctx, "dropped")
+}
+
+func TestSlogStyleLogger_NilTraceIDFunc(t *testing.T) {
+	rec := &recLogger{}
+	ctx, _ := spanCtx(t)
+	NewSlogStyleLogger(rec, nil).InfoContext(ctx, "x", "k", 1)
+	if _, has := rec.entries[0].fields["trace_id"]; has || rec.entries[0].fields["k"] != 1 {
+		t.Errorf("fields = %v", rec.entries[0].fields)
+	}
 }
 
 func TestKVToFields_DropsUnpairedAndNonStringKeys(t *testing.T) {

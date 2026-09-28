@@ -1,0 +1,21 @@
+# Which conformance checks test/unit/metrics_registry_test.go runs (the
+# Enterprise Platform Observability Standard's CI validation list) and the
+# label-key denylist it enforces. Loaded by the test itself: flipping a check
+# to false here disables it there, so this file is load-bearing.
+checks:
+  namespace_classification: true       # each series' prefix matches its declared tier (platform_ / iam_ / iam_audit_log_)
+  no_service_name_in_shared_names: true # no platform_*/iam_* name encodes "audit_log" (naming rules 1, 2)
+  counter_suffix: true                  # counters end _total (rule 4)
+  histogram_suffix: true                # histograms end _seconds (rule 5)
+  gauge_naming: true                    # non-deprecated gauges carry a quantity token and never end _total (rule 6)
+  required_labels: true                 # injected labels per tier are present on every series
+  central_injection: true               # service/domain values equal the registry's, never per call site (rule 8)
+  shared_registry_compliance: true      # every platform_*/iam_* series is in registry.go, Canonical, with the ratified label set (rules 10-12)
+  label_vocabulary_compliance: true     # shared metrics use only label_vocabulary keys, and enumerated values stay in-vocabulary
+  label_cardinality_allowlist: true     # no forbidden_label_keys entry appears on any series
+  inventory_complete: true              # every registered collector is in metric-registry.yaml, and vice versa
+  deprecation_metadata: true            # deprecated entries name a registered replacement and a sunset
+
+gauge_quantity_tokens: [_seconds, _bytes, _ratio, _depth, _rows, _partitions, _tasks]
+
+forbidden_label_keys: [tenant_id, user_id, realm, sub, email, request_id, event_id, session_id, actor_id, target_id, trace_id]

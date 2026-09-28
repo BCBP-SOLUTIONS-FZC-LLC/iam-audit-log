@@ -1,0 +1,71 @@
+graph TD
+    subgraph cmd["Composition Roots  —  cmd/"]
+        main["server/main.go\ngincommon logger first, then config.LoadServer\nmigrations via platform-pgcommon/pkg/migrate (audit_migrator DSN)\npgcommon.NewPool (AppPoolConfig: GUCProvider, PGBouncerMode forced true)\nstartup role check (audit_app, NOBYPASSRLS)\nbackground goroutines: PlanPoller (CAT-I2) · export worker · OpsMonitor (D-21)\nconsumer fleet: 11 × events.NewSQSConsumer (config.LoadSQS)\nrouter + /metrics listener (telemetry.MetricsHandler)"]
+        reconciler["reconciler/main.go\nsingle binary, --job=<name> dispatch (audit_reconciler, BYPASSRLS)\nreconcile · redaction-retry · redaction-sweep · processed-events-prune"]
+        jobs["reconciler/jobs/\nReconcile · RedactionRetry · RedactionSweep · ProcessedEventsPrune\nContext = dependency bag (ports only)"]
+    end
+
+    subgraph adapters_in["Inbound Adapters  —  internal/adapter/inbound/"]
+        http_h["http/\nNewRouter (single route table, shared with e2e)\nIngestHandler — AL-5/AL-6 (Idempotency-Key, 207 batch)\nQueryHandler — AL-1..AL-4, AL-7\nIdentityBridge · RequireAuditReader · RequireSystemRole\nTenantRateLimiter (AL-6, AL-3) · AsyncAPI docs"]
+        consumer["consumer/\nFleet — one platform-events consumer per *-audit-q\nHandler → IngestService.IngestBus (Envelope.ID = dedup key)\ninstrument — Tier-1 message metrics (bounded event_type, reason)\nDeadLetterObserveAt = SQS_MAX_RECEIVE_COUNT − 1"]
+    end
+
+    subgraph adapters_out["Outbound Adapters  —  internal/adapter/outbound/"]
+        postgres["postgres/\nAuditRepository (Append · AppendWithRedaction · ApplyRedaction)\nQueryRepository · ExportRepository · PlanWindowRepository\nArchiveRepository · RedactionRepository · PartitionRepository · OpsRepository\nTxRunner / withPool (pgcommon.RunInTx*) · wrapConnErr\nmigrations/ 000001..000010"]
+        s3["s3/\nStore — ReadArchive · PutExport · PresignExport\nPutArchive · ArchiveChecksum (SSE-KMS, Object Lock verify)"]
+        glue["glue/\ndecode-only Codec (18-byte header, zlib, bomb-bounded)\nRegistryResolver (glue:GetSchemaVersion) · schema-validated\nEncode refuses (AL-INV-10)"]
+        catalog["catalog/\nClient — GET /api/v1/internal/plans (CAT-I2)\niam-system headers · 1 MiB cap · ErrCatalogTimeout"]
+        metrics["metrics/\nbusiness.go — 32 collectors, three tiers\nregistry.go — PlatformRegistry · DomainRegistry (Canonical)\nadapters: Consumer · Ingest · Query · Ops · Archive · Redaction · CatalogPoll\nDependency + Instrumented S3 decorators"]
+        telemetry["telemetry/\nthe one OTel / promhttp seam (gap 43)\nNewTracer · TraceID · MetricsHandler · HTTPErrorLog · QuietGin"]
+    end
+
+    subgraph core["Core  —  internal/core/"]
+        service["service/\nIngestService (direct-write + bus + redaction trigger)\nQueryService (AL-1/AL-2/AL-7) · ExportService (AL-3/AL-4 + worker)\nPlanPoller (AL-D15) · OpsMonitor (D-21)\nArchiveService (§8.5) · PartitionService (§4.4)"]
+        port["port/\nAuditWriter · RedactionStore · RedactionTasks · AuditReader\nArchiveReader · ExportStore · ExportJobs · ArchiveRepository · ArchiveStore\nPlanCatalog · PlanWindows · PlanProjector · PartitionManager · LedgerPruner\nOpsStatsReader · QueueDepths · metric ports · Tracer · Logger\nlabel vocabulary constants (Reason*/Outcome*/Dependency*/Operation*)"]
+        domain["domain/\nAuditEntry · ActorRef · taxonomy (§7.1, EventTypeLabel)\nBuildDirectWriteEntry · BuildBusEntry (D-8/D-9)\nQueryFilter · Cursor · ClampWindow · ArchiveKey · lifecycle (RetainUntil, ArchiveEligible)\nRedactionTrigger · RedactOnIngest · §17 Error catalogue"]
+    end
+
+    subgraph pkg["Shared Packages  —  pkg/ and internal/"]
+        requestctx["pkg/requestctx/\nRequestContext{UserID, TenantID, Roles}\nIsAuditReader · IsSystem"]
+        config["internal/config/\nLoadServer · LoadReconciler · InboundQueues()\n(PG_* via pgcommon, SQS_* via platform-events, OTEL_* via gincommon)"]
+        eventschema["internal/eventschema/\nembedded per-source JSON Schemas"]
+    end
+
+    subgraph tests["Tests  —  test/"]
+        unit["unit/\nLLD/taxonomy/asyncapi/deploy/migrations contracts\nmetrics_registry_test (Observability Standard conformance)\nobservability_contract_test (LLD §11, alerts, log hygiene)"]
+        postgres_t["postgres/\nRLS Cases 1–4, GUC no-leak, grants, partitions\ningest · query · export · redaction · archive · ops"]
+        integration["integration/\nfloci SQS/SNS/Glue/S3 + PG15: real fleet, redaction e2e,\nreconciler archive→verify→drop→re-open, DLQ depth"]
+        e2e["e2e/\nreal NewRouter + binaries: AL-1..AL-7, exports, process tests"]
+    end
+
+    main --> http_h
+    main --> consumer
+    main --> postgres
+    main --> s3
+    main --> glue
+    main --> catalog
+    main --> metrics
+    main --> telemetry
+    reconciler --> jobs
+    reconciler --> postgres
+    reconciler --> s3
+    reconciler --> metrics
+    reconciler --> telemetry
+    jobs --> service
+    http_h --> service
+    http_h --> requestctx
+    consumer --> service
+    service --> port
+    service --> domain
+    postgres --> port
+    s3 --> port
+    glue --> port
+    glue --> eventschema
+    catalog --> port
+    metrics --> port
+    telemetry --> port
+    port --> domain
+    unit -.->|"imports"| domain
+    postgres_t -.->|"imports"| postgres
+    integration -.->|"imports"| consumer
+    e2e -.->|"imports"| http_h

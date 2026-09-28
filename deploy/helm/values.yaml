@@ -39,6 +39,9 @@ autoscaling:
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
   targetRPSPerReplica: 0
+  # Opt-in: scale on the inbound audit-queue backlog (platform_queue_depth,
+  # summed via deploy/monitoring/prometheus-adapter-rule.yaml). 0 = off.
+  targetQueueDepthPerReplica: 0
 
 resources:
   requests:
@@ -73,6 +76,7 @@ serverEnv:
   GLUE_REGISTRY_REGION: "ap-south-1"
   SQS_MAX_RECEIVE_COUNT: "5"
   SQS_VISIBILITY_TIMEOUT: "30s"
+  SQS_CONCURRENCY: "4"                  # per-queue handler concurrency (read by platform-events config.LoadSQS, gap 45)
   AUTH_AUDIT_QUEUE_URL: ""
   USER_AUDIT_QUEUE_URL: ""
   MEMBERSHIP_AUDIT_QUEUE_URL: ""

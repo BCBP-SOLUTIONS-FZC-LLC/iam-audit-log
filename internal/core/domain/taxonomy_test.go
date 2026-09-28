@@ -187,3 +187,19 @@ func TestTaxonomy_WorkflowWireAliases_D7(t *testing.T) {
 		t.Errorf("unmapped wire type → %s/%v", et, ok)
 	}
 }
+
+// EventTypeLabel keeps only types the §7.1 taxonomy knows for the topic, so a
+// producer can never create unbounded metric label cardinality.
+func TestEventTypeLabel(t *testing.T) {
+	for _, tc := range []struct{ topic, typ, want string }{
+		{TopicUser, "UserDeleted", "UserDeleted"},
+		{TopicUser, "TenantOffboarded", "unknown"}, // real type, wrong topic
+		{TopicUser, "NoSuchEvent", "unknown"},
+		{TopicUser, "", "unknown"},
+		{"no.such.topic", "UserDeleted", "unknown"},
+	} {
+		if got := EventTypeLabel(tc.topic, tc.typ); got != tc.want {
+			t.Errorf("EventTypeLabel(%q, %q) = %q, want %q", tc.topic, tc.typ, got, tc.want)
+		}
+	}
+}

@@ -77,7 +77,7 @@ func TestAppPoolConfig_ForcesTransactionLocalGUC_ALINV3(t *testing.T) {
 
 func TestPoolConfigs(t *testing.T) {
 	log := &recLogger{}
-	tr := NewOTelTracer("svc")
+	tr := stubTracer{}
 
 	app, _ := AppPoolConfig("postgres://app", log, tr)
 	if app.DSN != "postgres://app" || app.GUCProvider == nil || !app.PGBouncerMode || app.Tracer == nil || app.Logger == nil {
@@ -117,14 +117,12 @@ func TestLoggerAdapter_ForwardsAllLevels(t *testing.T) {
 	}
 }
 
-func TestOTelTracer(t *testing.T) {
-	for _, name := range []string{"", "iam-audit-log"} {
-		ctx, end := NewOTelTracer(name).StartSpan(context.Background(), "q")
-		if ctx == nil {
-			t.Fatal("nil ctx")
-		}
-		end()
-	}
+// stubTracer satisfies port.Tracer; real spans come from the telemetry
+// adapter (gincommon's TracerProvider).
+type stubTracer struct{}
+
+func (stubTracer) StartSpan(ctx context.Context, _ string) (context.Context, func()) {
+	return ctx, func() {}
 }
 
 func TestWithTx_RoundTrip(t *testing.T) {

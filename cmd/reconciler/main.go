@@ -19,12 +19,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"go.opentelemetry.io/otel"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/cmd/reconciler/jobs"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
 	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
 	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/telemetry"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
 
@@ -58,29 +58,31 @@ func run() int {
 		return 2
 	}
 
+	// The platform-gincommon logger comes first so every later line goes
+	// through it; stderr is used only when it cannot be built (gap 43).
+	rawLog, err := logger.NewLogger(config.AppEnv())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "init logger: "+err.Error())
+		return 1
+	}
+	log := port.NewSlogStyleLogger(rawLog, telemetry.TraceID)
+
 	registry := jobRegistry()
 	if jobName == "" {
-		fmt.Fprintln(os.Stderr, "no job specified — pass --job=<name> or set RECONCILER_JOB")
+		log.Error("no job specified — pass --job=<name> or set RECONCILER_JOB", "valid", names(registry))
 		return 1
 	}
 	fn, ok := registry[jobName]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown job %q — valid: %v\n", jobName, names(registry))
+		log.Error("unknown job", "job", jobName, "valid", names(registry))
 		return 1
 	}
 
 	cfg, err := config.LoadReconciler(buildVersion, jobName)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
+		log.Error("invalid configuration", "error", err.Error())
 		return 1
 	}
-
-	rawLog, err := logger.NewLogger(cfg.AppEnv)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "init logger: "+err.Error())
-		return 1
-	}
-	log := port.NewSlogStyleLogger(rawLog)
 	shutdownTracing := gincommon.InitTracingFromEnv()
 	defer shutdownTracing()
 	defer func() {
@@ -99,10 +101,10 @@ func run() int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
-	ctx, span := otel.Tracer(cfg.ServiceName).Start(ctx, "reconciler."+jobName)
-	defer span.End()
+	ctx, endSpan := telemetry.NewTracer(cfg.ServiceName).StartSpan(ctx, "reconciler."+jobName)
+	defer endSpan()
 
-	pgCfg, pgWarnings := pgadapter.ReconcilerPoolConfig(cfg.ReconcilerDatabaseURL, rawLog, pgadapter.NewOTelTracer(cfg.ServiceName))
+	pgCfg, pgWarnings := pgadapter.ReconcilerPoolConfig(cfg.ReconcilerDatabaseURL, rawLog, telemetry.NewTracer(cfg.ServiceName))
 	for _, w := range pgWarnings {
 		log.Warn("postgres config warning", "key", w.Key, "reason", w.Reason)
 	}
@@ -145,7 +147,7 @@ func run() int {
 		RawLogger:              rawLog,
 		Partitions:             pgadapter.NewPartitionRepository(pool),
 		Archives:               archives,
-		ArchiveStore:           buildArchiveStore(awsCfg, cfg),
+		ArchiveStore:           metrics.InstrumentedArchiveStore{Inner: buildArchiveStore(awsCfg, cfg)},
 		ArchiveMetrics:         metrics.Archive{},
 		Ledger:                 archives,
 		Redactions:             pgadapter.NewRedactionRepository(pool),

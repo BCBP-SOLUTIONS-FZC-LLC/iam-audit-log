@@ -277,3 +277,14 @@ func BusMappings() []BusMapping {
 	}
 	return out
 }
+
+// EventTypeLabel bounds a bus event type for use as a metric label value:
+// a type known to the §7.1 taxonomy for its topic is kept, and anything
+// else becomes "unknown". A producer can therefore never create unbounded
+// label cardinality (Observability Standard: no unbounded labels).
+func EventTypeLabel(topic, eventType string) string {
+	if _, _, known := ClassifyBus(topic, eventType); known {
+		return eventType
+	}
+	return "unknown"
+}

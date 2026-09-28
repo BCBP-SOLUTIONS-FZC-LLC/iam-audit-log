@@ -19,4 +19,7 @@ func (Archive) Pruned(tier coredomain.RetentionTier) {
 }
 
 // Stalled sets the number of partitions the run could not drop.
-func (Archive) Stalled(n int) { ArchiveStalled.Set(float64(n)) }
+func (Archive) Stalled(n int) {
+	ArchiveStalled.Set(float64(n))
+	LegacyArchiveStalled.Set(float64(n))
+}

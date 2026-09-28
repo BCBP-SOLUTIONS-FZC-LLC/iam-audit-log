@@ -55,7 +55,7 @@ func (l *levelLog) Error(string, map[string]any) { l.errs++ }
 
 func retryCtx(r *fakeRedactions, m countMetrics, log *levelLog) *Context {
 	c := &Context{Redactions: r, RedactionRetryMinAge: 5 * time.Minute, RedactionRetryBatch: 7,
-		Logger: port.NewSlogStyleLogger(log)}
+		Logger: port.NewSlogStyleLogger(log, nil)}
 	if m != nil {
 		c.RedactionMetrics = m
 	}

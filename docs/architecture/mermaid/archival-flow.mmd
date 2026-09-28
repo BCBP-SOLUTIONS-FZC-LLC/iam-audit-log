@@ -1,0 +1,41 @@
+sequenceDiagram
+    participant CJ as CronJob reconcile (02:00)
+    participant PS as PartitionService
+    participant AS as ArchiveService
+    participant AR as ArchiveRepository (audit_reconciler)
+    participant S3 as S3 iam-audit-archive (SSE-KMS, Object Lock)
+    participant DB as PostgreSQL
+
+    CJ ->>+ PS: EnsureAhead — audit_ensure_partitions(ahead, trailing)
+    PS -->>- CJ: created / existing / skipped
+    CJ ->>+ AS: Run
+    AS ->> AR: ReopenCandidates — DEFAULT rows in a dropped month (D-19)
+    opt late rows for a dropped month
+        AS ->> DB: audit_reopen_partition(p) — swap DEFAULT, recreate month, re-route rows
+    end
+    loop each attached month past the hot window (ArchiveEligible)
+        AS ->> AR: PendingRedaction(p) — AL-INV-12 backstop
+        alt pending task touches p
+            AS ->> AS: skip · redaction_blocked_archive_total
+        else
+            loop retained tiers security_3y, compliance_7y (not yet verified)
+                AS ->> AR: MarkArchiving · NextParts (after sealed parts, D-20)
+                AS ->> AR: StreamTier (REPEATABLE READ, via parent, tenant/occurred_at/id)
+                AS ->> S3: PutArchive per tenant part — retain-until = max_occurred_at + tier
+                AS ->> AR: UpsertObject (sha256, subject_ids, id/time ranges)
+                AS ->> AR: FinishArchive — drop stale unsealed rows, archived
+                AS ->> S3: ArchiveChecksum — body sha256 + lock echo
+                AS ->> AR: MarkVerified (only from archived)
+            end
+            AS ->> AR: MarkAccessExpiring (access_90d)
+            AS ->> DB: audit_drop_partition(p)
+            alt dropped
+                Note over DB: ACCESS EXCLUSIVE · both tiers verified · counts = unsealed manifest<br/>· no pending redaction → seal manifest · DETACH + DROP (AL-INV-9)
+            else count_mismatch (late row)
+                AS ->> AR: ResetForRearchive → re-archive once, then drop
+            else not_verified / redaction_pending
+                AS ->> AS: stalled / blocked — partition kept
+            end
+        end
+    end
+    AS -->>- CJ: summary (non-zero exit if blocked or stalled)

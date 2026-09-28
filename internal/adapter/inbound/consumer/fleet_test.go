@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -43,12 +44,29 @@ func (f *fakeConsumer) Stop() error {
 type recMetrics struct {
 	mu                              sync.Mutex
 	received, processed, failed, dl int
+	propagated                      int
+	lastQueue, lastType, lastReason string
 }
 
-func (m *recMetrics) Received(string)     { m.mu.Lock(); m.received++; m.mu.Unlock() }
-func (m *recMetrics) Processed(string)    { m.mu.Lock(); m.processed++; m.mu.Unlock() }
-func (m *recMetrics) Failed(string)       { m.mu.Lock(); m.failed++; m.mu.Unlock() }
+func (m *recMetrics) Received(q, et string) {
+	m.mu.Lock()
+	m.received++
+	m.lastQueue, m.lastType = q, et
+	m.mu.Unlock()
+}
+func (m *recMetrics) Processed(et string) { m.mu.Lock(); m.processed++; m.lastType = et; m.mu.Unlock() }
+func (m *recMetrics) Failed(et, reason string) {
+	m.mu.Lock()
+	m.failed++
+	m.lastType, m.lastReason = et, reason
+	m.mu.Unlock()
+}
 func (m *recMetrics) DeadLettered(string) { m.mu.Lock(); m.dl++; m.mu.Unlock() }
+func (m *recMetrics) Propagated(string, time.Duration) {
+	m.mu.Lock()
+	m.propagated++
+	m.mu.Unlock()
+}
 
 type captured struct {
 	url     string
@@ -123,8 +141,9 @@ func TestFleet_HealthReportsExitedConsumer(t *testing.T) {
 // so SQS redrives to <queue>-dlq — AL-EVT-4).
 func TestInstrumentAndDeadLetter_ALEVT4(t *testing.T) {
 	m := &recMetrics{}
-	ok := instrument("q", m, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })
-	bad := instrument("q", m, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })
+	q := Queue{Name: "q", Topic: domain.TopicUser}
+	ok := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })
+	bad := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })
 	_ = ok(context.Background(), events.Envelope[json.RawMessage]{})
 	_ = bad(context.Background(), events.Envelope[json.RawMessage]{})
 	if m.received != 2 || m.processed != 1 || m.failed != 1 {
@@ -133,8 +152,8 @@ func TestInstrumentAndDeadLetter_ALEVT4(t *testing.T) {
 	if err := deadLetter("q", m)(context.Background(), events.Envelope[json.RawMessage]{}); err == nil || m.dl != 1 {
 		t.Error("dead-letter handler must count and return an error")
 	}
-	_ = instrument("q", nil, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })(context.Background(), events.Envelope[json.RawMessage]{})
-	_ = instrument("q", nil, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })(context.Background(), events.Envelope[json.RawMessage]{})
+	_ = instrument(q, nil, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })(context.Background(), events.Envelope[json.RawMessage]{})
+	_ = instrument(q, nil, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })(context.Background(), events.Envelope[json.RawMessage]{})
 	_ = deadLetter("q", nil)(context.Background(), events.Envelope[json.RawMessage]{})
 }
 
@@ -171,5 +190,74 @@ func TestHandler_MapsEnvelope(t *testing.T) {
 	ing.err = errors.New("db down")
 	if err := h(context.Background(), env); err == nil {
 		t.Error("errors must propagate so SQS redelivers")
+	}
+}
+
+// The dead-letter handler fires one receive short of the queues' SQS redrive
+// count (loaded by platform-events), so SQS performs the move (AL-EVT-4).
+func TestDeadLetterObserveAt(t *testing.T) {
+	for redrive, want := range map[int]int{5: 4, 3: 2, 2: 1, 1: 4, 0: 4, -1: 4} {
+		if got := DeadLetterObserveAt(redrive); got != want {
+			t.Errorf("DeadLetterObserveAt(%d) = %d, want %d", redrive, got, want)
+		}
+	}
+}
+
+// Tier-1 labels are bounded: a type known to the topic's taxonomy is kept,
+// anything else becomes "unknown"; the queue label is the queue name.
+func TestInstrument_EventTypeBounding(t *testing.T) {
+	q := Queue{Name: "user-audit-q", Topic: domain.TopicUser}
+	ok := func(context.Context, events.Envelope[json.RawMessage]) error { return nil }
+	for typ, want := range map[string]string{
+		"UserDeleted":      "UserDeleted",
+		"TotallyMadeUp":    "unknown",
+		"TenantOffboarded": "unknown", // a real type, but of another topic
+		"":                 "unknown",
+	} {
+		m := &recMetrics{}
+		_ = instrument(q, m, ok)(context.Background(), events.Envelope[json.RawMessage]{Type: typ})
+		if m.lastType != want || m.lastQueue != "user-audit-q" {
+			t.Errorf("%q: event_type=%q queue=%q, want %q", typ, m.lastType, m.lastQueue, want)
+		}
+	}
+}
+
+// Propagation is observed only for a processed message with an envelope time.
+func TestInstrument_PropagatedOnSuccessWithTimestamp(t *testing.T) {
+	q := Queue{Name: "q", Topic: domain.TopicUser}
+	m := &recMetrics{}
+	ok := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })
+	bad := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })
+	_ = ok(context.Background(), events.Envelope[json.RawMessage]{})                                         // no timestamp
+	_ = bad(context.Background(), events.Envelope[json.RawMessage]{Timestamp: time.Now().Add(-time.Second)}) // failed
+	if m.propagated != 0 {
+		t.Fatalf("propagated = %d, want 0", m.propagated)
+	}
+	_ = ok(context.Background(), events.Envelope[json.RawMessage]{Timestamp: time.Now().Add(-time.Second)})
+	if m.propagated != 1 {
+		t.Fatalf("propagated = %d, want 1", m.propagated)
+	}
+}
+
+// failureReason maps handler errors onto the registry's reason vocabulary.
+func TestFailureReason(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"dependency": {domain.NewError(domain.ErrDependencyUnavailable, "db down"), "dependency_unavailable"},
+		"wrapped":    {fmt.Errorf("ingest: %w", domain.NewError(domain.ErrDependencyUnavailable, "db")), "dependency_unavailable"},
+		"domain":     {domain.NewError(domain.ErrInvalidRequest, "bad"), "invalid_event"},
+		"plain":      {errors.New("boom"), "internal"},
+	} {
+		if got := failureReason(tc.err); got != tc.want {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+		m := &recMetrics{}
+		_ = instrument(Queue{Name: "q", Topic: domain.TopicUser}, m,
+			func(context.Context, events.Envelope[json.RawMessage]) error { return tc.err })(context.Background(), events.Envelope[json.RawMessage]{})
+		if m.lastReason != tc.want {
+			t.Errorf("%s: instrument reason %q, want %q", name, m.lastReason, tc.want)
+		}
 	}
 }

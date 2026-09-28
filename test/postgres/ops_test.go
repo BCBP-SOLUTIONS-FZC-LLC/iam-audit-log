@@ -202,3 +202,110 @@ func TestOpsStats_GrantsAndDefiner(t *testing.T) {
 		assert.Contains(t, err.Error(), "permission denied", sql)
 	}
 }
+
+// seedViolations inserts rls_violation_log rows directly (superuser): n of
+// each violation type.
+func seedViolations(t *testing.T, db *testDB, byType map[string]int) {
+	t.Helper()
+	for vt, n := range byType {
+		for i := 0; i < n; i++ {
+			_, err := db.raw.Exec(context.Background(),
+				`INSERT INTO rls_violation_log (table_name, row_tenant_id, violation_type) VALUES ('audit_events', $1, $2)`,
+				tenantA, vt)
+			require.NoError(t, err)
+		}
+	}
+}
+
+// iam_rls_violations_total feed (migration 000010): each logged violation
+// is returned exactly once, however many times or replicas call it.
+func TestRLSViolationCounts_ExactlyOnce(t *testing.T) {
+	db := setupTestDB(t, dbOpts{})
+	ctx := context.Background()
+	repo := pgadapter.NewOpsRepository(db.appPool)
+
+	got, err := repo.RLSViolations(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, got, "an empty log yields nothing")
+
+	seedViolations(t, db, map[string]int{"cross_tenant_access": 3, "missing_or_invalid_guc": 2})
+	got, err = repo.RLSViolations(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"cross_tenant_access": 3, "missing_or_invalid_guc": 2}, got)
+
+	got, err = repo.RLSViolations(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, got, "already-counted rows are never counted again")
+
+	seedViolations(t, db, map[string]int{"cross_tenant_access": 1})
+	got, err = repo.RLSViolations(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"cross_tenant_access": 1}, got, "only rows logged since the last call")
+}
+
+// Three replicas polling concurrently never double count (the watermark
+// row is locked FOR UPDATE).
+func TestRLSViolationCounts_ConcurrentNoDoubleCount(t *testing.T) {
+	db := setupTestDB(t, dbOpts{})
+	ctx := context.Background()
+	repo := pgadapter.NewOpsRepository(db.appPool)
+	seedViolations(t, db, map[string]int{"cross_tenant_access": 10})
+
+	const callers = 3
+	results := make(chan map[string]int64, callers*4)
+	errs := make(chan error, callers*4)
+	done := make(chan struct{})
+	for i := 0; i < callers; i++ {
+		go func() {
+			for j := 0; j < 4; j++ {
+				m, err := repo.RLSViolations(ctx)
+				if err != nil {
+					errs <- err
+				} else {
+					results <- m
+				}
+			}
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < callers; i++ {
+		<-done
+	}
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	var total int64
+	for m := range results {
+		total += m["cross_tenant_access"]
+	}
+	assert.EqualValues(t, 10, total, "the fleet counts each violation exactly once")
+}
+
+func TestRLSViolationCounts_GrantsAndDefiner(t *testing.T) {
+	db := setupTestDB(t, dbOpts{})
+	ctx := context.Background()
+	_, err := db.raw.Exec(ctx, `CREATE ROLE rls_stranger NOLOGIN`)
+	require.NoError(t, err)
+	const fn = "audit_rls_violation_counts()"
+	var appOK, strangerOK, reconOK, definer bool
+	require.NoError(t, db.raw.QueryRow(ctx, `SELECT has_function_privilege('audit_app', $1, 'EXECUTE'),
+	        has_function_privilege('rls_stranger', $1, 'EXECUTE'),
+	        has_function_privilege('audit_reconciler', $1, 'EXECUTE')`, fn).Scan(&appOK, &strangerOK, &reconOK))
+	require.NoError(t, db.raw.QueryRow(ctx, `SELECT prosecdef FROM pg_proc WHERE oid = $1::regprocedure`, fn).Scan(&definer))
+	assert.True(t, appOK, "audit_app executes it (cmd/server OpsMonitor)")
+	assert.False(t, strangerOK, "PUBLIC must not")
+	assert.False(t, reconOK, "the reconciler does not need it")
+	assert.True(t, definer, "SECURITY DEFINER")
+
+	// audit_app still cannot read the log or the watermark directly.
+	for _, sql := range []string{`SELECT count(*) FROM rls_violation_log`, `SELECT count(*) FROM ops_export_watermark`} {
+		err := inTx(withTenant(ctx, tenantA), db.appPool, func(tx pgx.Tx) error {
+			var n int64
+			return tx.QueryRow(ctx, sql).Scan(&n)
+		})
+		require.Error(t, err, sql)
+		assert.Contains(t, err.Error(), "permission denied", sql)
+	}
+}

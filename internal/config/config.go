@@ -78,10 +78,10 @@ type Server struct {
 	AppPort     string
 	MetricsPort string
 
-	Queues               []Queue
-	SQSMaxReceiveCount   int
-	SQSVisibilityTimeout time.Duration
-	GlueRegistryRegion   string
+	// Queues are the per-queue URLs. Every other SQS_* consumer setting is
+	// loaded by platform-events (config.LoadSQS), never by this repo (gap 45).
+	Queues             []Queue
+	GlueRegistryRegion string
 
 	DefaultQueryWindowDays int
 	CatalogBaseURL         string
@@ -146,6 +146,11 @@ type Reconciler struct {
 	ProcessedEventsPruneBatch int
 }
 
+// AppEnv is APP_ENV (default "dev"). The composition roots read it before
+// the rest of the configuration so the platform-gincommon logger exists
+// first, and configuration errors are logged through it (BUILD_PLAN gap 43).
+func AppEnv() string { return envOr("APP_ENV", "dev") }
+
 // IsDev reports whether appEnv permits local-dev placeholders.
 func IsDev(appEnv string) bool {
 	switch appEnv {
@@ -181,8 +186,6 @@ func LoadServer(buildVersion string) (Server, error) {
 		DBAppRole:              envOr("DB_APP_ROLE", "audit_app"),
 		AppPort:                envOr("APP_PORT", "8080"),
 		MetricsPort:            envOr("METRICS_PORT", "9090"),
-		SQSMaxReceiveCount:     envInt("SQS_MAX_RECEIVE_COUNT", 5),
-		SQSVisibilityTimeout:   envDuration("SQS_VISIBILITY_TIMEOUT", 30*time.Second),
 		GlueRegistryRegion:     envOr("GLUE_REGISTRY_REGION", "ap-south-1"),
 		DefaultQueryWindowDays: envInt("AUDIT_DEFAULT_QUERY_WINDOW_DAYS", 365),
 		CatalogBaseURL:         envOr("CATALOG_BASE_URL", "http://iam-catalog-admin.iam.svc.cluster.local:8080"),

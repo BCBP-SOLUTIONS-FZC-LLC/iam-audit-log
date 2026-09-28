@@ -1,0 +1,75 @@
+graph LR
+    server(["cmd/server"])
+    reconciler(["cmd/reconciler"])
+    jobs(["cmd/reconciler/jobs"])
+
+    http_h(["adapter/inbound/http"])
+    consumer(["adapter/inbound/consumer"])
+
+    postgres(["adapter/outbound/postgres"])
+    s3(["adapter/outbound/s3"])
+    glue(["adapter/outbound/glue"])
+    catalog(["adapter/outbound/catalog"])
+    metrics(["adapter/outbound/metrics"])
+    telemetry(["adapter/outbound/telemetry\n(gincommon seam)"])
+
+    service(["core/service"])
+    port(["core/port"])
+    domain(["core/domain"])
+
+    requestctx(["pkg/requestctx"])
+    config(["internal/config"])
+    eventschema(["internal/eventschema"])
+    apispec(["api (asyncapi embed)"])
+
+    server --> http_h
+    server --> consumer
+    server --> postgres
+    server --> s3
+    server --> glue
+    server --> catalog
+    server --> metrics
+    server --> telemetry
+    server --> service
+    server --> config
+    server --> requestctx
+    server --> eventschema
+    server --> apispec
+
+    reconciler --> jobs
+    reconciler --> postgres
+    reconciler --> s3
+    reconciler --> metrics
+    reconciler --> telemetry
+    reconciler --> service
+    reconciler --> config
+    jobs --> service
+    jobs --> port
+    jobs --> domain
+
+    http_h --> service
+    http_h --> port
+    http_h --> domain
+    http_h --> requestctx
+    http_h --> apispec
+    consumer --> service
+    consumer --> port
+    consumer --> domain
+    consumer --> eventschema
+
+    postgres --> port
+    postgres --> domain
+    s3 --> port
+    s3 --> domain
+    glue --> port
+    glue --> domain
+    glue --> eventschema
+    catalog --> port
+    catalog --> domain
+    metrics --> port
+    metrics --> domain
+    telemetry --> port
+
+    service --> port
+    service --> domain
+    port --> domain

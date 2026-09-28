@@ -13,15 +13,30 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
 )
 
 // dlqObserveReceiveCount is one delivery short of the queues' own
 // maxReceiveCount=5 redrive policy (HLD §9.1), so the dead-letter handler
-// observes each poison message exactly once, on its last delivery, before
-// SQS itself moves it to <queue>-dlq (the sibling pattern).
+// observes each poison message before SQS itself moves it to <queue>-dlq
+// (the sibling pattern). cmd/server overrides it from the platform-events
+// loaded SQS_MAX_RECEIVE_COUNT via DeadLetterObserveAt.
 const dlqObserveReceiveCount = 4
+
+// DeadLetterObserveAt is the receive count at which the dead-letter handler
+// fires for a queue whose SQS redrive policy is maxReceiveCount=redrive: one
+// short, so SQS (not the library) performs the move (AL-EVT-4). An unset or
+// too-small redrive falls back to the platform's 5 (LLD §12).
+func DeadLetterObserveAt(redrive int) int {
+	if redrive < 2 {
+		redrive = dlqObserveReceiveCount + 1
+	}
+	return redrive - 1
+}
 
 // Builder constructs a platform-events consumer for a queue URL. cmd/server
 // supplies it (the only place a raw *sqs.Client is built — arch-lint).
@@ -38,10 +53,11 @@ type Queue struct {
 
 // Metrics is the Tier-1 instrumentation hook (nil-safe).
 type Metrics interface {
-	Received(queue string)
-	Processed(queue string)
-	Failed(queue string)
+	Received(queue, eventType string)
+	Processed(eventType string)
+	Failed(eventType, reason string)
 	DeadLettered(queue string)
+	Propagated(eventType string, took time.Duration)
 }
 
 type running struct {
@@ -77,7 +93,7 @@ func NewFleet(queues []Queue, build Builder, codec events.Codec, m Metrics, hand
 			events.WithMaxReceiveCount(dlqObserveReceiveCount),
 			events.WithDeadLetterHandler(deadLetter(q.Name, m)),
 		}, extra...)
-		c, err := build(q.URL, instrument(q.Name, m, handlerFor(q)), opts...)
+		c, err := build(q.URL, instrument(q, m, handlerFor(q)), opts...)
 		if err != nil {
 			return nil, fmt.Errorf("build %s consumer: %w", q.Name, err)
 		}
@@ -133,28 +149,45 @@ func (f *Fleet) Health(context.Context) error {
 	return nil
 }
 
-func instrument(queue string, m Metrics, h events.Handler) events.Handler {
+// instrument wraps a queue's handler with the Tier-1 message metrics
+// (Platform Observability Registry label vocabulary): event_type is bounded
+// to the taxonomy (domain.EventTypeLabel), and reason to port.Reason*.
+func instrument(q Queue, m Metrics, h events.Handler) events.Handler {
 	return func(ctx context.Context, env events.Envelope[json.RawMessage]) error {
+		eventType := domain.EventTypeLabel(q.Topic, env.Type)
 		if m != nil {
-			m.Received(queue)
+			m.Received(q.Name, eventType)
 		}
 		if err := h(ctx, env); err != nil {
 			if m != nil {
-				m.Failed(queue)
+				m.Failed(eventType, failureReason(err))
 			}
 			return err
 		}
 		if m != nil {
-			m.Processed(queue)
+			m.Processed(eventType)
+			if !env.Timestamp.IsZero() {
+				m.Propagated(eventType, time.Since(env.Timestamp))
+			}
 		}
 		return nil
 	}
 }
 
-// deadLetter observes a poison message on its last delivery and returns an
-// error so the message is NOT deleted: SQS redrives it to <queue>-dlq for
-// operator replay (RB-1). A DLQ'd audit event is a compliance incident,
-// never a degrade-to-stale (AL-EVT-4).
+// failureReason classifies a handler error into the registry's reason
+// vocabulary for platform_messages_failed_total / platform_retry_total.
+func failureReason(err error) string {
+	var de *domain.Error
+	switch {
+	case errors.As(err, &de) && de.Code == domain.ErrDependencyUnavailable:
+		return port.ReasonDependencyUnavailable
+	case errors.As(err, &de):
+		return port.ReasonInvalidEvent
+	default:
+		return port.ReasonInternal
+	}
+}
+
 func deadLetter(queue string, m Metrics) events.Handler {
 	return func(context.Context, events.Envelope[json.RawMessage]) error {
 		if m != nil {

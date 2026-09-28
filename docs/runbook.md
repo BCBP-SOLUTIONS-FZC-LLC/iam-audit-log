@@ -9,10 +9,24 @@ compliance system of record. Its two standing rules:
   `apply_redaction()`, `sweep_redactions()` and the reconciler's partition
   functions.
 
-Alert rules live in `deploy/helm/templates/prometheusrule.yaml` (mirror:
-`deploy/monitoring/app-alerts.yml`). The Critical archival, redaction and DLQ
-gauges are published by `cmd/server` from DB/SQS state (D-21), so they fire even
-though the reconciler CronJob is not scraped.
+Alert, recording and SLO rules live in `deploy/helm/templates/prometheusrule.yaml`
+(generated from `deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml`).
+The Critical archival, redaction and DLQ gauges are published by `cmd/server` from
+DB/SQS state (D-21), so they fire even though the reconciler CronJob is not scraped.
+
+Metric names follow the Enterprise Platform Observability Standard (LLD §11 rev
+0.26; inventory `deploy/monitoring/metric-registry.yaml`). Tier-1 `platform_*`
+series carry `{domain="iam", service="audit-log"}`, and `iam_*` series carry
+`{service="audit-log"}`. Three old names are still emitted but deprecated; use
+their replacements in queries:
+
+| Deprecated | Use |
+|---|---|
+| `iam_audit_log_dlq_messages_total{queue="<q>-dlq"}` | `platform_dlq_depth{queue="<q>"}` |
+| `iam_audit_log_default_partition_rows_total` | `iam_audit_log_default_partition_rows` |
+| `iam_audit_log_archive_stalled` | `iam_audit_log_archive_stalled_partitions` |
+
+Dashboard: `deploy/monitoring/dashboard-audit-log.json` (Grafana uid `iam-audit-log`).
 
 Conventions used below:
 
@@ -28,10 +42,15 @@ PSQL="psql $ADMIN_READONLY_DATABASE_URL"
 
 ## RB-1 — DLQ has messages
 
-**Alert:** `IAMAuditLogDLQNotEmpty`, i.e. `iam_audit_log_dlq_messages_total{queue} > 0`, plus the CloudWatch alarm (threshold 0).
+**Alerts:** `IAMAuditLogDLQNotEmpty` (`platform_dlq_depth{queue} > 0`, plus the CloudWatch alarm at 0) and `IAMAuditLogDeadLettered` (`increase(platform_dlq_messages_total{queue,reason}[15m]) > 0`). Leading indicators: `IAMAuditLogMessageFailures` (the failure ratio > 5%), `IAMAuditLogRetrySpike` (`platform_retry_total` by reason), `IAMAuditLogQueueBacklog` (`platform_queue_depth` > 1000), and the ingest-lag and propagation SLO burn alerts.
 **Severity:** a compliance incident. Every message is a potentially lost audit record (AL-EVT-4).
 
 **Triage**
+0. Find the cause class from the metrics first:
+   ```promql
+   service:platform_messages_failed:rate5m{service="audit-log"}      # by reason: dependency_unavailable = Postgres, invalid_event = producer shape
+   max by (queue) (platform_queue_depth{service="audit-log"})         # backlog per queue
+   ```
 1. Read the messages without deleting them. Pass `--visibility-timeout 0` so they
    stay available:
    ```bash
@@ -58,7 +77,7 @@ PSQL="psql $ADMIN_READONLY_DATABASE_URL"
 
 ## RB-2 — Archival stalled
 
-**Alert:** `IAMAuditLogArchiveStalled` (`iam_audit_log_archive_stalled > 0`), or `IAMAuditLogArchiveLag{Warning,Critical}` (> 1 d / > 3 d).
+**Alert:** `IAMAuditLogArchiveStalled` (`iam_audit_log_archive_stalled_partitions > 0`), or `IAMAuditLogArchiveLag{Warning,Critical}` (> 1 d / > 3 d).
 **Meaning:** a partition is past archival eligibility (+48 h grace) and still attached. AL-INV-9 is holding it, and the hot table keeps growing until this clears.
 
 **Triage**
@@ -90,13 +109,13 @@ kubectl -n $NS create job --from=cronjob/$REL-reconcile $REL-reconcile-manual-$(
 ```
 Never detach or drop a partition by hand. `audit_drop_partition()` is the only drop path, and it re-checks every condition under lock.
 
-**Verify:** `archive_stalled` is 0, archive lag is back under 1 d, and the state rows read `dropped` (retained tiers) / `expired` (`access_90d`).
+**Verify:** `iam_audit_log_archive_stalled_partitions` is 0, archive lag is back under 1 d, and the state rows read `dropped` (retained tiers) / `expired` (`access_90d`).
 
 ---
 
 ## RB-3 — Rows in `audit_events_default`
 
-**Alert:** `IAMAuditLogDefaultPartitionRows` (`iam_audit_log_default_partition_rows_total > 0`).
+**Alert:** `IAMAuditLogDefaultPartitionRows` (`iam_audit_log_default_partition_rows > 0`).
 
 **Triage**
 ```sql
@@ -178,7 +197,7 @@ SELECT id, tenant_id, trigger_source_event_id, requested_at, error
 
 ## RB-8 — Catalog plans poll failing / stale
 
-**Alerts:** `IAMAuditLogCatalogPlansStale{Warning,Critical}` (> 2× / > 10× `CATALOG_PLANS_POLL_INTERVAL`); `catalog_plans_poll_total{result="error"|"timeout"}` rising.
+**Alerts:** `IAMAuditLogCatalogPlansStale{Warning,Critical}` (> 2× / > 10× `CATALOG_PLANS_POLL_INTERVAL`); `IAMAuditLogDependencyErrors` for `dependency="catalog-admin"` (`platform_dependency_request_seconds` error/timeout ratio > 10%); `iam_audit_log_catalog_plans_poll_total{result="error"|"timeout"}` rising. The same dependency alert with `dependency="s3"` points at archived reads, exports or archival (RB-2).
 
 The service keeps serving the last good plan map (stale-if-error, AL-D15). No tenant's window collapses to the default.
 1. Check reachability and health of Catalog: `GET {CATALOG_BASE_URL}/api/v1/internal/plans` from a pod in `iam`. Catalog admits same-namespace callers only (AL-Q17).

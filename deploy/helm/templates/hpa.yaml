@@ -44,4 +44,18 @@ spec:
           type: AverageValue
           averageValue: {{ .Values.autoscaling.targetRPSPerReplica }}
     {{- end }}
+    {{- if .Values.autoscaling.targetQueueDepthPerReplica }}
+    # Queue-backlog scaling: opt-in, off by default. Scales on the total
+    # backlog of the 11 inbound audit queues (the Canonical
+    # platform_queue_depth, summed by prometheus-adapter as
+    # platform_queue_depth_audit_log). PREREQUISITE: the external rule in
+    # deploy/monitoring/prometheus-adapter-rule.yaml.
+    - type: External
+      external:
+        metric:
+          name: platform_queue_depth_audit_log
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.autoscaling.targetQueueDepthPerReplica | quote }}
+    {{- end }}
 {{- end }}

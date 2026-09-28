@@ -1,6 +1,8 @@
 package unit_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -36,7 +38,7 @@ func lldTier3Metrics(t *testing.T) map[string]bool {
 	t.Helper()
 	lld := string(repoFile(t, "docs/lld/iam-lld-audit-log-service.md"))
 	start := strings.Index(lld, "**Tier-3 (`iam_audit_log_*`):**")
-	end := strings.Index(lld[start:], "**Tracing & logging:**")
+	end := strings.Index(lld[start:], "**Tracing & logging") // tolerate a "(rev N)" suffix on the next section marker
 	if start < 0 || end < 0 {
 		t.Fatal("LLD §11 Tier-3 table not found")
 	}
@@ -52,31 +54,49 @@ func lldTier3Metrics(t *testing.T) map[string]bool {
 	return out
 }
 
+// deprecatedMetrics lists metric-registry.yaml entries with status
+// deprecated: still emitted during the compatibility period, but never read
+// by a dashboard, alert, recording rule, SLO or HPA (migration steps 2-6 of
+// the Enterprise Platform Observability Standard).
+func deprecatedMetrics(t *testing.T) map[string]string {
+	t.Helper()
+	var reg struct {
+		Metrics []struct {
+			Name       string `yaml:"name"`
+			Status     string `yaml:"status"`
+			ReplacedBy string `yaml:"replaced_by"`
+		} `yaml:"metrics"`
+	}
+	repoYAML(t, "deploy/monitoring/metric-registry.yaml", &reg)
+	out := map[string]string{}
+	for _, m := range reg.Metrics {
+		if m.Status == "deprecated" {
+			out[m.Name] = m.ReplacedBy
+		}
+	}
+	return out
+}
+
 // LLD §11: every Tier-3 metric the LLD names is registered, and every
-// iam_audit_log_* collector is in the LLD table (or the D-21 allowlist).
+// iam_audit_log_* collector is in the LLD table (deprecated names are listed
+// there too, marked deprecated).
 func TestMetrics_LLDTier3Registered(t *testing.T) {
 	code, spec := registeredMetrics(t), lldTier3Metrics(t)
-	allow := map[string]bool{"iam_audit_log_redaction_pending_tasks": true} // D-21 (also added to LLD rev 0.24)
 	for name := range spec {
 		if !code[name] {
 			t.Errorf("LLD §11 metric %s is not registered in business.go", name)
 		}
 	}
 	for name := range code {
-		if strings.HasPrefix(name, "iam_audit_log_") && !spec[name] && !allow[name] {
+		if strings.HasPrefix(name, "iam_audit_log_") && !spec[name] {
 			t.Errorf("business.go registers %s, which is not in the LLD §11 Tier-3 table", name)
 		}
 	}
-}
-
-type alertFile struct {
-	Groups []struct {
-		Name  string `yaml:"name"`
-		Rules []struct {
-			Alert string `yaml:"alert"`
-			Expr  string `yaml:"expr"`
-		} `yaml:"rules"`
-	} `yaml:"groups"`
+	for name := range deprecatedMetrics(t) {
+		if !spec[name] {
+			t.Errorf("deprecated metric %s must stay in the LLD §11 table (marked deprecated) until its sunset", name)
+		}
+	}
 }
 
 // libraryMetrics are metrics registered by shared libraries or the platform,
@@ -90,36 +110,108 @@ var libraryMetrics = map[string]bool{
 	"kube_job_status_failed":        true, // kube-state-metrics
 }
 
-// Every metric an alert reads exists: a typo'd alert never fires.
-func TestAlerts_ReferenceKnownMetrics(t *testing.T) {
-	var f alertFile
-	repoYAML(t, "deploy/monitoring/app-alerts.yml", &f)
-	code := registeredMetrics(t)
-	ident := regexp.MustCompile(`([a-zA-Z_:][a-zA-Z0-9_:]*)\{`)
-	rules := 0
-	for _, g := range f.Groups {
-		for _, r := range g.Rules {
-			rules++
-			ms := ident.FindAllStringSubmatch(r.Expr, -1)
-			if len(ms) == 0 {
-				t.Errorf("%s: no metric selector found in %q", r.Alert, r.Expr)
-			}
-			for _, m := range ms {
-				name := m[1]
-				base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(name, "_bucket"), "_sum"), "_count")
-				if !code[name] && !code[base] && !libraryMetrics[name] {
-					t.Errorf("%s reads unknown metric %s", r.Alert, name)
-				}
+// ruleExprs returns every PromQL expression in the observability artifacts:
+// alerts, recording rules, SLOs, the dashboard and the prometheus-adapter
+// rules, keyed "file: name".
+func ruleExprs(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, f := range []string{"app-alerts.yml", "recording-rules.yml", "slo-rules.yml"} {
+		var af struct {
+			Groups []struct {
+				Rules []struct {
+					Alert  string `yaml:"alert"`
+					Record string `yaml:"record"`
+					Expr   string `yaml:"expr"`
+				} `yaml:"rules"`
+			} `yaml:"groups"`
+		}
+		repoYAML(t, "deploy/monitoring/"+f, &af)
+		for _, g := range af.Groups {
+			for _, r := range g.Rules {
+				out[f+": "+r.Alert+r.Record] = r.Expr
 			}
 		}
 	}
-	if rules < 15 {
-		t.Errorf("only %d alert rules parsed", rules)
+	var dash struct {
+		Panels []struct {
+			Title   string `json:"title"`
+			Targets []struct {
+				Expr string `json:"expr"`
+			} `json:"targets"`
+		} `json:"panels"`
+		Templating struct {
+			List []struct {
+				Name  string `json:"name"`
+				Query any    `json:"query"`
+			} `json:"list"`
+		} `json:"templating"`
+	}
+	if err := json.Unmarshal(repoFile(t, "deploy/monitoring/dashboard-audit-log.json"), &dash); err != nil {
+		t.Fatalf("dashboard-audit-log.json: %v", err)
+	}
+	for _, p := range dash.Panels {
+		for i, tg := range p.Targets {
+			out[fmt.Sprintf("dashboard: %s #%d", p.Title, i)] = tg.Expr
+		}
+	}
+	for _, v := range dash.Templating.List {
+		if q, ok := v.Query.(string); ok && strings.Contains(q, "{") {
+			out["dashboard var: "+v.Name] = q
+		}
+	}
+	var adapter struct {
+		Rules map[string][]struct {
+			SeriesQuery string `yaml:"seriesQuery"`
+		} `yaml:"rules"`
+	}
+	repoYAML(t, "deploy/monitoring/prometheus-adapter-rule.yaml", &adapter)
+	for kind, rs := range adapter.Rules {
+		for i, r := range rs {
+			out[fmt.Sprintf("prometheus-adapter %s #%d", kind, i)] = r.SeriesQuery
+		}
+	}
+	return out
+}
+
+// Every metric an artifact reads exists (a typo'd alert never fires), is a
+// recording rule defined here, or is a known library/platform metric, and no
+// artifact reads a deprecated metric.
+func TestAlerts_ReferenceKnownMetrics(t *testing.T) {
+	code, deprecated := registeredMetrics(t), deprecatedMetrics(t)
+	exprs := ruleExprs(t)
+	recorded := map[string]bool{}
+	for k := range exprs {
+		if strings.HasPrefix(k, "recording-rules.yml: ") || strings.HasPrefix(k, "slo-rules.yml: ") {
+			recorded[strings.SplitN(k, ": ", 2)[1]] = true
+		}
+	}
+	ident := regexp.MustCompile(`([a-zA-Z_:][a-zA-Z0-9_:]*)\{`)
+	for where, expr := range exprs {
+		ms := ident.FindAllStringSubmatch(expr, -1)
+		bare := regexp.MustCompile(`\b((?:service|slo):[a-z0-9_:]+)\b`).FindAllStringSubmatch(expr, -1)
+		if len(ms)+len(bare) == 0 {
+			t.Errorf("%s: no metric selector found in %q", where, expr)
+		}
+		for _, m := range append(ms, bare...) {
+			name := m[1]
+			base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(name, "_bucket"), "_sum"), "_count")
+			if r, dep := deprecated[base]; dep {
+				t.Errorf("%s reads deprecated metric %s — use %s", where, base, r)
+			}
+			if !code[name] && !code[base] && !libraryMetrics[name] && !recorded[name] {
+				t.Errorf("%s reads unknown metric %s", where, name)
+			}
+		}
+	}
+	if len(exprs) < 60 {
+		t.Errorf("only %d expressions parsed across the observability artifacts", len(exprs))
 	}
 }
 
-// The static mirror equals the Helm PrometheusRule's groups once templating
-// is stripped (release name iam-audit-log).
+// The static rule files (alerts, recording rules, SLOs, in that order)
+// equal the Helm PrometheusRule's groups once templating is stripped
+// (release name iam-audit-log). Regenerate with scripts/gen-prometheusrule.py.
 func TestAlerts_StaticMirrorMatchesHelm(t *testing.T) {
 	tpl := string(repoFile(t, "deploy/helm/templates/prometheusrule.yaml"))
 	i := strings.Index(tpl, "spec:\n  groups:\n")
@@ -140,11 +232,16 @@ func TestAlerts_StaticMirrorMatchesHelm(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &helm); err != nil {
 		t.Fatalf("parse stripped helm groups: %v", err)
 	}
-	var f map[string]any
-	repoYAML(t, "deploy/monitoring/app-alerts.yml", &f)
-	static = f["groups"]
+	var all []any
+	for _, name := range []string{"app-alerts.yml", "recording-rules.yml", "slo-rules.yml"} {
+		var f map[string]any
+		repoYAML(t, "deploy/monitoring/"+name, &f)
+		gs, _ := f["groups"].([]any)
+		all = append(all, gs...)
+	}
+	static = all
 	if !reflect.DeepEqual(helm, static) {
-		t.Error("deploy/monitoring/app-alerts.yml has drifted from deploy/helm/templates/prometheusrule.yaml")
+		t.Error("deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml have drifted from deploy/helm/templates/prometheusrule.yaml — run scripts/gen-prometheusrule.py")
 	}
 	if !strings.Contains(tpl, "{{- if .Values.prometheusRule.enabled }}") {
 		t.Error("PrometheusRule must be gated by .Values.prometheusRule.enabled")

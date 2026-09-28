@@ -88,6 +88,13 @@ jobs:
       - name: Metric naming convention check
         run: bash .github/scripts/check-metric-naming.sh
 
+      # Gap 43: every log, metric and trace goes through platform-gincommon;
+      # only internal/adapter/outbound/telemetry may touch the OTel/promhttp
+      # APIs (gincommon v1.3.0 has no span API, /metrics handler or ctx
+      # trace-id helper).
+      - name: Observability confinement check (platform-gincommon only)
+        run: bash .github/scripts/check-observability-confinement.sh
+
       # Enterprise Platform Observability Standard governance rules 11/12:
       # a Proposed (unratified) platform_* metric (PlatformRegistry,
       # internal/adapter/outbound/metrics/registry.go) may never source a
@@ -96,11 +103,11 @@ jobs:
       - name: Metrics registry ratification check
         run: bash .github/scripts/metrics-registry-lint.sh
 
-      # AL-INV-10 / AL-EVT-1: this service publishes nothing — no SNS
-      # publisher, no outbox, no publisher-side config helpers — and every
-      # SQS consume goes through platform-events
-      # (events.NewSQSConsumerWithClient), never a raw aws-sdk-go-v2 call or
-      # a hand-built events.Envelope{}.
+      # AL-INV-10 / AL-EVT-1 / gap 45: this service publishes nothing — no
+      # SNS publisher, no outbox, no publisher-side config helpers — and every
+      # SQS consume, SQS_* setting and dedup key goes through platform-events
+      # (events.NewSQSConsumer + config.LoadSQS; Envelope.ID), never a raw
+      # aws-sdk-go-v2 call, an injected client or a hand-built events.Envelope{}.
       - name: Events bypass check (AL-INV-10)
         run: bash .github/scripts/check-forbidden-events-bypass.sh
 

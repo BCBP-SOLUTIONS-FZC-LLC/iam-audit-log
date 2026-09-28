@@ -51,11 +51,17 @@ func TestArchiveAdapter(t *testing.T) {
 	if got := metricFamily(t, "iam_audit_log_redaction_blocked_archive_total").GetMetric()[0].GetCounter().GetValue(); got != blocked+1 {
 		t.Errorf("blocked = %v, want %v", got, blocked+1)
 	}
-	if got := gaugeValue(t, "iam_audit_log_archive_stalled"); got != 3 {
+	if got := gaugeValue(t, "iam_audit_log_archive_stalled_partitions"); got != 3 {
 		t.Errorf("stalled = %v", got)
 	}
+	if got := gaugeValue(t, "iam_audit_log_archive_stalled"); got != 3 {
+		t.Errorf("deprecated stalled twin = %v", got)
+	}
 	a.Stalled(0)
-	if got := gaugeValue(t, "iam_audit_log_archive_stalled"); got != 0 {
+	if got := gaugeValue(t, "iam_audit_log_archive_stalled_partitions"); got != 0 {
 		t.Errorf("stalled reset = %v", got)
+	}
+	if got := gaugeValue(t, "iam_audit_log_archive_stalled"); got != 0 {
+		t.Errorf("deprecated stalled twin reset = %v", got)
 	}
 }

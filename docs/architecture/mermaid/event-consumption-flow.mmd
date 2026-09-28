@@ -1,0 +1,33 @@
+flowchart LR
+    subgraph producers["Producers (publish via their own platform-events outbox)"]
+        P1["iam.auth / user / membership / tenant\n/ delegation / serviceaccount events"]
+        P2["tender.events · billing.events\nusage.events · wf.workflow / wf.template"]
+    end
+    SNS[("SNS topics\n(raw message delivery)")]
+    subgraph queues["SQS — owned by this service (§7.1)"]
+        Q["11 × *-audit-q\nredrive maxReceiveCount = 5"]
+        DLQ["11 × *-audit-q-dlq"]
+    end
+    subgraph server["cmd/server — platform-events consumer fleet"]
+        C["events.NewSQSConsumer\n(config.LoadSQS: region, endpoint, batch,\nlong-poll, visibility, SQS_CONCURRENCY)"]
+        CODEC["WithConsumerCodec — local Glue codec\nheader strip · zlib · schema-validate"]
+        H["consumer.Handler → IngestService.IngestBus\nEnvelope.ID → processed_events (dedup)"]
+        OBS["WithDeadLetterHandler at receive 4\n(DeadLetterObserveAt) → platform_dlq_messages_total"]
+    end
+    GLUE[("Glue Schema Registry\nGetSchemaVersion")]
+    PG[("audit_events")]
+
+    P1 --> SNS
+    P2 --> SNS
+    SNS --> Q
+    Q --> C
+    C --> CODEC
+    CODEC -. "resolve version" .-> GLUE
+    CODEC --> H
+    H --> PG
+    C -. "handler error → redelivery" .-> Q
+    C -. "receive 4" .-> OBS
+    Q -. "receive 5+ : SQS redrive" .-> DLQ
+    C -. "malformed envelope: library deletes (D-3, RB-10)" .-> X["events_consumed_total{status=malformed}"]
+
+    NOPUB["No publisher, no outbox, no raw SNS/SQS transport (AL-INV-10)\ncheck-forbidden-events-bypass.sh · check-outbox-access.sh · asyncapi receive-only"]

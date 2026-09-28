@@ -11,31 +11,33 @@ import (
 	"testing"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 )
 
-// dlqURLs derives <queue>-dlq for every configured queue and skips a queue
-// whose URL is unset (its consumer is disabled too).
-func TestDLQURLs(t *testing.T) {
+// opsQueues lists every configured queue with its <queue>-dlq for the
+// depth gauges, and skips a queue whose URL is unset (its consumer is
+// disabled too).
+func TestOpsQueues(t *testing.T) {
 	cfg := config.Server{Queues: []config.Queue{
 		{Name: "user-audit-q", URL: "http://sqs/000/user-audit-q"},
 		{Name: "auth-audit-q", URL: ""},
 		{Name: "tender-audit-q", URL: "http://sqs/000/tender-audit-q"},
 	}}
-	got := dlqURLs(cfg)
-	want := map[string]string{
-		"user-audit-q-dlq":   "http://sqs/000/user-audit-q-dlq",
-		"tender-audit-q-dlq": "http://sqs/000/tender-audit-q-dlq",
+	got := opsQueues(cfg)
+	want := []service.OpsQueue{
+		{Name: "user-audit-q", URL: "http://sqs/000/user-audit-q", DLQURL: "http://sqs/000/user-audit-q-dlq"},
+		{Name: "tender-audit-q", URL: "http://sqs/000/tender-audit-q", DLQURL: "http://sqs/000/tender-audit-q-dlq"},
 	}
 	if len(got) != len(want) {
-		t.Fatalf("dlqURLs = %v", got)
+		t.Fatalf("opsQueues = %v", got)
 	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("%s = %q, want %q", k, got[k], v)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %+v, want %+v", i, got[i], want[i])
 		}
 	}
-	if len(dlqURLs(config.Server{})) != 0 {
-		t.Error("no queues → no DLQs")
+	if len(opsQueues(config.Server{})) != 0 {
+		t.Error("no queues → no probes")
 	}
 }
 

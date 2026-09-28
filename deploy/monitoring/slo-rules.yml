@@ -1,0 +1,138 @@
+# SLO definitions for iam-audit-log (LLD §11; HLD §3.4; Enterprise Platform
+# Observability Standard, gap 46). Each ratio SLO records its error ratio over
+# four windows and alerts with multi-window burn rates (Google SRE workbook):
+# fast burn = 1h AND 5m above 14.4× the budget (critical); slow burn = 6h AND
+# 30m above 6× the budget (warning). Part of the Helm PrometheusRule
+# (TestAlerts_StaticMirrorMatchesHelm).
+#
+#   SLO                       objective                       budget
+#   ingest lag                99% of rows ≤ 50 ms             1%     (HLD §3.4: p99 < 50 ms async)
+#   event propagation         99% of events ≤ 5 s             1%
+#   query API availability    99% of requests not 5xx         1%
+#   DLQ depth                 platform_dlq_depth == 0 always  none   (any DLQ'd audit event is a compliance
+#                                                                     incident: paged by IAMAuditLogDLQNotEmpty;
+#                                                                     slo:audit_log_dlq_depth:ok records compliance)
+groups:
+  - name: iam-audit-log.slo
+    interval: 30s
+    rules:
+      # ---- ingest lag: bad = rows slower than 50 ms (bucket le="0.05") ----
+      - record: slo:audit_log_ingest_lag:error_ratio_5m
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[5m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[5m])), 1e-9))
+      - record: slo:audit_log_ingest_lag:error_ratio_30m
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[30m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[30m])), 1e-9))
+      - record: slo:audit_log_ingest_lag:error_ratio_1h
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[1h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[1h])), 1e-9))
+      - record: slo:audit_log_ingest_lag:error_ratio_6h
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[6h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[6h])), 1e-9))
+
+      # ---- propagation: bad = events slower than 5 s (bucket le="5") ----
+      - record: slo:audit_log_propagation:error_ratio_5m
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[5m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[5m])), 1e-9))
+      - record: slo:audit_log_propagation:error_ratio_30m
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[30m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[30m])), 1e-9))
+      - record: slo:audit_log_propagation:error_ratio_1h
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[1h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[1h])), 1e-9))
+      - record: slo:audit_log_propagation:error_ratio_6h
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[6h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[6h])), 1e-9))
+
+      # ---- query API availability: bad = 5xx ----
+      - record: slo:audit_log_availability:error_ratio_5m
+        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[5m])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[5m])), 1e-9)
+      - record: slo:audit_log_availability:error_ratio_30m
+        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[30m])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[30m])), 1e-9)
+      - record: slo:audit_log_availability:error_ratio_1h
+        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[1h])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[1h])), 1e-9)
+      - record: slo:audit_log_availability:error_ratio_6h
+        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[6h])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[6h])), 1e-9)
+
+      # ---- DLQ depth == 0 (1 = compliant) ----
+      - record: slo:audit_log_dlq_depth:ok
+        expr: (max(platform_dlq_depth{domain="iam", service="audit-log"}) == bool 0)
+
+      # ---- burn-rate alerts ----
+      - alert: IAMAuditLogIngestLagSLOFastBurn
+        expr: |
+          slo:audit_log_ingest_lag:error_ratio_1h > (14.4 * 0.01)
+          and slo:audit_log_ingest_lag:error_ratio_5m > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: Ingest-lag SLO (99% ≤ 50 ms) burning fast
+          description: >-
+            The 1 h and 5 m error ratios exceed 14.4× the 1% budget. Check the SQS
+            backlog, consumer replicas and Postgres latency.
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogIngestLagSLOSlowBurn
+        expr: |
+          slo:audit_log_ingest_lag:error_ratio_6h > (6 * 0.01)
+          and slo:audit_log_ingest_lag:error_ratio_30m > (6 * 0.01)
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: Ingest-lag SLO (99% ≤ 50 ms) burning slowly
+          description: >-
+            The 6 h and 30 m error ratios exceed 6× the 1% budget.
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogPropagationSLOFastBurn
+        expr: |
+          slo:audit_log_propagation:error_ratio_1h > (14.4 * 0.01)
+          and slo:audit_log_propagation:error_ratio_5m > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: Propagation SLO (99% of events persisted ≤ 5 s) burning fast
+          description: >-
+            Events are reaching the store slowly. Check platform_queue_depth, the
+            failure ratio and consumer health.
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogPropagationSLOSlowBurn
+        expr: |
+          slo:audit_log_propagation:error_ratio_6h > (6 * 0.01)
+          and slo:audit_log_propagation:error_ratio_30m > (6 * 0.01)
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: Propagation SLO (99% ≤ 5 s) burning slowly
+          description: >-
+            The 6 h and 30 m error ratios exceed 6× the 1% budget.
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogAvailabilitySLOFastBurn
+        expr: |
+          slo:audit_log_availability:error_ratio_1h > (14.4 * 0.01)
+          and slo:audit_log_availability:error_ratio_5m > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: Query/ingest API availability SLO (99% non-5xx) burning fast
+          description: >-
+            Check Postgres and S3 reachability (dependency_unavailable) and recent deploys.
+          runbook_url: docs/runbook.md#rb-6
+
+      - alert: IAMAuditLogAvailabilitySLOSlowBurn
+        expr: |
+          slo:audit_log_availability:error_ratio_6h > (6 * 0.01)
+          and slo:audit_log_availability:error_ratio_30m > (6 * 0.01)
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: Query/ingest API availability SLO (99% non-5xx) burning slowly
+          description: >-
+            The 6 h and 30 m error ratios exceed 6× the 1% budget.
+          runbook_url: docs/runbook.md#rb-6

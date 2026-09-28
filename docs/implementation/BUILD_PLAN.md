@@ -251,7 +251,7 @@ Found during Phase 0 (non-blocking; resolution applied, flag for LLD):
 
 19. **Error body shape.** §17 says `{code, message, request_id}`, but `gincommon.ErrorResponse` is `{error, status, trace_id, request_id}`. → Emit a superset (`error` = `code`, plus `message`, `status`, `trace_id`, `request_id`, `details?`), matching iam-catalog-admin's envelope.
 20. **AL-6 path `…/audit-entries:batch` — resolved (Phase 2).** gin v1.12 routes an escaped literal colon (`audit-entries\:batch`) alongside `audit-entries`. The wire path is exactly as the LLD states.
-21. **`core/port` vendor use.** The logger port's trace-id helper imports `otel/trace`. That is the only vendor the port may use, declared explicitly in `.go-arch-lint.yml`. §3.2 says "domain only", so this is a narrow, recorded exception.
+21. **`core/port` vendor use — resolved by gap 43 (2026-09-27): `core/port` now imports no vendor at all; the trace-id helper is injected from the telemetry adapter.** Original note: The logger port's trace-id helper imports `otel/trace`. That is the only vendor the port may use, declared explicitly in `.go-arch-lint.yml`. §3.2 says "domain only", so this is a narrow, recorded exception.
 22. **`core/domain` stays stdlib-only**, as §3.2 requires. That is stricter than RP, whose domain imports `uuid`. Sentinels are canonical strings, and UUIDv7 minting in Phase 2 will be stdlib-only or sit behind a port.
 23. **401 code name.** §5.5 lists 401 without a code. → Use the sibling code `missing_identity_headers`.
 24. **Migration ordering.** §4.4 lists four migrations and places neither `audit_redaction_tasks` (added rev 0.3) nor the §4.5 triggers. → `000001` includes `audit_redaction_tasks`; triggers get their own `000004_triggers`; partition bootstrap becomes `000005`.
@@ -288,3 +288,58 @@ Found during Phase 7 (resolution applied; flag for LLD):
 Found during Phase 8:
 
 42. **platform-events logs the raw body of a malformed envelope** (`sqs: failed to unmarshal message body`, with a `body` field) at error level. That is library behavior outside this repo. It sits alongside D-3's upstream fix; ask the library to log the message id only. A malformed envelope is not a valid audit event, but it could still carry PII.
+
+43. **All logs, metrics and traces go through platform-gincommon (2026-09-27, user).**
+  - **Logs:** the only sink is gincommon's `logger.NewLogger` (Zap).
+    - Both composition roots build it first, so configuration and job-name errors are logged through it. Stderr is used only if the logger itself can't be built.
+    - `port.SlogStyleLogger` no longer falls back to `log/slog`; a nil logger drops the line.
+    - `http.Server.ErrorLog` forwards net/http's own errors into the gincommon logger (`telemetry.HTTPErrorLog`). Gin is always in release mode with its writers discarded (`telemetry.QuietGin`); requests are logged by gincommon's middleware.
+    - The libraries in use (platform-events, pgcommon) already receive the same gincommon logger.
+  - **Metrics:** every collector registers on `gincommon.MetricsRegisterer()`, and `/metrics` serves exactly that registry (`telemetry.MetricsHandler`, which replaces the global `promhttp.Handler()`).
+  - **Traces:** gincommon installs the TracerProvider and OTLP pipeline (`InitTracingFromEnv`, `ObservabilityMiddlewares`, `Shutdown`). Spans (pgcommon `db.query`, the reconciler root span) and the log `trace_id` are drawn from that provider through `telemetry.Tracer` / `telemetry.TraceID`.
+  - **Limit of the library:** gincommon v1.3.0 exposes no span API, no `/metrics` handler and no context-level trace-id helper. `internal/adapter/outbound/telemetry` is therefore the single, documented seam that touches the OpenTelemetry and promhttp APIs, always against gincommon's provider and registry.
+  - **Enforced** by `.github/scripts/check-observability-confinement.sh` (in `make invariant-lint`). It forbids, outside the telemetry adapter: OTel/promhttp imports, direct Prometheus registration, `log`/`log/slog`/zap, `fmt.Print*`, and stderr/stdout beyond one logger-init write per root. Verified against a planted violation. **Proposed upstream:** add `gincommon.MetricsHandler()`, `gincommon.StartSpan()` and a context `TraceID()` to platform-gincommon, then retire the seam.
+44. **All database connections, configuration and operations go through platform-pgcommon (2026-09-27, user).** An audit found production code already compliant:
+  - pools only via `pgcommon.NewPool`, from `pgcommon.ConfigFromEnv`, which owns every `PG_*` setting; health via `Pool.Health`;
+  - transactions only via `pgcommon.RunInTx` / `RunInTxWithRetryOpts` (`withPool`, `TxRunner`), with RLS GUCs bound by pgcommon;
+  - errors via `pgcommon.Is*`; migrations via `platform-pgcommon/pkg/migrate`; pool metrics via `pgmetrics`.
+  - The service injects only the per-role DSN (`DATABASE_URL` / `RECONCILER_DATABASE_URL` / `MIGRATION_DATABASE_URL`), because `ConfigFromEnv` reads a single `DATABASE_URL` while rule 5 requires each composition root to see only its own role's secret.
+  - pgx types (`pgx.Tx`, `pgx.Row(s)`, `pgx.TxOptions`, `pgx.ErrNoRows`) appear only as pgcommon's own callback and result types, inside the postgres adapter. pgcommon wraps no no-rows sentinel.
+  - **Changed:** the test seed pool (`test/dbseed`) dropped its `pgxpool.ParseConfig` DSN parsing.
+  - **Enforced:** the `arch-lint.sh` database invariant now also scans `cmd/` and forbids:
+    - raw `Begin`/`BeginTx`/`Acquire` outside pgcommon;
+    - `pgx`/`pgxpool`/`pgconn` `Connect` or `ParseConfig`;
+    - classifying `pgconn.PgError` directly in production (tests may fabricate them);
+    - hand-built `pgcommon.Config{}` in production, `ConfigFromEnv` outside the adapter, and reading any `PG_*` variable.
+    Each rule is verified against a planted violation.
+45. **All events, outbox and processed-message dedup go through platform-events (2026-09-27, user).**
+  - **Consumption:** consumers are now built by `events.NewSQSConsumer`, the constructor LLD §3 names, instead of `NewSQSConsumerWithClient` plus a service-built SQS client, so the library owns the SQS client. Every `SQS_*` setting now comes from platform-events `config.LoadSQS` / `SQSConfigFromEnv` / `SQSConsumerOptions`:
+    - region, endpoint, batch size, long-poll, visibility timeout, concurrency, max receive;
+    - `SQS_CONCURRENCY=4` is added to Helm and `.env`;
+    - the service's own `SQS_VISIBILITY_TIMEOUT` / `SQS_MAX_RECEIVE_COUNT` reads are removed;
+    - library config warnings are logged via `LogWarningsTo`.
+  - The service supplies only each queue's URL, the handler, the Glue codec (`WithConsumerCodec`) and the dead-letter observer. `WithMaxReceiveCount = DeadLetterObserveAt(SQS_MAX_RECEIVE_COUNT)`, one short of the queue's redrive count, so SQS performs the DLQ move as before. The library receives, decodes, deletes and extends visibility.
+  - **Outbox:** none. AL-INV-10 forbids any publisher or outbox, and `check-forbidden-events-bypass.sh` enforces it.
+  - **Dedup:** platform-events v1.4.0 has no processed-message store. Its contract (`pkg/events/doc.go`) is that handlers are idempotent on `Envelope.ID`, which every sibling implements with its own `processed_events` table. Here the single ledger write in `AuditRepository.Append` is keyed on `Envelope.ID` (`toBusEvent` → `source_event_id`).
+  - **Enforced:** `check-forbidden-events-bypass.sh` §4 forbids, in production:
+    - `NewSQSConsumerWithClient`, and reading any `SQS_*` variable;
+    - decoding an envelope outside the consumer;
+    - using SQS `MessageId` / `ReceiptHandle`;
+    - any second `processed_events` writer;
+    - a dedup key other than `env.ID`.
+    Each rule is verified against a planted violation. The raw SQS client remains only in `cmd/server` for the DLQ depth gauge (`GetQueueAttributes`).
+  - **Proposed upstream:** a processed-message helper in platform-events (a ledger interface keyed on `Envelope.ID`) would let the ledger move into the library.
+46. **Metrics aligned to the Enterprise Platform Observability Standard (2026-09-27, user).**
+  - **Tier 1 (`platform_*`):** exactly the ten names and label sets that are Canonical in the Platform Observability Registry (the same ledger iam-event-consumer carries). No new platform name is invented (rule 11).
+    - `messages_received{queue,event_type}`, `messages_processed{event_type}`, `messages_failed{event_type,reason}`, `retry{event_type,reason}` (new), `dlq_messages{queue,reason}`, `duplicate_messages{event_type}` (new).
+    - `dependency_request_seconds{dependency,operation,outcome}`: was `{target_service,endpoint}`, and now also times S3 via decorators.
+    - `event_propagation_seconds{event_type}` (new), `queue_depth{queue}` (new), `dlq_depth{queue}` (new).
+    - `event_type` is bounded to the taxonomy (`domain.EventTypeLabel`, else `unknown`). `reason`, `outcome`, `dependency` and `operation` are constants in `core/port`.
+  - **Tier 2 (`iam_*`):** `iam_rls_violations_total{violation_type}`, user-profile's IAM domain metric. It was registered but **never fed**, so the Critical RLS alert could not fire. Migration `000010` adds `audit_rls_violation_counts()`, a watermark-advancing SECURITY DEFINER function that counts each logged violation exactly once across all replicas; `OpsMonitor` feeds it every pass.
+  - **Tier 3 (`iam_audit_log_*`):**
+    - gauge names fixed: `default_partition_rows_total` → `default_partition_rows`; `archive_stalled` → `archive_stalled_partitions`; `iam_audit_log_dlq_messages_total` (gauge) → Canonical `platform_dlq_depth{queue}`;
+    - the old names are **emitted in parallel, marked deprecated with replacement and sunset** in `deploy/monitoring/metric-registry.yaml`.
+  - **Labels:**
+    - `service` is now injected centrally as `"audit-log"`, the service name within the domain, overriding gincommon's `iam-audit-log`, as event-consumer does. `domain`/`service`/`environment` are injected in `platformLabels`/`serviceLabels` only.
+    - Label-set and value changes on unchanged names can't be dual-emitted, since Prometheus allows one label set per name. They are applied directly because **the service has never been released** (no tag, no deployment). The compatibility period applies to the renamed series.
+  - **Governance:** `metrics/registry.go` (`PlatformRegistry` + `DomainRegistry`, read by `metrics-registry-lint.sh`), `deploy/monitoring/metric-registry.yaml` (the full inventory with the label vocabulary) and `metric-lint.yaml` (the CI checks).

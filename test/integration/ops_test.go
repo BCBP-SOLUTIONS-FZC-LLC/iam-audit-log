@@ -38,7 +38,9 @@ type opsRec struct {
 	dlq map[string]int64
 }
 
-func (r *opsRec) SetOpsStats(domain.OpsStats) {}
+func (r *opsRec) SetOpsStats(domain.OpsStats)    {}
+func (r *opsRec) SetQueueDepth(string, int64)    {}
+func (r *opsRec) AddRLSViolations(string, int64) {}
 func (r *opsRec) SetDLQDepth(q string, d int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -61,11 +63,14 @@ func (noStats) OpsStats(context.Context, domain.OpsStatsQuery) (domain.OpsStats,
 	return domain.OpsStats{}, nil
 }
 
+func (noStats) RLSViolations(context.Context) (map[string]int64, error) { return nil, nil }
+
 // D-21 / RB-1: the OpsMonitor publishes a real DLQ's depth from floci. The
 // floci is shared per package, so the DLQ is purged before and after.
 func TestOps_DLQDepthGauge_RB1(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
+	src := e.queueURL(t, "billing-audit-q")
 	dlq := e.queueURL(t, "billing-audit-q-dlq")
 	purge := func() {
 		_, err := e.sqs.PurgeQueue(ctx, &sqs.PurgeQueueInput{QueueUrl: aws.String(dlq)})
@@ -76,10 +81,11 @@ func TestOps_DLQDepthGauge_RB1(t *testing.T) {
 
 	rec := &opsRec{}
 	mon := service.NewOpsMonitor(noStats{}, queueDepth{c: e.sqs}, rec,
-		service.OpsMonitorConfig{Interval: 5 * time.Second, DLQs: map[string]string{"billing-audit-q-dlq": dlq}}, nil)
+		service.OpsMonitorConfig{Interval: 5 * time.Second,
+			Queues: []service.OpsQueue{{Name: "billing-audit-q", URL: src, DLQURL: dlq}}}, nil)
 
 	mon.Collect(ctx)
-	d, ok := rec.get("billing-audit-q-dlq")
+	d, ok := rec.get("billing-audit-q")
 	require.True(t, ok, "the DLQ gauge must be set even when empty")
 	require.Zero(t, d, "purged DLQ reads 0")
 
@@ -89,7 +95,7 @@ func TestOps_DLQDepthGauge_RB1(t *testing.T) {
 	}
 	eventually(t, 30*time.Second, func() bool {
 		mon.Collect(ctx)
-		d, _ := rec.get("billing-audit-q-dlq")
+		d, _ := rec.get("billing-audit-q")
 		return d >= 2
 	}, "DLQ depth gauge never reached 2")
 }

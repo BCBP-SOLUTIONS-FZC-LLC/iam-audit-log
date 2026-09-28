@@ -119,6 +119,7 @@ invariant-lint:
 	bash .github/scripts/check-forbidden-events-bypass.sh
 	bash .github/scripts/check-asyncapi-receive-only.sh
 	bash .github/scripts/check-metric-naming.sh
+	bash .github/scripts/check-observability-confinement.sh
 
 # -----------------------------
 # TESTS

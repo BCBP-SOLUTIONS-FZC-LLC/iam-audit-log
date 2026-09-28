@@ -41,7 +41,7 @@ import (
 // backend (test/postgres TestGUC_* caught exactly this). AL-INV-3 and the
 // LLD's "SET LOCAL inside each transaction, never session-level" rule
 // require the transaction-local path in every environment, dev included.
-func AppPoolConfig(dsn string, log port.Logger, tracer *OTelTracer) (pgcommon.Config, []pgcommon.ConfigWarning) {
+func AppPoolConfig(dsn string, log port.Logger, tracer port.Tracer) (pgcommon.Config, []pgcommon.ConfigWarning) {
 	cfg, warnings := pgcommon.ConfigFromEnv()
 	cfg.DSN = dsn
 	cfg.PGBouncerMode = true
@@ -59,7 +59,7 @@ func AppPoolConfig(dsn string, log port.Logger, tracer *OTelTracer) (pgcommon.Co
 // audit_reconciler pool. No GUCProvider (BYPASSRLS), and PGBouncerMode is
 // forced true because the pool still connects through PgBouncer in
 // production (matching the siblings' SystemPoolConfig).
-func ReconcilerPoolConfig(dsn string, log port.Logger, tracer *OTelTracer) (pgcommon.Config, []pgcommon.ConfigWarning) {
+func ReconcilerPoolConfig(dsn string, log port.Logger, tracer port.Tracer) (pgcommon.Config, []pgcommon.ConfigWarning) {
 	cfg, warnings := pgcommon.ConfigFromEnv()
 	cfg.DSN = dsn
 	cfg.GUCProvider = nil

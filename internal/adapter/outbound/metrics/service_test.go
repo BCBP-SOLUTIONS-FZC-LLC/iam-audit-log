@@ -154,13 +154,17 @@ func TestQueryAdapter(t *testing.T) {
 	}
 }
 
-// Ops gauges (D-21): each value set, and set again (a gauge, not a counter).
+// Ops gauges (D-21): each value set, and set again (a gauge, not a
+// counter). The deprecated names are emitted in parallel with their
+// replacements during the compatibility period.
 func TestOpsAdapter(t *testing.T) {
 	o := Ops{}
 	o.SetOpsStats(coredomain.OpsStats{DefaultPartitionRows: 3, StalledPartitions: 2, ArchiveLagSeconds: 7200.5, PendingRedactions: 4})
 	for name, want := range map[string]float64{
-		"iam_audit_log_default_partition_rows_total": 3,
-		"iam_audit_log_archive_stalled":              2,
+		"iam_audit_log_default_partition_rows":       3,
+		"iam_audit_log_default_partition_rows_total": 3, // deprecated twin
+		"iam_audit_log_archive_stalled_partitions":   2,
+		"iam_audit_log_archive_stalled":              2, // deprecated twin
 		"iam_audit_log_archive_lag_seconds":          7200.5,
 		"iam_audit_log_redaction_pending_tasks":      4,
 	} {
@@ -169,23 +173,61 @@ func TestOpsAdapter(t *testing.T) {
 		}
 	}
 	o.SetOpsStats(coredomain.OpsStats{})
-	for _, name := range []string{"iam_audit_log_default_partition_rows_total", "iam_audit_log_archive_stalled",
+	for _, name := range []string{"iam_audit_log_default_partition_rows", "iam_audit_log_default_partition_rows_total",
+		"iam_audit_log_archive_stalled_partitions", "iam_audit_log_archive_stalled",
 		"iam_audit_log_archive_lag_seconds", "iam_audit_log_redaction_pending_tasks"} {
 		if got := gaugeValue(t, name); got != 0 {
 			t.Errorf("%s reset = %v", name, got)
 		}
 	}
 
-	o.SetDLQDepth("user-audit-q-dlq", 5)
-	o.SetDLQDepth("auth-audit-q-dlq", 0)
-	if got := labeledGauge(t, "iam_audit_log_dlq_messages_total", map[string]string{"queue": "user-audit-q-dlq"}); got != 5 {
-		t.Errorf("dlq user = %v", got)
+	// platform_dlq_depth is keyed by the source queue; the deprecated gauge
+	// keeps its old "<queue>-dlq" label value.
+	o.SetDLQDepth("user-audit-q", 5)
+	o.SetDLQDepth("auth-audit-q", 0)
+	if got := labeledGauge(t, "platform_dlq_depth", map[string]string{"queue": "user-audit-q"}); got != 5 {
+		t.Errorf("platform_dlq_depth user = %v", got)
 	}
-	o.SetDLQDepth("user-audit-q-dlq", 1)
-	if got := labeledGauge(t, "iam_audit_log_dlq_messages_total", map[string]string{"queue": "user-audit-q-dlq"}); got != 1 {
-		t.Errorf("dlq user after drain = %v", got)
+	if got := labeledGauge(t, "iam_audit_log_dlq_messages_total", map[string]string{"queue": "user-audit-q-dlq"}); got != 5 {
+		t.Errorf("legacy dlq user = %v", got)
+	}
+	o.SetDLQDepth("user-audit-q", 1)
+	if got := labeledGauge(t, "platform_dlq_depth", map[string]string{"queue": "user-audit-q"}); got != 1 {
+		t.Errorf("platform_dlq_depth after drain = %v", got)
+	}
+	if got := labeledGauge(t, "platform_dlq_depth", map[string]string{"queue": "auth-audit-q"}); got != 0 {
+		t.Errorf("platform_dlq_depth auth = %v", got)
 	}
 	if got := labeledGauge(t, "iam_audit_log_dlq_messages_total", map[string]string{"queue": "auth-audit-q-dlq"}); got != 0 {
-		t.Errorf("dlq auth = %v", got)
+		t.Errorf("legacy dlq auth = %v", got)
+	}
+
+	o.SetQueueDepth("tenant-audit-q", 42)
+	if got := labeledGauge(t, "platform_queue_depth", map[string]string{"queue": "tenant-audit-q"}); got != 42 {
+		t.Errorf("platform_queue_depth = %v", got)
+	}
+}
+
+// iam_rls_violations_total: counts added, violation_type bounded to the
+// rls_check_tenant() vocabulary.
+func TestOpsAdapter_RLSViolations(t *testing.T) {
+	o := Ops{}
+	before := counterOr0(t, "iam_rls_violations_total", map[string]string{"violation_type": "cross_tenant_access"})
+	o.AddRLSViolations("cross_tenant_access", 3)
+	o.AddRLSViolations("missing_or_invalid_guc", 1)
+	o.AddRLSViolations("something_new", 2)
+	if got := labeled(t, "iam_rls_violations_total", map[string]string{"violation_type": "cross_tenant_access"}); got != before+3 {
+		t.Errorf("cross_tenant_access = %v, want %v", got, before+3)
+	}
+	if got := labeled(t, "iam_rls_violations_total", map[string]string{"violation_type": "other"}); got < 2 {
+		t.Errorf("unknown type must be bounded to other, got %v", got)
+	}
+	if got := labeled(t, "iam_rls_violations_total", map[string]string{"violation_type": "something_new"}); got != 0 {
+		t.Errorf("unbounded violation_type leaked: %v", got)
+	}
+	for in, want := range map[string]string{"cross_tenant_access": "cross_tenant_access", "missing_or_invalid_guc": "missing_or_invalid_guc", "": "other", "x": "other"} {
+		if got := rlsViolationType(in); got != want {
+			t.Errorf("rlsViolationType(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

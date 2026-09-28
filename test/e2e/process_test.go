@@ -145,7 +145,10 @@ func TestReconcilerBinary_RejectsUnknownJob(t *testing.T) {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	out, err := cmd.CombinedOutput()
 	require.Error(t, err)
-	assert.Contains(t, string(out), `unknown job "nope"`)
+	// Reported through the platform-gincommon logger (gap 43) as a structured
+	// line: the message, the rejected job, and the valid ones.
+	assert.Contains(t, string(out), "unknown job")
+	assert.Contains(t, string(out), "nope")
 	assert.Contains(t, string(out), "reconcile")
 }
 

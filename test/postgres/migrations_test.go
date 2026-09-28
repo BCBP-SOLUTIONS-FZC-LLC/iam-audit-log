@@ -54,20 +54,20 @@ func TestMigrations_FullDownUpRoundTrip(t *testing.T) {
 	v, dirty, err := r.Version(ctx)
 	require.NoError(t, err)
 	require.False(t, dirty)
-	require.EqualValues(t, 9, v)
+	require.EqualValues(t, 10, v)
 
-	for step := 9; step >= 1; step-- {
+	for step := 10; step >= 1; step-- {
 		require.NoError(t, r.Down(ctx, 1), "down from version %d", step)
 	}
 	for _, obj := range []string{"audit_events", "audit_event_archive_state", "processed_events",
-		"tenant_plan_window", "audit_export_jobs", "audit_redaction_tasks", "rls_violation_log", "audit_archive_objects"} {
+		"tenant_plan_window", "audit_export_jobs", "audit_redaction_tasks", "rls_violation_log", "audit_archive_objects", "ops_export_watermark", "redacted_subjects"} {
 		assert.False(t, regclassExists(t, db, obj), "%s must be gone after full down", obj)
 	}
 
 	require.NoError(t, r.Up(ctx))
 	v, _, err = r.Version(ctx)
 	require.NoError(t, err)
-	assert.EqualValues(t, 9, v)
+	assert.EqualValues(t, 10, v)
 	assert.True(t, regclassExists(t, db, partitionName(0)), "bootstrap re-creates the partitions")
 }
 
@@ -79,7 +79,7 @@ func TestMigrations_PartitionBootstrapDownKeepsData_ALINV1(t *testing.T) {
 	e := newEvent(tenantA, monthStart(0).Add(time.Hour))
 	seedEvent(t, db, e)
 
-	require.NoError(t, runner(db).Down(ctx, 5)) // 000009 … 000005
+	require.NoError(t, runner(db).Down(ctx, 6)) // 000010 … 000005
 	assert.True(t, regclassExists(t, db, partitionName(0)), "non-empty partition must survive")
 	assert.False(t, regclassExists(t, db, partitionName(1)), "empty partition is removed")
 

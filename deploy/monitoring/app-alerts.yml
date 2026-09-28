@@ -1,9 +1,19 @@
-# Static mirror of deploy/helm/templates/prometheusrule.yaml, for manual
-# `--rule-files` deployment on a Prometheus that is not using the
-# prometheus-operator PrometheusRule CRD. Rendered with the release name
-# "iam-audit-log". test/unit TestAlerts_StaticMirrorMatchesHelm keeps the two
-# identical, and TestAlerts_ReferenceKnownMetrics checks every metric name
-# (LLD §11; runbooks in docs/runbook.md).
+# Prometheus alert rules for iam-audit-log (LLD §11, §20; runbooks in
+# docs/runbook.md). Static mirror, together with recording-rules.yml and
+# slo-rules.yml, of deploy/helm/templates/prometheusrule.yaml (rendered with
+# the release name "iam-audit-log"), for a Prometheus that is not using the
+# prometheus-operator PrometheusRule CRD.
+#
+# Enterprise Platform Observability Standard (gap 46):
+#   - Tier-1 (platform_*) series are selected by {domain="iam", service="audit-log"},
+#     and Tier-2/Tier-3 (iam_*) series by {service="audit-log"}. Both labels are
+#     injected centrally. `job` is kept only for series this service does not
+#     label itself (up, gincommon http_*, platform-events events_*, kube-state).
+#   - No rule reads a deprecated metric (deploy/monitoring/metric-registry.yaml);
+#     TestAlerts_ReferenceKnownMetrics enforces it, and metrics-registry-lint.sh
+#     that no Proposed platform_* name is a live target.
+#   - TestAlerts_StaticMirrorMatchesHelm keeps this file and the Helm template
+#     identical.
 groups:
   - name: audit_log_availability
     rules:
@@ -34,11 +44,7 @@ groups:
             ingestion and the query API to zero.
 
       - alert: IAMAuditLogHighErrorRate
-        expr: |
-          sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[5m]))
-            /
-          sum(rate(http_requests_total{job="iam-audit-log"}[5m]))
-          > 0.05
+        expr: service:http_requests_error_ratio:5m{job="iam-audit-log"} > 0.05
         for: 5m
         labels:
           severity: warning
@@ -49,19 +55,71 @@ groups:
             {{ $value | humanizePercentage }} of requests return 5xx. Check Postgres
             and S3 reachability (dependency_unavailable).
 
-  - name: audit_log_ingest
+  - name: audit_log_messaging
     rules:
       - alert: IAMAuditLogDLQNotEmpty
-        expr: max by (queue) (iam_audit_log_dlq_messages_total{job="iam-audit-log"}) > 0
+        expr: max by (queue) (platform_dlq_depth{domain="iam", service="audit-log"}) > 0
         for: 1m
         labels:
           severity: critical
           team: platform
         annotations:
-          summary: "Audit DLQ {{ $labels.queue }} has messages — compliance incident"
+          summary: "Audit DLQ for {{ $labels.queue }} has messages — compliance incident"
           description: >-
-            {{ $value }} message(s) in {{ $labels.queue }}. Each is a potentially lost
-            audit record (AL-EVT-4). Investigate and replay, never purge.
+            {{ $value }} message(s) in {{ $labels.queue }}-dlq. Each is a potentially
+            lost audit record (AL-EVT-4). Investigate and replay, never purge.
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogDeadLettered
+        expr: sum by (queue, reason) (increase(platform_dlq_messages_total{domain="iam", service="audit-log"}[15m])) > 0
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Messages from {{ $labels.queue }} reached the dead-letter threshold ({{ $labels.reason }})"
+          description: >-
+            {{ $value }} message(s) exhausted their deliveries and are moving to the DLQ
+            (AL-EVT-4). The DLQ-depth alert follows once SQS redrives them.
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogMessageFailures
+        expr: service:platform_messages_failure_ratio:5m{domain="iam", service="audit-log"} > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: More than 5% of consumed messages are failing
+          description: >-
+            {{ $value | humanizePercentage }} of received messages failed in the last 5
+            minutes. See service:platform_messages_failed:rate5m by reason
+            (dependency_unavailable = Postgres; invalid_event = a producer shape).
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogRetrySpike
+        expr: sum by (reason) (service:platform_retry:rate5m{domain="iam", service="audit-log"}) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Retry spike ({{ $labels.reason }})"
+          description: >-
+            {{ $value }} redeliveries/s over 10 minutes. Sustained retries end in the DLQ
+            after SQS_MAX_RECEIVE_COUNT deliveries.
+          runbook_url: docs/runbook.md#rb-1
+
+      - alert: IAMAuditLogQueueBacklog
+        expr: max by (queue) (platform_queue_depth{domain="iam", service="audit-log"}) > 1000
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Queue {{ $labels.queue }} backlog above 1000 messages"
+          description: >-
+            {{ $value }} messages waiting. Consumers are slow or down; check replicas,
+            Postgres latency and the failure ratio.
           runbook_url: docs/runbook.md#rb-1
 
       - alert: IAMAuditLogMalformedEnvelopes
@@ -76,8 +134,10 @@ groups:
             no retry, no DLQ (decision D-3). {{ $value }} such message(s) in 10 minutes.
           runbook_url: docs/runbook.md#rb-10
 
+  - name: audit_log_ingest
+    rules:
       - alert: IAMAuditLogUnknownEventTypes
-        expr: sum by (source_service) (increase(iam_audit_log_unknown_event_total{job="iam-audit-log"}[1h])) > 0
+        expr: sum by (source_service) (increase(iam_audit_log_unknown_event_total{service="audit-log"}[1h])) > 0
         labels:
           severity: warning
           team: platform
@@ -88,10 +148,7 @@ groups:
             Extend the taxonomy (LLD §7.1) and AsyncAPI.
 
       - alert: IAMAuditLogIngestLagHigh
-        expr: |
-          histogram_quantile(0.99,
-            sum by (le) (rate(iam_audit_log_ingest_lag_seconds_bucket{job="iam-audit-log"}[15m])))
-          > 0.05
+        expr: service:iam_audit_log_ingest_lag:p99_15m{service="audit-log"} > 0.05
         for: 15m
         labels:
           severity: warning
@@ -100,13 +157,13 @@ groups:
           summary: iam-audit-log ingest lag p99 above the 50 ms SLO
           description: >-
             p99 recorded_at − occurred_at is {{ $value | humanizeDuration }}
-            (HLD §3.4). Check SQS backlog, consumer health and Postgres latency.
+            (HLD §3.4). Check the SQS backlog, consumer health and Postgres latency.
 
       - alert: IAMAuditLogDirectWriteErrors
         expr: |
-          sum(rate(iam_audit_log_directwrite_requests_total{job="iam-audit-log", result="error"}[10m]))
+          sum(rate(iam_audit_log_directwrite_requests_total{service="audit-log", result="error"}[10m]))
             /
-          sum(rate(iam_audit_log_directwrite_requests_total{job="iam-audit-log"}[10m]))
+          clamp_min(sum(rate(iam_audit_log_directwrite_requests_total{service="audit-log"}[10m])), 1e-9)
           > 0.05
         for: 10m
         labels:
@@ -122,7 +179,7 @@ groups:
   - name: audit_log_storage
     rules:
       - alert: IAMAuditLogDefaultPartitionRows
-        expr: max(iam_audit_log_default_partition_rows_total{job="iam-audit-log"}) > 0
+        expr: max(iam_audit_log_default_partition_rows{service="audit-log"}) > 0
         for: 5m
         labels:
           severity: critical
@@ -136,7 +193,7 @@ groups:
           runbook_url: docs/runbook.md#rb-3
 
       - alert: IAMAuditLogArchiveStalled
-        expr: max(iam_audit_log_archive_stalled{job="iam-audit-log"}) > 0
+        expr: max(iam_audit_log_archive_stalled_partitions{service="audit-log"}) > 0
         for: 30m
         labels:
           severity: critical
@@ -144,12 +201,13 @@ groups:
         annotations:
           summary: Archival stalled — partitions past drop-age still attached
           description: >-
-            {{ $value }} partition(s) are 48 h past archival eligibility and not dropped
-            (AL-INV-9 held). The hot table grows until this clears.
+            {{ $value }} partition(s) are past archival eligibility plus
+            OPS_ARCHIVE_STALL_GRACE and not dropped (AL-INV-9 held). The hot table
+            grows until this clears.
           runbook_url: docs/runbook.md#rb-2
 
       - alert: IAMAuditLogArchiveLagWarning
-        expr: max(iam_audit_log_archive_lag_seconds{job="iam-audit-log"}) > 86400
+        expr: max(iam_audit_log_archive_lag_seconds{service="audit-log"}) > 86400
         for: 30m
         labels:
           severity: warning
@@ -162,7 +220,7 @@ groups:
           runbook_url: docs/runbook.md#rb-2
 
       - alert: IAMAuditLogArchiveLagCritical
-        expr: max(iam_audit_log_archive_lag_seconds{job="iam-audit-log"}) > 259200
+        expr: max(iam_audit_log_archive_lag_seconds{service="audit-log"}) > 259200
         for: 30m
         labels:
           severity: critical
@@ -175,7 +233,7 @@ groups:
           runbook_url: docs/runbook.md#rb-2
 
       - alert: IAMAuditLogRedactionPending
-        expr: max(iam_audit_log_redaction_pending_tasks{job="iam-audit-log"}) > 0
+        expr: max(iam_audit_log_redaction_pending_tasks{service="audit-log"}) > 0
         for: 15m
         labels:
           severity: critical
@@ -190,7 +248,7 @@ groups:
   - name: audit_log_security
     rules:
       - alert: IAMAuditLogCrossTenantAccess
-        expr: sum(increase(iam_rls_violations_total{job="iam-audit-log", violation_type="cross_tenant_access"}[5m])) > 0
+        expr: sum(increase(iam_rls_violations_total{service="audit-log", violation_type="cross_tenant_access"}[5m])) > 0
         labels:
           severity: critical
           team: security
@@ -198,11 +256,12 @@ groups:
           summary: Cross-tenant access attempt blocked by RLS
           description: >-
             RLS rejected a cross-tenant row (fail-closed, AL-INV-3). A possible attack
-            or a GUC-binding bug.
+            or a GUC-binding bug. rls_violation_log is sampled (1%), so any count is
+            significant.
           runbook_url: docs/runbook.md#rb-5
 
       - alert: IAMAuditLogMissingGUC
-        expr: sum(increase(iam_rls_violations_total{job="iam-audit-log", violation_type="missing_or_invalid_guc"}[15m])) > 0
+        expr: sum(increase(iam_rls_violations_total{service="audit-log", violation_type="missing_or_invalid_guc"}[15m])) > 0
         labels:
           severity: warning
           team: platform
@@ -215,8 +274,21 @@ groups:
 
   - name: audit_log_dependencies
     rules:
+      - alert: IAMAuditLogDependencyErrors
+        expr: service:platform_dependency_request_error_ratio:10m{domain="iam", service="audit-log"} > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Dependency {{ $labels.dependency }} failing more than 10% of calls"
+          description: >-
+            {{ $value | humanizePercentage }} of {{ $labels.dependency }} calls end in
+            error or timeout (catalog-admin → RB-8; s3 → RB-2 / archived reads 503).
+          runbook_url: docs/runbook.md#rb-8
+
       - alert: IAMAuditLogCatalogPlansStaleWarning
-        expr: max(iam_audit_log_catalog_plans_stale_seconds{job="iam-audit-log"}) > 1200
+        expr: max(iam_audit_log_catalog_plans_stale_seconds{service="audit-log"}) > 1200
         for: 5m
         labels:
           severity: warning
@@ -229,7 +301,7 @@ groups:
           runbook_url: docs/runbook.md#rb-8
 
       - alert: IAMAuditLogCatalogPlansStaleCritical
-        expr: max(iam_audit_log_catalog_plans_stale_seconds{job="iam-audit-log"}) > 6000
+        expr: max(iam_audit_log_catalog_plans_stale_seconds{service="audit-log"}) > 6000
         for: 5m
         labels:
           severity: critical

@@ -1,7 +1,10 @@
 {{- /*
-PrometheusRule for LLD §11 (Phase 8; decision D-21). Mirrored by
-deploy/monitoring/app-alerts.yml (TestAlerts_StaticMirrorMatchesHelm keeps
-them identical). Prometheus template braces are escaped for Helm.
+PrometheusRule for iam-audit-log: the alerts, recording rules and SLOs (LLD
+§11; Enterprise Platform Observability Standard, gap 46). GENERATED from
+deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml by
+scripts/gen-prometheusrule.py; do not edit by hand.
+TestAlerts_StaticMirrorMatchesHelm keeps it identical to those files.
+Prometheus template braces are escaped for Helm.
 */ -}}
 {{- if .Values.prometheusRule.enabled }}
 apiVersion: monitoring.coreos.com/v1
@@ -44,11 +47,7 @@ spec:
               ingestion and the query API to zero.
 
         - alert: IAMAuditLogHighErrorRate
-          expr: |
-            sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}, status_class="5xx"}[5m]))
-              /
-            sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}}[5m]))
-            > 0.05
+          expr: service:http_requests_error_ratio:5m{job={{ include "iam-audit-log.fullname" . | quote }}} > 0.05
           for: 5m
           labels:
             severity: warning
@@ -59,19 +58,71 @@ spec:
               {{`{{ $value | humanizePercentage }}`}} of requests return 5xx. Check Postgres
               and S3 reachability (dependency_unavailable).
 
-    - name: audit_log_ingest
+    - name: audit_log_messaging
       rules:
         - alert: IAMAuditLogDLQNotEmpty
-          expr: max by (queue) (iam_audit_log_dlq_messages_total{job={{ include "iam-audit-log.fullname" . | quote }}}) > 0
+          expr: max by (queue) (platform_dlq_depth{domain="iam", service="audit-log"}) > 0
           for: 1m
           labels:
             severity: critical
             team: platform
           annotations:
-            summary: "Audit DLQ {{`{{ $labels.queue }}`}} has messages — compliance incident"
+            summary: "Audit DLQ for {{`{{ $labels.queue }}`}} has messages — compliance incident"
             description: >-
-              {{`{{ $value }}`}} message(s) in {{`{{ $labels.queue }}`}}. Each is a potentially lost
-              audit record (AL-EVT-4). Investigate and replay, never purge.
+              {{`{{ $value }}`}} message(s) in {{`{{ $labels.queue }}`}}-dlq. Each is a potentially
+              lost audit record (AL-EVT-4). Investigate and replay, never purge.
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogDeadLettered
+          expr: sum by (queue, reason) (increase(platform_dlq_messages_total{domain="iam", service="audit-log"}[15m])) > 0
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Messages from {{`{{ $labels.queue }}`}} reached the dead-letter threshold ({{`{{ $labels.reason }}`}})"
+            description: >-
+              {{`{{ $value }}`}} message(s) exhausted their deliveries and are moving to the DLQ
+              (AL-EVT-4). The DLQ-depth alert follows once SQS redrives them.
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogMessageFailures
+          expr: service:platform_messages_failure_ratio:5m{domain="iam", service="audit-log"} > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: More than 5% of consumed messages are failing
+            description: >-
+              {{`{{ $value | humanizePercentage }}`}} of received messages failed in the last 5
+              minutes. See service:platform_messages_failed:rate5m by reason
+              (dependency_unavailable = Postgres; invalid_event = a producer shape).
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogRetrySpike
+          expr: sum by (reason) (service:platform_retry:rate5m{domain="iam", service="audit-log"}) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Retry spike ({{`{{ $labels.reason }}`}})"
+            description: >-
+              {{`{{ $value }}`}} redeliveries/s over 10 minutes. Sustained retries end in the DLQ
+              after SQS_MAX_RECEIVE_COUNT deliveries.
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogQueueBacklog
+          expr: max by (queue) (platform_queue_depth{domain="iam", service="audit-log"}) > 1000
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Queue {{`{{ $labels.queue }}`}} backlog above 1000 messages"
+            description: >-
+              {{`{{ $value }}`}} messages waiting. Consumers are slow or down; check replicas,
+              Postgres latency and the failure ratio.
             runbook_url: docs/runbook.md#rb-1
 
         - alert: IAMAuditLogMalformedEnvelopes
@@ -86,8 +137,10 @@ spec:
               no retry, no DLQ (decision D-3). {{`{{ $value }}`}} such message(s) in 10 minutes.
             runbook_url: docs/runbook.md#rb-10
 
+    - name: audit_log_ingest
+      rules:
         - alert: IAMAuditLogUnknownEventTypes
-          expr: sum by (source_service) (increase(iam_audit_log_unknown_event_total{job={{ include "iam-audit-log.fullname" . | quote }}}[1h])) > 0
+          expr: sum by (source_service) (increase(iam_audit_log_unknown_event_total{service="audit-log"}[1h])) > 0
           labels:
             severity: warning
             team: platform
@@ -98,10 +151,7 @@ spec:
               Extend the taxonomy (LLD §7.1) and AsyncAPI.
 
         - alert: IAMAuditLogIngestLagHigh
-          expr: |
-            histogram_quantile(0.99,
-              sum by (le) (rate(iam_audit_log_ingest_lag_seconds_bucket{job={{ include "iam-audit-log.fullname" . | quote }}}[15m])))
-            > 0.05
+          expr: service:iam_audit_log_ingest_lag:p99_15m{service="audit-log"} > 0.05
           for: 15m
           labels:
             severity: warning
@@ -110,13 +160,13 @@ spec:
             summary: iam-audit-log ingest lag p99 above the 50 ms SLO
             description: >-
               p99 recorded_at − occurred_at is {{`{{ $value | humanizeDuration }}`}}
-              (HLD §3.4). Check SQS backlog, consumer health and Postgres latency.
+              (HLD §3.4). Check the SQS backlog, consumer health and Postgres latency.
 
         - alert: IAMAuditLogDirectWriteErrors
           expr: |
-            sum(rate(iam_audit_log_directwrite_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}, result="error"}[10m]))
+            sum(rate(iam_audit_log_directwrite_requests_total{service="audit-log", result="error"}[10m]))
               /
-            sum(rate(iam_audit_log_directwrite_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}}[10m]))
+            clamp_min(sum(rate(iam_audit_log_directwrite_requests_total{service="audit-log"}[10m])), 1e-9)
             > 0.05
           for: 10m
           labels:
@@ -132,7 +182,7 @@ spec:
     - name: audit_log_storage
       rules:
         - alert: IAMAuditLogDefaultPartitionRows
-          expr: max(iam_audit_log_default_partition_rows_total{job={{ include "iam-audit-log.fullname" . | quote }}}) > 0
+          expr: max(iam_audit_log_default_partition_rows{service="audit-log"}) > 0
           for: 5m
           labels:
             severity: critical
@@ -146,7 +196,7 @@ spec:
             runbook_url: docs/runbook.md#rb-3
 
         - alert: IAMAuditLogArchiveStalled
-          expr: max(iam_audit_log_archive_stalled{job={{ include "iam-audit-log.fullname" . | quote }}}) > 0
+          expr: max(iam_audit_log_archive_stalled_partitions{service="audit-log"}) > 0
           for: 30m
           labels:
             severity: critical
@@ -154,12 +204,13 @@ spec:
           annotations:
             summary: Archival stalled — partitions past drop-age still attached
             description: >-
-              {{`{{ $value }}`}} partition(s) are 48 h past archival eligibility and not dropped
-              (AL-INV-9 held). The hot table grows until this clears.
+              {{`{{ $value }}`}} partition(s) are past archival eligibility plus
+              OPS_ARCHIVE_STALL_GRACE and not dropped (AL-INV-9 held). The hot table
+              grows until this clears.
             runbook_url: docs/runbook.md#rb-2
 
         - alert: IAMAuditLogArchiveLagWarning
-          expr: max(iam_audit_log_archive_lag_seconds{job={{ include "iam-audit-log.fullname" . | quote }}}) > 86400
+          expr: max(iam_audit_log_archive_lag_seconds{service="audit-log"}) > 86400
           for: 30m
           labels:
             severity: warning
@@ -172,7 +223,7 @@ spec:
             runbook_url: docs/runbook.md#rb-2
 
         - alert: IAMAuditLogArchiveLagCritical
-          expr: max(iam_audit_log_archive_lag_seconds{job={{ include "iam-audit-log.fullname" . | quote }}}) > 259200
+          expr: max(iam_audit_log_archive_lag_seconds{service="audit-log"}) > 259200
           for: 30m
           labels:
             severity: critical
@@ -185,7 +236,7 @@ spec:
             runbook_url: docs/runbook.md#rb-2
 
         - alert: IAMAuditLogRedactionPending
-          expr: max(iam_audit_log_redaction_pending_tasks{job={{ include "iam-audit-log.fullname" . | quote }}}) > 0
+          expr: max(iam_audit_log_redaction_pending_tasks{service="audit-log"}) > 0
           for: 15m
           labels:
             severity: critical
@@ -200,7 +251,7 @@ spec:
     - name: audit_log_security
       rules:
         - alert: IAMAuditLogCrossTenantAccess
-          expr: sum(increase(iam_rls_violations_total{job={{ include "iam-audit-log.fullname" . | quote }}, violation_type="cross_tenant_access"}[5m])) > 0
+          expr: sum(increase(iam_rls_violations_total{service="audit-log", violation_type="cross_tenant_access"}[5m])) > 0
           labels:
             severity: critical
             team: security
@@ -208,11 +259,12 @@ spec:
             summary: Cross-tenant access attempt blocked by RLS
             description: >-
               RLS rejected a cross-tenant row (fail-closed, AL-INV-3). A possible attack
-              or a GUC-binding bug.
+              or a GUC-binding bug. rls_violation_log is sampled (1%), so any count is
+              significant.
             runbook_url: docs/runbook.md#rb-5
 
         - alert: IAMAuditLogMissingGUC
-          expr: sum(increase(iam_rls_violations_total{job={{ include "iam-audit-log.fullname" . | quote }}, violation_type="missing_or_invalid_guc"}[15m])) > 0
+          expr: sum(increase(iam_rls_violations_total{service="audit-log", violation_type="missing_or_invalid_guc"}[15m])) > 0
           labels:
             severity: warning
             team: platform
@@ -225,8 +277,21 @@ spec:
 
     - name: audit_log_dependencies
       rules:
+        - alert: IAMAuditLogDependencyErrors
+          expr: service:platform_dependency_request_error_ratio:10m{domain="iam", service="audit-log"} > 0.1
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Dependency {{`{{ $labels.dependency }}`}} failing more than 10% of calls"
+            description: >-
+              {{`{{ $value | humanizePercentage }}`}} of {{`{{ $labels.dependency }}`}} calls end in
+              error or timeout (catalog-admin → RB-8; s3 → RB-2 / archived reads 503).
+            runbook_url: docs/runbook.md#rb-8
+
         - alert: IAMAuditLogCatalogPlansStaleWarning
-          expr: max(iam_audit_log_catalog_plans_stale_seconds{job={{ include "iam-audit-log.fullname" . | quote }}}) > 1200
+          expr: max(iam_audit_log_catalog_plans_stale_seconds{service="audit-log"}) > 1200
           for: 5m
           labels:
             severity: warning
@@ -239,7 +304,7 @@ spec:
             runbook_url: docs/runbook.md#rb-8
 
         - alert: IAMAuditLogCatalogPlansStaleCritical
-          expr: max(iam_audit_log_catalog_plans_stale_seconds{job={{ include "iam-audit-log.fullname" . | quote }}}) > 6000
+          expr: max(iam_audit_log_catalog_plans_stale_seconds{service="audit-log"}) > 6000
           for: 5m
           labels:
             severity: critical
@@ -277,4 +342,202 @@ spec:
               redaction-retry, redaction-sweep or processed-events-prune exited non-zero.
               Check the Job's logs.
             runbook_url: docs/runbook.md#rb-9
+
+    - name: iam-audit-log.rules
+      interval: 30s
+      rules:
+        # ---- Tier-1 messaging throughput ----
+        - record: service:platform_messages_received:rate5m
+          expr: sum by (domain, service, environment, queue) (rate(platform_messages_received_total{domain="iam", service="audit-log"}[5m]))
+        - record: service:platform_messages_processed:rate5m
+          expr: sum by (domain, service, environment) (rate(platform_messages_processed_total{domain="iam", service="audit-log"}[5m]))
+        - record: service:platform_messages_failed:rate5m
+          expr: sum by (domain, service, environment, reason) (rate(platform_messages_failed_total{domain="iam", service="audit-log"}[5m]))
+        - record: service:platform_retry:rate5m
+          expr: sum by (domain, service, environment, reason) (rate(platform_retry_total{domain="iam", service="audit-log"}[5m]))
+        - record: service:platform_dlq_messages:rate5m
+          expr: sum by (domain, service, environment, queue, reason) (rate(platform_dlq_messages_total{domain="iam", service="audit-log"}[5m]))
+        - record: service:platform_duplicate_messages:rate5m
+          expr: sum by (domain, service, environment) (rate(platform_duplicate_messages_total{domain="iam", service="audit-log"}[5m]))
+
+        # ---- failure ratio (backs IAMAuditLogMessageFailures) ----
+        - record: service:platform_messages_failure_ratio:5m
+          expr: |
+            sum by (domain, service, environment) (rate(platform_messages_failed_total{domain="iam", service="audit-log"}[5m]))
+            /
+            clamp_min(sum by (domain, service, environment) (rate(platform_messages_received_total{domain="iam", service="audit-log"}[5m])), 1e-9)
+
+        # ---- dependencies ----
+        - record: service:platform_dependency_request:p99_5m
+          expr: |
+            histogram_quantile(0.99,
+              sum by (domain, service, environment, dependency, operation, le) (rate(platform_dependency_request_seconds_bucket{domain="iam", service="audit-log"}[5m])))
+        - record: service:platform_dependency_request_error_ratio:10m
+          expr: |
+            sum by (domain, service, environment, dependency) (rate(platform_dependency_request_seconds_count{domain="iam", service="audit-log", outcome=~"error|timeout"}[10m]))
+            /
+            clamp_min(sum by (domain, service, environment, dependency) (rate(platform_dependency_request_seconds_count{domain="iam", service="audit-log"}[10m])), 1e-9)
+
+        # ---- propagation (envelope time → persisted) ----
+        - record: service:platform_event_propagation:p99_5m
+          expr: |
+            histogram_quantile(0.99,
+              sum by (domain, service, environment, le) (rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log"}[5m])))
+
+        # ---- queues ----
+        - record: service:platform_queue_depth:max
+          expr: max by (domain, service, environment, queue) (platform_queue_depth{domain="iam", service="audit-log"})
+        - record: service:platform_dlq_depth:max
+          expr: max by (domain, service, environment, queue) (platform_dlq_depth{domain="iam", service="audit-log"})
+
+        # ---- query API availability (gincommon http_* carries no service label of ours) ----
+        - record: service:http_requests_error_ratio:5m
+          expr: |
+            sum by (job) (rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}, status_class="5xx"}[5m]))
+            /
+            clamp_min(sum by (job) (rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}}[5m])), 1e-9)
+
+        # ---- Tier-3 ingest ----
+        - record: service:iam_audit_log_events_ingested:rate5m
+          expr: sum by (service, environment, ingest_mode) (rate(iam_audit_log_events_ingested_total{service="audit-log"}[5m]))
+        - record: service:iam_audit_log_ingest_lag:p99_15m
+          expr: |
+            histogram_quantile(0.99,
+              sum by (service, environment, le) (rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log"}[15m])))
+
+        # ---- Tier-3 archive and redaction health ----
+        - record: service:iam_audit_log_archive_stalled_partitions:max
+          expr: max by (service, environment) (iam_audit_log_archive_stalled_partitions{service="audit-log"})
+        - record: service:iam_audit_log_archive_lag_seconds:max
+          expr: max by (service, environment) (iam_audit_log_archive_lag_seconds{service="audit-log"})
+        - record: service:iam_audit_log_default_partition_rows:max
+          expr: max by (service, environment) (iam_audit_log_default_partition_rows{service="audit-log"})
+        - record: service:iam_audit_log_redaction_pending_tasks:max
+          expr: max by (service, environment) (iam_audit_log_redaction_pending_tasks{service="audit-log"})
+        - record: service:iam_audit_log_redaction_tasks:rate1h
+          expr: sum by (service, environment, status) (rate(iam_audit_log_redaction_tasks_total{service="audit-log"}[1h]))
+
+    - name: iam-audit-log.slo
+      interval: 30s
+      rules:
+        # ---- ingest lag: bad = rows slower than 50 ms (bucket le="0.05") ----
+        - record: slo:audit_log_ingest_lag:error_ratio_5m
+          expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[5m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[5m])), 1e-9))
+        - record: slo:audit_log_ingest_lag:error_ratio_30m
+          expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[30m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[30m])), 1e-9))
+        - record: slo:audit_log_ingest_lag:error_ratio_1h
+          expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[1h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[1h])), 1e-9))
+        - record: slo:audit_log_ingest_lag:error_ratio_6h
+          expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[6h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[6h])), 1e-9))
+
+        # ---- propagation: bad = events slower than 5 s (bucket le="5") ----
+        - record: slo:audit_log_propagation:error_ratio_5m
+          expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[5m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[5m])), 1e-9))
+        - record: slo:audit_log_propagation:error_ratio_30m
+          expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[30m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[30m])), 1e-9))
+        - record: slo:audit_log_propagation:error_ratio_1h
+          expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[1h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[1h])), 1e-9))
+        - record: slo:audit_log_propagation:error_ratio_6h
+          expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[6h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[6h])), 1e-9))
+
+        # ---- query API availability: bad = 5xx ----
+        - record: slo:audit_log_availability:error_ratio_5m
+          expr: sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}, status_class="5xx"}[5m])) / clamp_min(sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}}[5m])), 1e-9)
+        - record: slo:audit_log_availability:error_ratio_30m
+          expr: sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}, status_class="5xx"}[30m])) / clamp_min(sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}}[30m])), 1e-9)
+        - record: slo:audit_log_availability:error_ratio_1h
+          expr: sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}, status_class="5xx"}[1h])) / clamp_min(sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}}[1h])), 1e-9)
+        - record: slo:audit_log_availability:error_ratio_6h
+          expr: sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}, status_class="5xx"}[6h])) / clamp_min(sum(rate(http_requests_total{job={{ include "iam-audit-log.fullname" . | quote }}}[6h])), 1e-9)
+
+        # ---- DLQ depth == 0 (1 = compliant) ----
+        - record: slo:audit_log_dlq_depth:ok
+          expr: (max(platform_dlq_depth{domain="iam", service="audit-log"}) == bool 0)
+
+        # ---- burn-rate alerts ----
+        - alert: IAMAuditLogIngestLagSLOFastBurn
+          expr: |
+            slo:audit_log_ingest_lag:error_ratio_1h > (14.4 * 0.01)
+            and slo:audit_log_ingest_lag:error_ratio_5m > (14.4 * 0.01)
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: Ingest-lag SLO (99% ≤ 50 ms) burning fast
+            description: >-
+              The 1 h and 5 m error ratios exceed 14.4× the 1% budget. Check the SQS
+              backlog, consumer replicas and Postgres latency.
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogIngestLagSLOSlowBurn
+          expr: |
+            slo:audit_log_ingest_lag:error_ratio_6h > (6 * 0.01)
+            and slo:audit_log_ingest_lag:error_ratio_30m > (6 * 0.01)
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Ingest-lag SLO (99% ≤ 50 ms) burning slowly
+            description: >-
+              The 6 h and 30 m error ratios exceed 6× the 1% budget.
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogPropagationSLOFastBurn
+          expr: |
+            slo:audit_log_propagation:error_ratio_1h > (14.4 * 0.01)
+            and slo:audit_log_propagation:error_ratio_5m > (14.4 * 0.01)
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: Propagation SLO (99% of events persisted ≤ 5 s) burning fast
+            description: >-
+              Events are reaching the store slowly. Check platform_queue_depth, the
+              failure ratio and consumer health.
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogPropagationSLOSlowBurn
+          expr: |
+            slo:audit_log_propagation:error_ratio_6h > (6 * 0.01)
+            and slo:audit_log_propagation:error_ratio_30m > (6 * 0.01)
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Propagation SLO (99% ≤ 5 s) burning slowly
+            description: >-
+              The 6 h and 30 m error ratios exceed 6× the 1% budget.
+            runbook_url: docs/runbook.md#rb-1
+
+        - alert: IAMAuditLogAvailabilitySLOFastBurn
+          expr: |
+            slo:audit_log_availability:error_ratio_1h > (14.4 * 0.01)
+            and slo:audit_log_availability:error_ratio_5m > (14.4 * 0.01)
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: Query/ingest API availability SLO (99% non-5xx) burning fast
+            description: >-
+              Check Postgres and S3 reachability (dependency_unavailable) and recent deploys.
+            runbook_url: docs/runbook.md#rb-6
+
+        - alert: IAMAuditLogAvailabilitySLOSlowBurn
+          expr: |
+            slo:audit_log_availability:error_ratio_6h > (6 * 0.01)
+            and slo:audit_log_availability:error_ratio_30m > (6 * 0.01)
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: Query/ingest API availability SLO (99% non-5xx) burning slowly
+            description: >-
+              The 6 h and 30 m error ratios exceed 6× the 1% budget.
+            runbook_url: docs/runbook.md#rb-6
 {{- end }}

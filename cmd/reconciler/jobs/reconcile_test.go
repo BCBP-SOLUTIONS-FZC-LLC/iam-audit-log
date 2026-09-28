@@ -77,7 +77,7 @@ func archivalCtx(a *fakeArchives, log *levelLog) *Context {
 			{Name: "audit_events_2027_01", Action: domain.PartitionSkippedDefaultHasRows},
 		}},
 		PrecreateMonths: 3, WritableTrailingMonths: 3, HotWindowDays: 90,
-		Archives: a, ArchiveStore: nopStore{}, Logger: port.NewSlogStyleLogger(log),
+		Archives: a, ArchiveStore: nopStore{}, Logger: port.NewSlogStyleLogger(log, nil),
 	}
 }
 
@@ -141,7 +141,7 @@ func TestReconcile_Archival(t *testing.T) {
 func TestProcessedEventsPrune(t *testing.T) {
 	a := &fakeArchives{pruned: 42}
 	log := &levelLog{}
-	jctx := &Context{Ledger: a, ProcessedEventsTTLDays: 8, ProcessedEventsBatch: 10000, Logger: port.NewSlogStyleLogger(log)}
+	jctx := &Context{Ledger: a, ProcessedEventsTTLDays: 8, ProcessedEventsBatch: 10000, Logger: port.NewSlogStyleLogger(log, nil)}
 	res, err := ProcessedEventsPrune(context.Background(), jctx)
 	if err != nil || res.Attempted != 42 || res.Succeeded != 42 || a.ttl != 8 || a.batch != 10000 || log.infos != 1 {
 		t.Errorf("res = %+v err = %v ttl=%d batch=%d", res, err, a.ttl, a.batch)

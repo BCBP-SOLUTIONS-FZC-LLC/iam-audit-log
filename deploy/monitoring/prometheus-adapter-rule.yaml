@@ -1,0 +1,19 @@
+# prometheus-adapter rules backing the optional HPA metrics in
+# deploy/helm/templates/hpa.yaml (LLD §13; Enterprise Platform Observability
+# Standard, gap 46: "HPA metric references"). Both read Canonical /
+# library-owned series only.
+rules:
+  # Pods metric: per-pod request rate from gincommon's http_requests_total
+  # (autoscaling.targetRPSPerReplica).
+  custom:
+    - seriesQuery: 'http_requests_total{job="iam-audit-log"}'
+      resources: { overrides: { namespace: { resource: namespace }, pod: { resource: pod } } }
+      name: { matches: "http_requests_total", as: "http_requests_per_second" }
+      metricsQuery: 'sum(rate(<<.Series>>{<<.LabelMatchers>>}[2m])) by (<<.GroupBy>>)'
+  # External metric: total backlog across the 11 inbound audit queues, from
+  # the Canonical platform_queue_depth (autoscaling.targetQueueDepthPerReplica).
+  external:
+    - seriesQuery: 'platform_queue_depth{domain="iam",service="audit-log"}'
+      resources: { overrides: { namespace: { resource: namespace } } }
+      name: { matches: "platform_queue_depth", as: "platform_queue_depth_audit_log" }
+      metricsQuery: 'sum(max by (queue) (<<.Series>>{<<.LabelMatchers>>}))'
