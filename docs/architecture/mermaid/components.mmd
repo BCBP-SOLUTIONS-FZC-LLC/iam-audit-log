@@ -1,0 +1,48 @@
+flowchart LR
+    subgraph producers["Producers"]
+        SNS["SNS topics\n(iam.*, tender, billing, usage, wf.*)"]
+        DW["Direct-write callers\n(Catalog, RP, Group Mapping, Tender ACL)"]
+        GW["Gateway\n(tenant admins)"]
+    end
+
+    subgraph k8s["Kubernetes namespace iam"]
+        subgraph server["cmd/server — 3 replicas, audit_app"]
+            API["Gin API\nAL-1..AL-7"]
+            FLEET["platform-events consumer fleet\n11 queues"]
+            POLL["PlanPoller (CAT-I2)"]
+            EXP["Export worker"]
+            OPS["OpsMonitor (D-21)"]
+        end
+        subgraph cron["cmd/reconciler CronJobs — audit_reconciler"]
+            REC["reconcile 02:00"]
+            RR["redaction-retry */15"]
+            RS["redaction-sweep 03:30"]
+            PR["processed-events-prune 03:00"]
+        end
+    end
+
+    SQS[("SQS *-audit-q\n+ *-dlq")]
+    GLUE[("Glue Schema Registry")]
+    PG[("RDS Postgres\naudit_events, monthly partitions")]
+    S3[("S3 iam-audit-archive\nSSE-KMS, Object Lock COMPLIANCE")]
+    CAT["iam-catalog-admin\nGET /internal/plans"]
+    PROM["Prometheus"]
+
+    SNS --> SQS --> FLEET
+    FLEET -. "decode" .-> GLUE
+    DW -->|"mesh"| API
+    GW --> API
+    API --> PG
+    FLEET --> PG
+    EXP --> PG
+    EXP --> S3
+    API -->|"archived reads"| S3
+    POLL -.-> CAT
+    OPS -.->|"audit_ops_stats()"| PG
+    OPS -.->|"queue / DLQ depth"| SQS
+    REC --> PG
+    REC --> S3
+    RR --> PG
+    RS --> PG
+    PR --> PG
+    PROM -.->|"scrape :9090"| server

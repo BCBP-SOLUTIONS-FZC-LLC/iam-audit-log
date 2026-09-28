@@ -1,0 +1,36 @@
+sequenceDiagram
+    participant Caller as Bus consumer or AL-5/AL-6 handler
+    participant IS as IngestService
+    participant R as AuditRepository (audit_app)
+    participant DB as PostgreSQL (one RunInTx, GUC = entry tenant)
+
+    Note over Caller,IS: The ONE write path (AL-INV-2). Bus: key = Envelope.ID. Direct-write: key = Idempotency-Key.
+
+    Caller ->>+ IS: IngestBus(ev) / DirectWrite(cmd)
+    IS ->> IS: BuildBusEntry / BuildDirectWriteEntry<br/>taxonomy → entry_type + retention_tier (AL-INV-6/11), D-8 actor, D-9 cap
+    IS ->> IS: mint id (UUIDv7)
+    IS ->>+ R: Append(entry, consumer) — or AppendWithRedaction for UserDeleted
+    R ->>+ DB: BEGIN · set_config(app.tenant_id, entry.tenant_id, true)
+    R ->> DB: INSERT processed_events (source_event_id, consumer) ON CONFLICT DO NOTHING
+    alt ledger row inserted (first delivery)
+        R ->> DB: SELECT redacted_subjects for actor / user target (D-18)
+        Note over R: erased subject → metadata marker + actor_display NULL BEFORE insert
+        R ->> DB: INSERT audit_events … ON CONFLICT (source_event_id, occurred_at) DO NOTHING
+        opt backstop fired (ledger pruned, replay)
+            R ->> DB: SELECT existing row by source_event_id
+        end
+    else ledger hit (redelivery / replay)
+        R ->> DB: SELECT existing row by source_event_id (RLS-scoped)
+        Note over R: not visible under this tenant → 400 (key reused across tenants)
+    end
+    opt UserDeleted (AppendWithRedaction)
+        R ->> DB: INSERT audit_redaction_tasks … ON CONFLICT DO NOTHING (no target: INSERT-only grant)
+    end
+    R ->> DB: COMMIT
+    DB -->>- R: ok
+    R -->>- IS: stored entry, created, taskCreated
+    opt taskCreated
+        IS ->> DB: SELECT apply_redaction(task_id) — immediate, outside the ingest tx
+    end
+    IS -->>- Caller: 201 created / 200 replay (AL-5) · nil → message deleted (bus)
+    Note over Caller,DB: No outbox: this service publishes nothing (AL-INV-10).

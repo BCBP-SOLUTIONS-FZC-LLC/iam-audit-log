@@ -1,0 +1,389 @@
+# Triggered by version tags (e.g. v1.0.0 or v1.1.0-rc.1).
+# Pipeline: validate → build (CHANGELOG gate) → docker (CVE scan + SBOM) → deploy-gate → publish
+#
+# Mirrors iam-org-membership's release.yml, with the service-specific deltas:
+#   - TWO binaries ship (iam-audit-log-server + iam-audit-log-reconciler), so
+#     the release assets glob is iam-audit-log-* (prepare-release-binary.sh).
+#   - The Dockerfile fetches private platform-* modules through the
+#     go_private_token BuildKit secret.
+#   - deploy-gate runs under the production-data-migrations environment: the
+#     server self-migrates the `audit` DB at startup (LLD §4.4), so a deploy
+#     IS a migration, and the `audit` DB requires that stricter,
+#     manual-approval environment (LLD §19, HLD §15.6).
+#   - The chart takes one existing Secret per composition root (server /
+#     reconciler — implementation rule 5), and deploys into the `iam`
+#     namespace by default (AL-Q17).
+name: Release
+
+"on":
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+      - 'v[0-9]*.[0-9]*.[0-9]*-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/bcbp-solutions-fzc-llc/iam-audit-log
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  validate-test:
+    name: Validate / Test
+    uses: ./.github/workflows/validate-test.yml
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref }}
+
+  validate-quality:
+    name: Validate / Quality
+    uses: ./.github/workflows/validate-quality.yml
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref }}
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [validate-test, validate-quality]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Verify release tag matches checkout
+        run: bash .github/scripts/verify-release-tag.sh
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      # Block the release if CHANGELOG.md has no entry for this tag.
+      # Developers must update CHANGELOG.md before tagging.
+      - name: Verify CHANGELOG entry exists
+        run: bash .github/scripts/verify-changelog-entry.sh
+
+      # Cross-compiles all target platforms (linux/amd64, linux/arm64, darwin/amd64,
+      # darwin/arm64, windows/amd64) and writes per-binary .sha256 files.
+      # No make build step — the script owns the full build for release assets.
+      # Both binaries (server + reconciler), all platforms.
+      - name: Prepare release binaries (all platforms)
+        run: bash .github/scripts/prepare-release-binary.sh
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: binary-${{ env.RELEASE_TAG }}
+          path: |
+            iam-audit-log-*
+            release-asset.name
+          if-no-files-found: error
+          retention-days: 90
+
+  docker:
+    name: Docker image → GHCR
+    runs-on: ubuntu-latest
+    needs: build
+    outputs:
+      digest: ${{ steps.pushed.outputs.digest }}
+      version: ${{ steps.meta.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      actions: read
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set SOURCE_DATE_EPOCH
+        id: sde
+        run: bash .github/scripts/set-source-date-epoch.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6.1.0
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # Produces: vMAJOR.MINOR.PATCH, vMAJOR.MINOR, vMAJOR (non-pre-releases).
+          # Also tags 'latest' for stable releases (no pre-release suffix).
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }}
+            type=semver,pattern={{major}},value=${{ env.RELEASE_TAG }}
+            type=raw,value=latest,enable=${{ !contains(env.RELEASE_TAG, '-') }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.1.0
+
+      - name: Build and push
+        id: pushed
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ env.RELEASE_TAG }}
+            SOURCE_DATE_EPOCH=${{ steps.sde.outputs.SOURCE_DATE_EPOCH }}
+          secrets: |
+            go_private_token=${{ secrets.GO_PRIVATE_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v6.0.0
+        with:
+          path: /tmp/trivy-cache
+          key: trivy-db-${{ runner.os }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      # Scan the released image for OS and library CVEs.
+      # Critical/High findings fail the release — a known-vulnerable image
+      # must not be tagged as a release that consuming services will pin.
+      - name: Scan image for CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          cache-dir: /tmp/trivy-cache
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4.37.0
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
+
+      # CycloneDX SBOM — full component inventory for compliance / audit.
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          format: cyclonedx
+          output: sbom.cyclonedx.json
+          exit-code: '0'
+          cache-dir: /tmp/trivy-cache
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: sbom-${{ env.RELEASE_TAG }}
+          path: sbom.cyclonedx.json
+          retention-days: 90
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Export SLSA provenance
+        env:
+          IMAGE_DIGEST: ${{ steps.pushed.outputs.digest }}
+        run: bash .github/scripts/export-image-provenance.sh
+
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: provenance-${{ env.RELEASE_TAG }}
+          path: provenance.slsa.json
+          retention-days: 90
+
+      - name: Sign image with Cosign
+        run: |
+          cosign sign --yes \
+            "${{ env.IMAGE_NAME }}@${{ steps.pushed.outputs.digest }}"
+
+      - name: Verify image signature
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/.github/workflows/.*@refs/tags/.*$" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${{ env.IMAGE_NAME }}@${{ steps.pushed.outputs.digest }}"
+
+  # Post-deploy health gate — always runs; requires KUBECONFIG_B64 secret to be set.
+  # Deploys the image with Helm, waits for rollout, verifies the deployed digest
+  # matches what was pushed, then checks the error rate for 2 minutes.
+  # On failure, automatically rolls back and fails the release.
+  # Requires: KUBECONFIG_B64 secret, K8S_NAMESPACE var (optional), PROMETHEUS_URL var (optional).
+  # If KUBECONFIG_B64 is not configured this job fails immediately — set it before tagging releases.
+  deploy-gate:
+    name: Post-deploy health gate
+    runs-on: ubuntu-latest
+    needs: [build, docker]
+    # `audit` DB migrations require the stricter manual-approval environment
+    # (LLD §4.4/§19, HLD §15.6) — the server migrates on start.
+    environment: production-data-migrations
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Verify KUBECONFIG_B64 is configured
+        run: |
+          if [ -z "${{ secrets.KUBECONFIG_B64 }}" ]; then
+            echo "::error::KUBECONFIG_B64 secret is not set. Configure the kubeconfig for the production cluster before tagging releases. See VERSIONING.md § Release process."
+            exit 1
+          fi
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.1
+
+      # Deploy the just-published image via Helm so the gate is never a no-op,
+      # regardless of whether a GitOps controller is configured.
+      - name: Deploy with Helm
+        run: |
+          helm upgrade iam-audit-log ./deploy/helm \
+            --install \
+            --wait \
+            --timeout=5m \
+            --namespace="${{ vars.K8S_NAMESPACE || 'iam' }}" \
+            --set image.tag="${{ needs.docker.outputs.version }}" \
+            --set secrets.server.existingSecret=iam-audit-log-server-secrets \
+            --set secrets.reconciler.existingSecret=iam-audit-log-reconciler-secrets \
+            --atomic
+
+      # Verify the running image digest matches what was signed and published.
+      # Guards against a GitOps controller or deployment process substituting a
+      # different image after the Helm upgrade.
+      - name: Verify deployed image digest
+        run: |
+          EXPECTED_DIGEST="${{ needs.docker.outputs.digest }}"
+          ACTUAL=$(kubectl get deployment iam-audit-log \
+            --namespace="${{ vars.K8S_NAMESPACE || 'iam' }}" \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+          echo "Expected digest: ${EXPECTED_DIGEST}"
+          echo "Deployed image:  ${ACTUAL}"
+          if [[ "$ACTUAL" == *"@sha256:"* ]]; then
+            ACTUAL_DIGEST="${ACTUAL#*@}"
+            if [ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]; then
+              echo "::error::Deployed image digest ${ACTUAL_DIGEST} does not match published digest ${EXPECTED_DIGEST} — potential supply-chain substitution."
+              exit 1
+            fi
+            echo "Digest verified: deployed image matches published artifact."
+          else
+            echo "::warning::Deployed image is not digest-pinned — cannot verify supply-chain integrity. Pin image digests in the Helm values."
+          fi
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/iam-audit-log \
+            --namespace="${{ vars.K8S_NAMESPACE || 'iam' }}" \
+            --timeout=5m
+
+      - name: Health gate — error rate < 1% for 2 minutes
+        run: |
+          PROM_URL="${{ vars.PROMETHEUS_URL }}"
+          if [ -z "$PROM_URL" ]; then
+            echo "PROMETHEUS_URL not set — skipping error-rate check"
+            exit 0
+          fi
+          # status_class="5xx" matches the label emitted by platform-gincommon.
+          QUERY='sum(rate(http_requests_total{job=~".*iam-audit-log.*",status_class="5xx"}[2m]))/sum(rate(http_requests_total{job=~".*iam-audit-log.*"}[2m]))'
+          # Sleep AFTER confirming Prometheus is configured so the 2-minute window
+          # only runs when there is actually something to measure.
+          sleep 120
+          RATE=$(curl -sf "${PROM_URL}/api/v1/query" \
+            --data-urlencode "query=${QUERY}" | jq -r '.data.result[0].value[1] // "0"')
+          echo "5xx rate: ${RATE}"
+          if awk "BEGIN{exit !($RATE > 0.01)}"; then
+            echo "ERROR: 5xx rate ${RATE} exceeds 1% threshold — rolling back"
+            # Use helm rollback so Helm's release history stays consistent.
+            # kubectl rollout undo bypasses the Helm state machine and leaves
+            # subsequent helm upgrade calls working from the wrong baseline.
+            helm rollback iam-audit-log \
+              --namespace="${{ vars.K8S_NAMESPACE || 'iam' }}" \
+              --wait
+            exit 1
+          fi
+          echo "Health gate passed — 5xx rate ${RATE} is below 1%"
+
+  publish:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    # deploy-gate must succeed — a skipped gate means the release was never
+    # deployed to production and downstream consumers must not pin the tag.
+    needs: [build, docker, deploy-gate]
+    if: needs.build.result == 'success' && needs.docker.result == 'success' && needs.deploy-gate.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Extract release notes from CHANGELOG
+        env:
+          IMAGE_VERSION: ${{ needs.docker.outputs.version }}
+          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
+        run: bash .github/scripts/extract-release-notes.sh
+
+      - name: Download SBOM
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: sbom-${{ env.RELEASE_TAG }}
+
+      - name: Download provenance
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: provenance-${{ env.RELEASE_TAG }}
+
+      - name: Download binary
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: binary-${{ env.RELEASE_TAG }}
+          path: .
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
+        run: bash .github/scripts/create-github-release.sh

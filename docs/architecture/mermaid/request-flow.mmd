@@ -1,0 +1,44 @@
+sequenceDiagram
+    participant Admin as Tenant admin (UI)
+    participant GW as API Gateway (Envoy)
+    participant OBS as ObservabilityMiddlewares
+    participant AUTH as RequireAuth + Context + IdentityBridge
+    participant RA as RequireAuditReader
+    participant H as QueryHandler.ListEvents (AL-1)
+    participant QS as QueryService
+    participant DB as PostgreSQL (RLS, audit_app)
+    participant S3 as S3 archive (sealed objects)
+
+    Note over Admin,GW: AL-1 = GET /api/v1/audit/events — tenant_admin / tenant_owner only (§5.2)
+
+    Admin ->>+ GW: GET /api/v1/audit/events?from=…&entry_type=…
+    GW ->>+ OBS: inject x-user-id, x-tenant-id, x-tenant-roles
+    Note over OBS: PanicRecovery · RequestID · Tracing<br/>CorrelationHeaders · Metrics · Logging (gincommon)
+    OBS ->>+ AUTH: c.Next()
+    Note over AUTH: RequireAuth — 401 missing_identity_headers<br/>IdentityBridge — requestctx + pgcommon.WithGUCSet(app.tenant_id)
+    AUTH ->>+ RA: c.Next()
+    Note over RA: 403 insufficient_permissions unless tenant_admin or tenant_owner
+    RA ->>+ H: c.Next()
+    H ->> H: parseQuery → 400 invalid_request on bad filter/cursor
+    H ->>+ QS: Query(tenant, filter, cursor, limit)
+    QS ->>+ DB: PlanWindow(tenant) — tenant_plan_window row
+    DB -->>- QS: plan_code, query_window_days
+    Note over QS: window = CAT-I2 map → row value → AUDIT_DEFAULT_QUERY_WINDOW_DAYS (D-13)<br/>range entirely before the window → 200 empty, window_clamped (AL-INV-8)
+    QS ->>+ DB: ArchivedObjects — sealed manifest rows in range (D-12/D-20)
+    DB -->>- QS: objects (row_count, byte_size)
+    alt estimate > ARCHIVE_SYNC_MAX_ROWS / _BYTES (D-10)
+        QS -->> H: Deferred filter
+        H ->> H: ExportService.Request (AL-3 rate limit) → 202 export_id
+    else within bounds
+        QS ->>+ DB: keyset page (occurred_at DESC, id DESC) under RLS
+        DB -->>- QS: hot rows
+        QS ->>+ S3: ReadArchive — tenant's own D-10 keys only
+        S3 -->>- QS: archived rows
+        QS -->> H: merged newest-first page + next_cursor
+    end
+    QS -->>- H: result
+    H -->>- RA: 200 EventsResponse or 202 ExportAcceptedResponse
+    RA -->>- AUTH: return
+    AUTH -->>- OBS: return
+    OBS -->>- GW: http_request log · OTel span ended
+    GW -->>- Admin: response + X-Trace-ID + X-Request-ID

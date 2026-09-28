@@ -1,0 +1,58 @@
+graph LR
+    subgraph request["Per-request (gincommon.ObservabilityMiddlewares)"]
+        panic["PanicRecovery\n· recover, log, 500 JSON"]
+        reqid["RequestID\n· x-request-id / generated"]
+        trace["Tracing (OTel)\n· W3C traceparent, server span"]
+        metricsmw["Metrics\n· http_requests_total{method,route,status_class}\n· http_request_duration_seconds"]
+        logging["Logging (Zap)\n· http_request log, IDs only"]
+    end
+
+    subgraph seam["telemetry adapter — the only OTel/promhttp seam (gap 43)"]
+        tracer["NewTracer — pgcommon db.query spans\n+ reconciler root span"]
+        traceid["TraceID — trace_id on *Context log lines"]
+        mh["MetricsHandler — /metrics on METRICS_PORT\n(exactly gincommon's registry)"]
+        errlog["HTTPErrorLog — net/http errors → gincommon logger"]
+    end
+
+    subgraph tiers["Metrics — three tiers (metric-registry.yaml, registry.go)"]
+        t1["Tier 1 platform_* (Canonical)\nmessages_received{queue,event_type} · processed{event_type}\nfailed / retry{event_type,reason} · dlq_messages{queue,reason}\nduplicate_messages{event_type} · dependency_request_seconds{dependency,operation,outcome}\nevent_propagation_seconds{event_type} · queue_depth / dlq_depth{queue}"]
+        t2["Tier 2 iam_*\niam_rls_violations_total{violation_type}"]
+        t3["Tier 3 iam_audit_log_*\ningest · direct-write · query/export · catalog poller\nredaction · archival · ops gauges (D-21)\n+ 3 deprecated names in parallel (compat period)"]
+        inj["central injection: domain=iam, service=audit-log,\nenvironment, version (business.go)"]
+    end
+
+    subgraph bg["cmd/server background (always scraped)"]
+        ops["OpsMonitor (60 s)\naudit_ops_stats() → stalled / lag / DEFAULT rows / pending tasks\nGetQueueAttributes → queue & DLQ depth\naudit_rls_violation_counts() → iam_rls_violations_total"]
+        poller["PlanPoller → catalog_plans_poll_total / stale_seconds"]
+    end
+
+    subgraph rules["deploy/monitoring"]
+        rec["recording-rules.yml\nservice:<metric>:<agg>"]
+        slo["slo-rules.yml\ningest lag · propagation · availability · DLQ = 0"]
+        alerts["app-alerts.yml ≡ helm PrometheusRule\n(gen-prometheusrule.py)"]
+        dash["dashboard-audit-log.json"]
+        hpa["prometheus-adapter-rule.yaml → HPA"]
+    end
+
+    subgraph ci["CI conformance"]
+        c1["metrics_registry_test · metric-lint.yaml\ncheck-metric-naming.sh · metrics-registry-lint.sh\nobservability_contract_test (no deprecated refs)"]
+    end
+
+    metricsmw --> mh
+    trace --> tracer
+    ops --> t3
+    ops --> t1
+    ops --> t2
+    poller --> t3
+    t1 --> mh
+    t2 --> mh
+    t3 --> mh
+    inj --> t1
+    inj --> t2
+    inj --> t3
+    mh --> rec
+    rec --> slo
+    rec --> alerts
+    mh --> dash
+    mh --> hpa
+    c1 -.-> tiers

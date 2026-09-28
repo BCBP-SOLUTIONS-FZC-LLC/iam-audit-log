@@ -1,0 +1,739 @@
+basePath: /api/v1
+definitions:
+  http.ActorDTO:
+    properties:
+      display:
+        example: asha@acme.example
+        type: string
+      id:
+        example: 7f3c2d1e-9a8b-4c5d-8e7f-0a1b2c3d4e5f
+        type: string
+      type:
+        enum:
+        - user
+        - service_account
+        - iam_system
+        - anonymous
+        example: user
+        type: string
+    type: object
+  http.BatchEntryRequest:
+    properties:
+      action:
+        example: update
+        type: string
+      actor:
+        $ref: '#/definitions/http.ActorDTO'
+      entry_type:
+        example: config.tenant_setting.changed
+        type: string
+      idempotency_key:
+        example: 4b1f0f8e-2c1d-5e3a-9f0b-7c6d5e4f3a21
+        type: string
+      ip_address:
+        example: 203.0.113.7
+        type: string
+      metadata:
+        type: object
+      occurred_at:
+        example: "2026-03-14T09:12:04Z"
+        type: string
+      source_event_type:
+        example: TenantSettingChanged
+        type: string
+      source_service:
+        example: iam-org-membership
+        type: string
+      target:
+        $ref: '#/definitions/http.TargetDTO'
+      tenant_id:
+        example: 00000000-0000-0000-0000-0000000000b1
+        type: string
+      trace_id:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  http.BatchRequest:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/http.BatchEntryRequest'
+        type: array
+    type: object
+  http.BatchResponse:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/http.BatchResultItem'
+        type: array
+    type: object
+  http.BatchResultItem:
+    properties:
+      code:
+        example: unknown_entry_type
+        type: string
+      id:
+        type: string
+      index:
+        type: integer
+      message:
+        type: string
+      status:
+        example: 201
+        type: integer
+    type: object
+  http.DirectWriteRequest:
+    properties:
+      action:
+        example: update
+        type: string
+      actor:
+        $ref: '#/definitions/http.ActorDTO'
+      entry_type:
+        example: config.tenant_setting.changed
+        type: string
+      ip_address:
+        example: 203.0.113.7
+        type: string
+      metadata:
+        type: object
+      occurred_at:
+        example: "2026-03-14T09:12:04Z"
+        type: string
+      source_event_type:
+        example: TenantSettingChanged
+        type: string
+      source_service:
+        example: iam-org-membership
+        type: string
+      target:
+        $ref: '#/definitions/http.TargetDTO'
+      tenant_id:
+        example: 00000000-0000-0000-0000-0000000000b1
+        type: string
+      trace_id:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  http.EntryResponse:
+    properties:
+      action:
+        type: string
+      actor:
+        $ref: '#/definitions/http.ActorDTO'
+      entry_type:
+        type: string
+      id:
+        type: string
+      ingest_mode:
+        type: string
+      ip_address:
+        type: string
+      metadata:
+        type: object
+      occurred_at:
+        type: string
+      recorded_at:
+        type: string
+      retention_tier:
+        type: string
+      source_event_id:
+        type: string
+      source_event_type:
+        type: string
+      source_service:
+        type: string
+      source_topic:
+        type: string
+      target:
+        $ref: '#/definitions/http.TargetDTO'
+      tenant_id:
+        type: string
+      trace_id:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  http.ErrorResponse:
+    properties:
+      code:
+        type: string
+      details:
+        additionalProperties: {}
+        type: object
+      error:
+        type: string
+      message:
+        type: string
+      request_id:
+        type: string
+      status:
+        type: integer
+      trace_id:
+        type: string
+    type: object
+  http.EventDTO:
+    properties:
+      action:
+        example: granted
+        type: string
+      actor:
+        $ref: '#/definitions/http.ActorDTO'
+      entry_type:
+        example: membership.department.granted
+        type: string
+      id:
+        type: string
+      ip_address:
+        type: string
+      metadata:
+        type: object
+      occurred_at:
+        type: string
+      retention_tier:
+        example: compliance_7y
+        type: string
+      source_event_type:
+        type: string
+      source_service:
+        example: iam-org-membership
+        type: string
+      target:
+        $ref: '#/definitions/http.TargetDTO'
+      trace_id:
+        type: string
+    type: object
+  http.EventsResponse:
+    properties:
+      effective_from:
+        type: string
+      events:
+        items:
+          $ref: '#/definitions/http.EventDTO'
+        type: array
+      next_cursor:
+        type: string
+      window_clamped:
+        type: boolean
+    type: object
+  http.ExportAcceptedResponse:
+    properties:
+      export_id:
+        type: string
+      status:
+        example: pending
+        type: string
+      status_url:
+        example: /api/v1/audit/exports/0192…
+        type: string
+    type: object
+  http.ExportFilterRequest:
+    properties:
+      actor_id:
+        type: string
+      actor_type:
+        type: string
+      entry_type:
+        items:
+          type: string
+        type: array
+      from:
+        type: string
+      retention_tier:
+        type: string
+      source_service:
+        type: string
+      target_id:
+        type: string
+      target_type:
+        type: string
+      to:
+        type: string
+    type: object
+  http.ExportStatusResponse:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      download_url:
+        type: string
+      download_url_expires_at:
+        type: string
+      error:
+        example: internal_error
+        type: string
+      expires_at:
+        type: string
+      export_id:
+        type: string
+      row_count:
+        type: integer
+      status:
+        enum:
+        - pending
+        - running
+        - ready
+        - failed
+        - expired
+        type: string
+    type: object
+  http.TargetDTO:
+    properties:
+      id:
+        example: mfa_freshness_seconds
+        type: string
+      type:
+        example: tenant_setting
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: indhu@bcbpsolutions.com
+    name: BCBP Solutions
+  description: |-
+    Audit Log Service — the platform compliance system-of-record (LLD §1). Append-only, tenant-scoped audit trail.
+
+    **Public** `/api/v1/audit/*` (AL-1..AL-4): tenant_admin / tenant_owner only; RLS-scoped to x-tenant-id; plan-gated query window.
+    **Internal** `/api/v1/internal/*` (AL-5..AL-7): mesh-only, iam-system peers; direct-write ingest requires `Idempotency-Key`.
+  license:
+    name: Proprietary
+  title: IAM Audit Log API
+  version: "0.1"
+paths:
+  /audit/events:
+    get:
+      description: Keyset-paginated (occurred_at DESC, id DESC) search within the
+        plan window (AL-INV-8). A range older than the window is clamped (window_clamped=true,
+        effective_from). Archived months are read from S3 when the estimate is within
+        ARCHIVE_SYNC_MAX_ROWS / ARCHIVE_SYNC_MAX_BYTES; otherwise an export is created
+        and 202 returned (decision D-10).
+      parameters:
+      - description: occurred_at lower bound (RFC 3339)
+        in: query
+        name: from
+        type: string
+      - description: occurred_at upper bound (RFC 3339; default now)
+        in: query
+        name: to
+        type: string
+      - collectionFormat: multi
+        description: entry type (repeatable)
+        in: query
+        items:
+          type: string
+        name: entry_type
+        type: array
+      - description: actor UUID
+        in: query
+        name: actor_id
+        type: string
+      - description: user | service_account | iam_system | anonymous
+        in: query
+        name: actor_type
+        type: string
+      - description: target type
+        in: query
+        name: target_type
+        type: string
+      - description: target id (requires target_type)
+        in: query
+        name: target_id
+        type: string
+      - description: source service
+        in: query
+        name: source_service
+        type: string
+      - description: compliance_7y | security_3y | access_90d
+        in: query
+        name: retention_tier
+        type: string
+      - description: page size (default 100, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: opaque keyset cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.EventsResponse'
+        "202":
+          description: large archived range deferred to an export
+          schema:
+            $ref: '#/definitions/http.ExportAcceptedResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: missing_identity_headers
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: rate_limited (deferred export)
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Search the tenant's audit trail (AL-1)
+      tags:
+      - Audit
+  /audit/events/{id}:
+    get:
+      description: Within the caller's tenant (RLS) and plan window. An entry whose
+        month was archived is read from the tenant's archive object whose id range
+        holds it (BUILD_PLAN gap 32).
+      parameters:
+      - description: entry id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.EventDTO'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: audit_entry_not_found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Read one audit entry (AL-2)
+      tags:
+      - Audit
+  /audit/exports:
+    post:
+      consumes:
+      - application/json
+      description: Body is the AL-1 filter (all optional), clamped to the plan window.
+        Creates a pending job; poll AL-4. Rate-limited per tenant (§10.5).
+      parameters:
+      - description: filter
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/http.ExportFilterRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/http.ExportAcceptedResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Request an asynchronous export (AL-3)
+      tags:
+      - Audit
+  /audit/exports/{id}:
+    get:
+      description: When ready, download_url is a freshly presigned short-lived URL
+        (EXPORT_DOWNLOAD_URL_TTL) re-issued on every poll until expires_at (7 days,
+        decision D-11).
+      parameters:
+      - description: export id (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.ExportStatusResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: insufficient_permissions
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: export_not_found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Poll an export job (AL-4)
+      tags:
+      - Audit
+  /internal/audit-entries:
+    post:
+      consumes:
+      - application/json
+      description: Mesh-only ingest for non-bus audit entries (LLD §5.4, AL-D1). The
+        Idempotency-Key header becomes the entry's source_event_id; a retry with the
+        same key returns 200 with the already-persisted entry. retention_tier is derived
+        from entry_type — a caller-supplied value is ignored (AL-INV-11). Only direct-write
+        entry types are accepted (decision D-6).
+      parameters:
+      - description: Audit entry
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.DirectWriteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: idempotent replay
+          schema:
+            $ref: '#/definitions/http.EntryResponse'
+        "201":
+          description: created
+          schema:
+            $ref: '#/definitions/http.EntryResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: forbidden_peer
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "422":
+          description: unknown_entry_type | invalid_actor | metadata_too_large
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      - IdempotencyKey: []
+      summary: Direct-write one audit entry (AL-5)
+      tags:
+      - Ingest
+  /internal/audit-entries:batch:
+    post:
+      consumes:
+      - application/json
+      description: 'Up to MAX_INGEST_BATCH entries, each with its own idempotency_key
+        (decision D-4). Always 207: per-index status 201 (created), 200 (replay) or
+        the §17 error; a bad entry never rejects the batch. Rate-limited per tenant
+        (429, §10.5).'
+      parameters:
+      - description: Entries
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/http.BatchRequest'
+      produces:
+      - application/json
+      responses:
+        "207":
+          description: per-entry results
+          schema:
+            $ref: '#/definitions/http.BatchResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: forbidden_peer
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "422":
+          description: batch_too_large
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      - IdempotencyKey: []
+      summary: Direct-write a batch of audit entries (AL-6)
+      tags:
+      - Ingest
+  /internal/audit/events:
+    get:
+      description: For compliance/verification service callers (iam-system role).
+        tenant_id is required and bound to app.tenant_id, so RLS still applies and
+        there is no cross-tenant read. There is no plan-window clamp (§5.4); window_clamped
+        is always false and effective_from is the lower bound applied. The filter,
+        limit and cursor contract is the same as AL-1. An archived range over ARCHIVE_SYNC_MAX_ROWS
+        / ARCHIVE_SYNC_MAX_BYTES returns 422 range_too_large; narrow from/to (decision
+        D-14).
+      parameters:
+      - description: tenant whose trail is read (UUID)
+        in: query
+        name: tenant_id
+        required: true
+        type: string
+      - description: occurred_at lower bound (RFC 3339; default unbounded)
+        in: query
+        name: from
+        type: string
+      - description: occurred_at upper bound (RFC 3339; default now)
+        in: query
+        name: to
+        type: string
+      - collectionFormat: multi
+        description: entry type (repeatable)
+        in: query
+        items:
+          type: string
+        name: entry_type
+        type: array
+      - description: actor UUID
+        in: query
+        name: actor_id
+        type: string
+      - description: user | service_account | iam_system | anonymous
+        in: query
+        name: actor_type
+        type: string
+      - description: target type
+        in: query
+        name: target_type
+        type: string
+      - description: target id (requires target_type)
+        in: query
+        name: target_id
+        type: string
+      - description: source service
+        in: query
+        name: source_service
+        type: string
+      - description: compliance_7y | security_3y | access_90d
+        in: query
+        name: retention_tier
+        type: string
+      - description: page size (default 100, max 1000)
+        in: query
+        name: limit
+        type: integer
+      - description: opaque keyset cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.EventsResponse'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "401":
+          description: missing_identity_headers
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "403":
+          description: forbidden_peer
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "422":
+          description: range_too_large
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "503":
+          description: dependency_unavailable
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      security:
+      - TenantRoles: []
+      - TenantID: []
+      - UserID: []
+      summary: Mesh-only provenance read (AL-7)
+      tags:
+      - Internal
+securityDefinitions:
+  IdempotencyKey:
+    description: Required on AL-5/AL-6; becomes the entry's source_event_id (LLD §5.4).
+    in: header
+    name: Idempotency-Key
+    type: apiKey
+  TenantID:
+    description: Tenant UUID injected by the gateway / mesh caller.
+    in: header
+    name: x-tenant-id
+    type: apiKey
+  TenantRoles:
+    description: 'Gateway/mesh-injected roles: tenant_admin|tenant_owner (public)
+      or iam-system (internal).'
+    in: header
+    name: x-tenant-roles
+    type: apiKey
+  UserID:
+    description: Caller subject (or the iam-system sentinel …00a1).
+    in: header
+    name: x-user-id
+    type: apiKey
+swagger: "2.0"

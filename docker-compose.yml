@@ -1,0 +1,70 @@
+services:
+  app:
+    build:
+      context: .
+      secrets:
+        - go_private_token
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      APP_ENV: dev
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      floci:
+        condition: service_healthy
+
+  postgres:
+    # PostgreSQL 15 — matches the platform RDS major version (LLD §3 stack).
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: audit
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      # 5544 is claimed by iam-realm-provisioner's local Postgres.
+      - "5548:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  floci:
+    # Floci — the LocalStack-compatible AWS emulator the sibling IAM
+    # services use (SNS + SQS + S3 + Glue in the free tier).
+    image: floci/floci:2.1.0-compat
+    ports:
+      # Host 4573 → container 4566 (4566–4572 are claimed by siblings).
+      - "4573:4566"
+    environment:
+      FLOCI_DEFAULT_REGION: ap-south-1
+      FLOCI_DEFAULT_ACCOUNT_ID: "000000000000"
+      FLOCI_HOSTNAME: floci
+      # ~80 sequential aws CLI calls (11 topics, 22 queues, 11 subs, S3, 6 registries).
+      FLOCI_INIT_HOOKS_TIMEOUT_SECONDS: "120"
+    volumes:
+      - floci-data:/app/data
+      - ./scripts/init-floci.sh:/etc/floci/init/ready.d/init-floci.sh:ro
+    healthcheck:
+      # Polls the LAST resource init-floci.sh creates.
+      test: ["CMD", "aws", "--region", "ap-south-1", "glue", "get-registry",
+             "--registry-id", "RegistryName=iam-serviceaccount-events"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  pgdata:
+  floci-data:
+
+secrets:
+  go_private_token:
+    environment: GO_PRIVATE_TOKEN

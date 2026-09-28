@@ -27,6 +27,22 @@ go.work.sum
 # env file
 .env
 
+# Build artefacts
+bin/
+.coverage/
+
+# scratch
+.tmp/
+
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# stray root-level binary from an ad-hoc `go build ./cmd/server` outside
+# make build's bin/ convention — anchored so it doesn't also shadow the
+# real cmd/server source directory the way the old bare `server` pattern did
+/server
+
+# Claude Code runtime state (the .claude/*.md context docs are committed)
+.claude/scheduled_tasks.lock
+.claude/settings.local.json

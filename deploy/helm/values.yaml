@@ -1,0 +1,294 @@
+# Default values for iam-audit-log (LLD §12, §13).
+#
+# Topology: a "server" Deployment (3 replicas, HLD §5.7) runs the query +
+# ingest API AND the 11-queue SQS consumer fleet as audit_app; reconciler
+# CronJobs run from the SAME image as audit_reconciler. Deploy in the `iam`
+# namespace with release name `iam-audit-log`, so the mesh address is
+# http://iam-audit-log.iam.svc.cluster.local:8080 (AL-Q17) and the pod
+# labels are app.kubernetes.io/{name,instance}: iam-audit-log (rev 0.19).
+
+replicaCount: 3
+
+image:
+  repository: ghcr.io/bcbp-solutions-fzc-llc/iam-audit-log
+  pullPolicy: IfNotPresent
+  tag: ""  # overridden by CI; falls back to Chart.appVersion
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  # IRSA (no static AWS keys, LLD §13) for deploy/iam/policy.json:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/iam-audit-log
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+  metricsPort: 9090
+
+# Fixed 3 replicas (HLD §5.7). Scaling is by SQS depth when enabled
+# (LLD §13); the processed_events ledger makes added replicas safe.
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  targetRPSPerReplica: 0
+  # Opt-in: scale on the inbound audit-queue backlog (platform_queue_depth,
+  # summed via deploy/monitoring/prometheus-adapter-rule.yaml). 0 = off.
+  targetQueueDepthPerReplica: 0
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Non-secret env shared by the server and every CronJob (LLD §12).
+env:
+  APP_ENV: "production"
+  SERVICE_NAME: "iam-audit-log"
+  PG_BOUNCER_MODE: "true"
+  PG_SLOW_QUERY_THRESHOLD: "200ms"
+  AWS_REGION: "ap-south-1"
+  AUDIT_ARCHIVE_BUCKET: "iam-audit-archive"
+  AUDIT_ARCHIVE_KMS_KEY: "alias/iam-audit-archive"
+  AUDIT_ARCHIVE_OBJECT_LOCK_MODE: "COMPLIANCE"
+  AUDIT_HOT_WINDOW_DAYS: "90"
+  AUDIT_PRECREATE_MONTHS: "3"
+  AUDIT_WRITABLE_TRAILING_MONTHS: "3"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"
+
+# Server-only env.
+serverEnv:
+  DB_APP_ROLE: "audit_app"
+  # Trace resource service.name. Unset, gincommon falls back to APP_NAME,
+  # then to "platform-gincommon"; matches cfg.ServiceName for this root.
+  OTEL_SERVICE_NAME: "iam-audit-log"
+  APP_PORT: "8080"
+  METRICS_PORT: "9090"
+  PG_MAX_CONNS: "20"          # audit pool 20 conns via PgBouncer (HLD §7.1)
+  PG_MIN_CONNS: "0"
+  GLUE_REGISTRY_REGION: "ap-south-1"
+  SQS_MAX_RECEIVE_COUNT: "5"
+  SQS_VISIBILITY_TIMEOUT: "30s"
+  SQS_CONCURRENCY: "4"                  # per-queue handler concurrency (read by platform-events config.LoadSQS, gap 45)
+  AUTH_AUDIT_QUEUE_URL: ""
+  USER_AUDIT_QUEUE_URL: ""
+  MEMBERSHIP_AUDIT_QUEUE_URL: ""
+  TENANT_AUDIT_QUEUE_URL: ""
+  DELEGATION_AUDIT_QUEUE_URL: ""
+  SERVICEACCOUNT_AUDIT_QUEUE_URL: ""
+  TENDER_AUDIT_QUEUE_URL: ""
+  BILLING_AUDIT_QUEUE_URL: ""
+  USAGE_AUDIT_QUEUE_URL: ""
+  WF_WORKFLOW_AUDIT_QUEUE_URL: ""
+  WF_TEMPLATE_AUDIT_QUEUE_URL: ""
+  AUDIT_DEFAULT_QUERY_WINDOW_DAYS: "365"
+  CATALOG_BASE_URL: "http://iam-catalog-admin.iam.svc.cluster.local:8080"
+  CATALOG_PLANS_POLL_INTERVAL: "600s"
+  CATALOG_PLANS_POLL_TIMEOUT: "3s"
+  MAX_INGEST_BATCH: "500"
+  MAX_METADATA_BYTES: "8192"
+  EXPORT_SIGNED_URL_TTL: "168h"
+  INGEST_BATCH_RATE_LIMIT_RPS: "10"     # AL-6 per-tenant bucket (D-5)
+  INGEST_BATCH_RATE_LIMIT_BURST: "20"
+  ARCHIVE_SYNC_MAX_ROWS: "10000"        # archived AL-1 read → 202 export above this (D-10)
+  ARCHIVE_SYNC_MAX_BYTES: "52428800"    # 50 MiB (D-10)
+  EXPORT_DOWNLOAD_URL_TTL: "15m"        # fresh presigned URL per AL-4 poll (D-11)
+  EXPORT_RATE_LIMIT_PER_MINUTE: "10"    # AL-3 per-tenant bucket (§10.5)
+  EXPORT_RATE_LIMIT_BURST: "5"
+  EXPORT_POLL_INTERVAL: "5s"            # export worker claim poll (D-2)
+  EXPORT_JOB_LEASE: "15m"               # running-job lease; heartbeated at lease/3
+  OPS_STATS_INTERVAL: "60s"             # DB/SQS-derived ops gauges (D-21)
+  OPS_ARCHIVE_STALL_GRACE: "48h"        # past archival eligibility before "stalled" (RB-2)
+  OPS_REDACTION_PENDING_AGE: "15m"      # pending redaction older than this is stuck (RB-7)
+  DOCS_ENABLED: "false"
+
+# Reconciler-only env.
+reconcilerEnv:
+  DB_RECONCILER_ROLE: "audit_reconciler"
+  OTEL_SERVICE_NAME: "iam-audit-log-reconciler"   # matches cfg.ServiceName ("-reconciler")
+  PG_MAX_CONNS: "4"
+  PROCESSED_EVENTS_TTL_DAYS: "8"
+  RECONCILER_TIMEOUT: "30m"
+  REDACTION_RETRY_MIN_AGE: "5m"      # redaction-retry: re-apply tasks pending longer than this (RB-7)
+  REDACTION_RETRY_BATCH: "500"
+  REDACTION_SWEEP_WINDOW: "2160h"    # redaction-sweep: subjects erased in the last 90 d (D-18)
+  ARCHIVE_PART_MAX_ROWS: "50000"     # rows per archive object part (LLD §15.4)
+  PROCESSED_EVENTS_PRUNE_BATCH: "10000"
+
+# One Secret per composition root (rule 5). Production: existingSecret.
+secrets:
+  server:
+    existingSecret: ""
+    keys:
+      - DATABASE_URL            # audit_app via PgBouncer
+      - MIGRATION_DATABASE_URL  # audit_migrator, direct to Postgres
+    values:
+      DATABASE_URL: ""
+      MIGRATION_DATABASE_URL: ""
+  reconciler:
+    existingSecret: ""
+    keys:
+      - RECONCILER_DATABASE_URL # audit_reconciler (BYPASSRLS)
+    values:
+      RECONCILER_DATABASE_URL: ""
+
+rotationEpoch: "0"
+
+terminationGracePeriodSeconds: 45
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+
+startupProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 5
+  failureThreshold: 24   # 120s — migrations run before the listener starts
+  timeoutSeconds: 3
+livenessProbe:
+  httpGet: { path: /healthz, port: http }
+  periodSeconds: 15
+  failureThreshold: 3
+  timeoutSeconds: 3
+readinessProbe:
+  httpGet: { path: /readyz, port: http }
+  periodSeconds: 10
+  failureThreshold: 3
+  timeoutSeconds: 10
+
+networkPolicy:
+  enabled: true
+  # Public /api/v1/audit/* arrives via the gateway; /api/v1/internal/* from
+  # same-namespace IAM callers (Catalog, RP, O&M, Group Mapping, Tender ACL).
+  ingressControllerNamespaceSelector:
+    kubernetes.io/metadata.name: envoy-gateway-system
+  ingressControllerPodSelector: {}
+  metricsIngress:
+    enabled: true
+    namespaceSelector:
+      kubernetes.io/metadata.name: monitoring
+    podSelector:
+      app.kubernetes.io/name: prometheus
+  additionalIngressRules: []
+  additionalEgressRules: []
+
+prometheusRule:
+  enabled: true            # LLD §11 alert rules (deploy/monitoring/app-alerts.yml mirror)
+  additionalLabels: {}     # e.g. release: kube-prometheus-stack
+
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+  scrapeTimeout: "10s"
+  additionalLabels: {}
+  relabelings: []
+  namespaceSelector: {}
+
+# Only /api/v1/audit is exposed through the gateway; /api/v1/internal is
+# never routed from the gateway (LLD §5.2, §10.2).
+ingress:
+  enabled: false
+  type: HTTPRoute
+  className: ""
+  annotations: {}
+  tls: []
+  hosts:
+    - host: iam-audit-log.internal.example.com
+      paths:
+        - path: /api/v1/audit
+          pathType: PathPrefix
+  gateway:
+    name: ""
+    namespace: ""
+    sectionName: ""
+  securityPolicy:
+    enabled: false
+    cors:
+      enabled: false
+      allowOrigins: []
+      allowMethods: [GET, POST, OPTIONS]
+      allowHeaders: [Authorization, Content-Type]
+      maxAge: "86400"
+    rateLimit:
+      enabled: false
+      requestsPerUnit: 100
+      unit: Minute
+
+# Reconciler CronJobs (LLD §12). Jobs are registered in cmd/reconciler as
+# phases land; enable each once its job exists.
+cronjobs:
+  reconcile:
+    enabled: true
+    jobName: reconcile
+    schedule: "0 2 * * *"            # RECONCILER_SCHEDULE
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    activeDeadlineSeconds: 2100      # > RECONCILER_TIMEOUT (30m)
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
+  redactionRetry:
+    enabled: true
+    jobName: redaction-retry
+    schedule: "*/15 * * * *"         # REDACTION_RETRY_SCHEDULE — stuck-pending tasks (LLD §8.7, RB-7)
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    activeDeadlineSeconds: 600
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  redactionSweep:
+    enabled: true
+    jobName: redaction-sweep
+    schedule: "30 3 * * *"           # REDACTION_SWEEP_SCHEDULE — daily re-check behind the ingest-time redaction (D-18)
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    activeDeadlineSeconds: 1800
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }
+  processedEventsPrune:
+    enabled: true
+    jobName: processed-events-prune
+    schedule: "0 3 * * *"            # PROCESSED_EVENTS_PRUNE_SCHEDULE
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 3
+    failedJobsHistoryLimit: 3
+    activeDeadlineSeconds: 2100
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 500m, memory: 256Mi }

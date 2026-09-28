@@ -1,0 +1,82 @@
+# Prometheus recording rules for iam-audit-log (LLD §11; Enterprise Platform
+# Observability Standard, gap 46). Naming: service:<metric>:<aggregation>.
+# Tier-1 series aggregate by the injected {domain, service, environment}, so
+# the same expressions hold for every platform service; Tier-3 by
+# {service, environment}. Part of the Helm PrometheusRule
+# (TestAlerts_StaticMirrorMatchesHelm), and read by app-alerts.yml,
+# slo-rules.yml and dashboard-audit-log.json. No rule reads a deprecated
+# metric (TestAlerts_ReferenceKnownMetrics).
+groups:
+  - name: iam-audit-log.rules
+    interval: 30s
+    rules:
+      # ---- Tier-1 messaging throughput ----
+      - record: service:platform_messages_received:rate5m
+        expr: sum by (domain, service, environment, queue) (rate(platform_messages_received_total{domain="iam", service="audit-log"}[5m]))
+      - record: service:platform_messages_processed:rate5m
+        expr: sum by (domain, service, environment) (rate(platform_messages_processed_total{domain="iam", service="audit-log"}[5m]))
+      - record: service:platform_messages_failed:rate5m
+        expr: sum by (domain, service, environment, reason) (rate(platform_messages_failed_total{domain="iam", service="audit-log"}[5m]))
+      - record: service:platform_retry:rate5m
+        expr: sum by (domain, service, environment, reason) (rate(platform_retry_total{domain="iam", service="audit-log"}[5m]))
+      - record: service:platform_dlq_messages:rate5m
+        expr: sum by (domain, service, environment, queue, reason) (rate(platform_dlq_messages_total{domain="iam", service="audit-log"}[5m]))
+      - record: service:platform_duplicate_messages:rate5m
+        expr: sum by (domain, service, environment) (rate(platform_duplicate_messages_total{domain="iam", service="audit-log"}[5m]))
+
+      # ---- failure ratio (backs IAMAuditLogMessageFailures) ----
+      - record: service:platform_messages_failure_ratio:5m
+        expr: |
+          sum by (domain, service, environment) (rate(platform_messages_failed_total{domain="iam", service="audit-log"}[5m]))
+          /
+          clamp_min(sum by (domain, service, environment) (rate(platform_messages_received_total{domain="iam", service="audit-log"}[5m])), 1e-9)
+
+      # ---- dependencies ----
+      - record: service:platform_dependency_request:p99_5m
+        expr: |
+          histogram_quantile(0.99,
+            sum by (domain, service, environment, dependency, operation, le) (rate(platform_dependency_request_seconds_bucket{domain="iam", service="audit-log"}[5m])))
+      - record: service:platform_dependency_request_error_ratio:10m
+        expr: |
+          sum by (domain, service, environment, dependency) (rate(platform_dependency_request_seconds_count{domain="iam", service="audit-log", outcome=~"error|timeout"}[10m]))
+          /
+          clamp_min(sum by (domain, service, environment, dependency) (rate(platform_dependency_request_seconds_count{domain="iam", service="audit-log"}[10m])), 1e-9)
+
+      # ---- propagation (envelope time → persisted) ----
+      - record: service:platform_event_propagation:p99_5m
+        expr: |
+          histogram_quantile(0.99,
+            sum by (domain, service, environment, le) (rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log"}[5m])))
+
+      # ---- queues ----
+      - record: service:platform_queue_depth:max
+        expr: max by (domain, service, environment, queue) (platform_queue_depth{domain="iam", service="audit-log"})
+      - record: service:platform_dlq_depth:max
+        expr: max by (domain, service, environment, queue) (platform_dlq_depth{domain="iam", service="audit-log"})
+
+      # ---- query API availability (gincommon http_* carries no service label of ours) ----
+      - record: service:http_requests_error_ratio:5m
+        expr: |
+          sum by (job) (rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[5m]))
+          /
+          clamp_min(sum by (job) (rate(http_requests_total{job="iam-audit-log"}[5m])), 1e-9)
+
+      # ---- Tier-3 ingest ----
+      - record: service:iam_audit_log_events_ingested:rate5m
+        expr: sum by (service, environment, ingest_mode) (rate(iam_audit_log_events_ingested_total{service="audit-log"}[5m]))
+      - record: service:iam_audit_log_ingest_lag:p99_15m
+        expr: |
+          histogram_quantile(0.99,
+            sum by (service, environment, le) (rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log"}[15m])))
+
+      # ---- Tier-3 archive and redaction health ----
+      - record: service:iam_audit_log_archive_stalled_partitions:max
+        expr: max by (service, environment) (iam_audit_log_archive_stalled_partitions{service="audit-log"})
+      - record: service:iam_audit_log_archive_lag_seconds:max
+        expr: max by (service, environment) (iam_audit_log_archive_lag_seconds{service="audit-log"})
+      - record: service:iam_audit_log_default_partition_rows:max
+        expr: max by (service, environment) (iam_audit_log_default_partition_rows{service="audit-log"})
+      - record: service:iam_audit_log_redaction_pending_tasks:max
+        expr: max by (service, environment) (iam_audit_log_redaction_pending_tasks{service="audit-log"})
+      - record: service:iam_audit_log_redaction_tasks:rate1h
+        expr: sum by (service, environment, status) (rate(iam_audit_log_redaction_tasks_total{service="audit-log"}[1h]))

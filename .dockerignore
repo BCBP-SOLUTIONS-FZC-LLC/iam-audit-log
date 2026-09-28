@@ -1,0 +1,12 @@
+.git
+.github
+.coverage
+bin
+*.out
+coverage.*
+.env
+.env-example
+test
+docs
+!docs/swagger/
+*.md

@@ -1,0 +1,25 @@
+iam-audit-log {{ .Chart.Version }} deployed.
+
+Compliance system-of-record: admin query/export API (AL-1..AL-4), mesh-only
+direct-write ingest + provenance read (AL-5..AL-7), 11 inbound SQS
+consumers, and the archival reconciler CronJobs. Publishes no events.
+
+Mesh address: http://{{ include "iam-audit-log.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+{{- if ne .Release.Namespace "iam" }}
+⚠  Namespace is {{ .Release.Namespace | quote }}, not "iam": producers' AUDIT_LOG_BASE_URL and
+   Catalog's same-namespace NetworkPolicy assume the iam namespace (AL-Q17, AL-D15).
+{{- end }}
+{{- if not (and .Values.secrets.server.existingSecret .Values.secrets.reconciler.existingSecret) }}
+
+⚠  At least one Secret is chart-managed (credentials in Helm release history).
+   Use secrets.server.existingSecret / secrets.reconciler.existingSecret in production.
+{{- end }}
+{{- if not .Values.networkPolicy.enabled }}
+
+⚠  networkPolicy.enabled is false — /api/v1/internal/* relies on it as the
+   primary peer control (LLD §10.2).
+{{- end }}
+
+Rollout coordination (LLD §18.2, rev 0.19): notify iam-catalog-admin when this
+environment goes live — its IAMCatalogAdminAuditDeliveryStalled alert fires
+until this service is reachable.

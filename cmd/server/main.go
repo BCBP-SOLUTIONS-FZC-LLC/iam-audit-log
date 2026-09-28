@@ -1,0 +1,466 @@
+// Package main is the composition root for iam-audit-log's server process
+// (LLD §3, §13): the Gin query + ingest API and the SQS consumer fleet,
+// connected to the `audit` DB as audit_app (INSERT+SELECT only, RLS-bound).
+//
+// This binary never acquires the audit_reconciler role (implementation rule
+// 5) and never wires an SNS publisher or outbox (AL-INV-10).
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awsglue "github.com/aws/aws-sdk-go-v2/service/glue"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/google/uuid"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/consumer"
+	httpadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/inbound/http"
+	catalogadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/catalog"
+	glueadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/glue"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
+	pgadapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/postgres"
+	s3adapter "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/s3"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/telemetry"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
+
+	eventsconfig "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
+)
+
+// buildVersion is injected by -ldflags at build time (Dockerfile / Makefile).
+var buildVersion = "dev"
+
+// runMigrations is an indirection over pgadapter.RunMigrations so tests can
+// drive the migration-failure exit path.
+var runMigrations = pgadapter.RunMigrations
+
+var libMetricsOnce sync.Once
+
+func main() { os.Exit(run()) }
+
+// run holds all deferred cleanup so every exit path runs it via a normal
+// return rather than an os.Exit that would skip it.
+func run() int {
+	// ── 1. Logger + tracing (platform-gincommon) ──────────────────────────
+	// The logger comes first so every later line, configuration errors
+	// included, goes through it. Stderr is used only when the logger itself
+	// cannot be built (BUILD_PLAN gap 43).
+	log, err := logger.NewLogger(config.AppEnv())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "init logger: "+err.Error())
+		return 1
+	}
+	cfg, err := config.LoadServer(buildVersion)
+	if err != nil {
+		log.Error("invalid configuration", map[string]any{"error": err.Error()})
+		return 1
+	}
+	// gin writes nothing itself; requests are logged by gincommon (gap 43).
+	telemetry.QuietGin()
+	shutdownTracing := gincommon.InitTracingFromEnv()
+	defer shutdownTracing()
+	defer func() {
+		if err := gincommon.Shutdown(log); err != nil {
+			log.Error("logger/tracer flush error", map[string]any{"error": err.Error()})
+		}
+	}()
+
+	ginCfg := gincommon.Config{Logger: log, ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion}
+	// Metrics init must precede any collector registration so business /
+	// events / pg collectors share gincommon.MetricsRegisterer() and its
+	// {service, version} const labels (sync.Once inside gincommon).
+	_ = gincommon.ObservabilityMiddlewares(ginCfg)
+	metrics.Register(cfg.AppEnv)
+	// platform-events / pgmetrics init is not idempotent; guard it so run()
+	// stays re-entrant (composition-root tests call it repeatedly).
+	libMetricsOnce.Do(func() {
+		events.InitWithRegisterer(cfg.ServiceName, cfg.BuildVersion, gincommon.MetricsRegisterer())
+		pgmetrics.InitWithRegisterer(cfg.ServiceName, cfg.BuildVersion, gincommon.MetricsRegisterer())
+	})
+
+	warnForbiddenPublisherConfig(log)
+
+	// ── 2. Migrations (audit_migrator, direct to Postgres — LLD §4.4) ─────
+	ctx, cancelBackground := context.WithCancel(context.Background())
+	defer cancelBackground()
+	if err := runMigrations(ctx, cfg.MigrationDSN(), log); err != nil {
+		log.Error("migrations failed", map[string]any{"error": err.Error()})
+		return 1
+	}
+
+	// ── 3. audit_app pool (RLS GUC bound per checkout — LLD §3.3.2) ───────
+	pgCfg, pgWarnings := pgadapter.AppPoolConfig(cfg.DatabaseURL, log, telemetry.NewTracer(cfg.ServiceName))
+	for _, w := range pgWarnings {
+		log.Warn("postgres config warning", map[string]any{"key": w.Key, "reason": w.Reason})
+	}
+	pool, err := pgcommon.NewPool(ctx, pgCfg)
+	if err != nil {
+		log.Error("connect to postgres", map[string]any{"error": err.Error()})
+		return 1
+	}
+	defer pool.Close()
+	if !appRoleOK(ctx, pool, cfg, log) {
+		return 1
+	}
+
+	// ── 3b. Partition pre-creation (LLD §4.4) — defensive, so a missed
+	// reconciler run never blocks ingestion. A failure is logged, not
+	// fatal: audit_events_default still accepts every row meanwhile.
+	partitions, err := service.NewPartitionService(pgadapter.NewPartitionRepository(pool), log,
+		cfg.PrecreateMonths, cfg.WritableTrailingMonths)
+	if err != nil {
+		log.Error("invalid partition window", map[string]any{"error": err.Error()})
+		return 1
+	}
+	if _, err := partitions.EnsureAhead(ctx); err != nil {
+		log.Error("startup partition pre-creation failed — rows will land in audit_events_default until the reconciler runs", map[string]any{"error": err.Error()})
+	}
+
+	// ── 3c. Ingest core (LLD §5.4, AL-D1) — the single write path shared by
+	// AL-5/AL-6 now and the Phase 3 consumer fleet (AL-INV-2).
+	auditRepo := pgadapter.NewAuditRepository(pool)
+	ingest := service.NewIngestService(auditRepo, newUUIDv7,
+		cfg.MaxMetadataBytes, cfg.MaxIngestBatch, log).WithMetrics(metrics.Ingest{})
+
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWSRegion))
+	if err != nil {
+		log.Error("load aws config", map[string]any{"error": err.Error()})
+		return 1
+	}
+
+	// ── 3c'. CAT-I2 plans poller (AL-D15): a background timer, never
+	// per-query; stale-if-error. Shared by the bus projection and the query
+	// path's window resolution.
+	plans := service.NewPlanPoller(catalogadapter.New(cfg.CatalogBaseURL, cfg.CatalogPollTimeout), metrics.CatalogPoll{},
+		service.PlanPollerConfig{Interval: cfg.CatalogPollInterval, Timeout: cfg.CatalogPollTimeout}, log)
+	pollerDone := make(chan struct{})
+	go func() {
+		defer close(pollerDone)
+		plans.Run(ctx)
+	}()
+
+	// ── 3d. SQS consumer fleet (LLD §7.1) — one platform-events consumer per
+	// inbound queue, all converging on the same ingest path (AL-INV-2).
+	fleet, err := buildFleet(awsCfg, cfg, ingest.WithBus(service.BusIngestConfig{
+		Plans:             pgadapter.NewPlanWindowRepository(pool),
+		Windows:           plans,
+		DefaultWindowDays: cfg.DefaultQueryWindowDays,
+		// GDPR redaction on UserDeleted (LLD §8.7): the task commits with
+		// the audit row, then apply_redaction() runs immediately (D-1).
+		Redaction:        auditRepo,
+		RedactionMetrics: metrics.Redaction{},
+	}), log)
+	if err != nil {
+		log.Error("build consumer fleet", map[string]any{"error": err.Error()})
+		return 1
+	}
+	fleet.Start(ctx, func(queue string, err error) {
+		log.Error("SQS consumer stopped", map[string]any{"queue": queue, "error": err.Error()})
+	})
+	log.Info("consumer fleet started", map[string]any{"consumers": fleet.Len()})
+
+	// ── 3e. Query + export (LLD §5.4 AL-1..AL-4; decisions D-2, D-10..D-12).
+	// The export worker runs here as audit_app and claims jobs through the
+	// claim_export_job() definer function (D-2).
+	store := buildStore(awsCfg, cfg)
+	// S3 calls are timed as platform_dependency_request_seconds{dependency="s3"}.
+	archiveReader := metrics.InstrumentedArchiveReader{Inner: store}
+	exportStore := metrics.InstrumentedExportStore{Inner: store}
+	reader := pgadapter.NewQueryRepository(pool)
+	query := service.NewQueryService(reader, archiveReader, service.QueryConfig{
+		DefaultWindowDays: cfg.DefaultQueryWindowDays,
+		Windows:           plans,
+		SyncMaxRows:       cfg.ArchiveSyncMaxRows,
+		SyncMaxBytes:      cfg.ArchiveSyncMaxBytes,
+		Metrics:           metrics.Query{},
+	}, log)
+	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, archiveReader, exportStore, query, newUUIDv7,
+		service.ExportConfig{
+			SignedURLTTL:   cfg.ExportSignedURLTTL,
+			DownloadURLTTL: cfg.ExportDownloadURLTTL,
+			PollInterval:   cfg.ExportPollInterval,
+			Lease:          cfg.ExportJobLease,
+			WorkDir:        cfg.ExportWorkDir,
+			Metrics:        metrics.Query{},
+		}, log)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		exports.Run(ctx)
+	}()
+
+	// ── 3f. Ops gauges (LLD §11, §20; decision D-21, gaps 40/41): the
+	// archival, DEFAULT-partition and redaction state the reconciler CronJob
+	// cannot expose, plus DLQ depth, published from this always-scraped root.
+	ops := service.NewOpsMonitor(pgadapter.NewOpsRepository(pool), sqsDepth{c: newSQSClient(awsCfg, cfg)}, metrics.Ops{},
+		service.OpsMonitorConfig{
+			Interval: cfg.OpsStatsInterval,
+			Query: domain.OpsStatsQuery{
+				HotWindowDays: cfg.HotWindowDays, WritableTrailingMonths: cfg.WritableTrailingMonths,
+				StallGrace: cfg.OpsStallGrace, PendingAge: cfg.OpsRedactionPendingAge,
+			},
+			Queues: opsQueues(cfg),
+		}, log)
+	opsDone := make(chan struct{})
+	go func() {
+		defer close(opsDone)
+		ops.Run(ctx)
+	}()
+
+	// ── 4. Router ─────────────────────────────────────────────────────────
+	router := httpadapter.NewRouter(httpadapter.RouterConfig{
+		GinConfig: ginCfg,
+		Ingest:    httpadapter.NewIngestHandler(ingest),
+		Query: httpadapter.NewQueryHandler(query, exports,
+			httpadapter.NewTenantRateLimiterPerMinute(cfg.ExportRateLimitPerMin, cfg.ExportRateLimitBurst)),
+		BatchLimiter: httpadapter.NewTenantRateLimiter(cfg.IngestBatchRateLimitRPS, cfg.IngestBatchRateLimitBurst),
+		Docs: httpadapter.DocsConfig{
+			Environment: cfg.AppEnv,
+			Enabled:     os.Getenv("DOCS_ENABLED") == "true",
+			AuthToken:   os.Getenv("DOCS_AUTH_TOKEN"),
+		},
+		Ready: map[string]httpadapter.Pinger{
+			"consumers": fleet,
+			"database": pingerFunc(func(ctx context.Context) error {
+				if hs := pool.Health(ctx); !hs.Healthy {
+					return errors.New("database not healthy")
+				}
+				return nil
+			}),
+		},
+	})
+
+	// ── 5. Listeners + graceful shutdown ─────────────────────────────────
+	srv := &http.Server{
+		Addr:         ":" + cfg.AppPort,
+		Handler:      router.Handler(),
+		ErrorLog:     telemetry.HTTPErrorLog(log, "api"),
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 35 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", telemetry.MetricsHandler()) // gincommon's registry only
+	metricsServer := &http.Server{Addr: ":" + cfg.MetricsPort, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second,
+		ErrorLog: telemetry.HTTPErrorLog(log, "metrics")}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	log.Info("service starting", map[string]any{
+		"service": cfg.ServiceName, "version": cfg.BuildVersion, "env": cfg.AppEnv, "addr": srv.Addr,
+	})
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("server error", map[string]any{"error": err.Error()})
+			quit <- syscall.SIGTERM
+		}
+	}()
+	go func() {
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("metrics server error", map[string]any{"error": err.Error()})
+		}
+	}()
+
+	<-quit
+	log.Info("shutdown signal received — draining", nil)
+
+	// Order (mirrors iam-realm-provisioner): stop accepting HTTP → metrics →
+	// consumers → background work → drain pool; tracing + logger flush run
+	// from the defers above.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("HTTP server shutdown error", map[string]any{"error": err.Error()})
+	}
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		log.Error("metrics server shutdown error", map[string]any{"error": err.Error()})
+	}
+	// In-flight handlers finish their DB writes before the pool drains; an
+	// unfinished message is simply redelivered (AL-INV-4).
+	if err := fleet.Stop(); err != nil {
+		log.Error("consumer fleet stop error", map[string]any{"error": err.Error()})
+	}
+	cancelBackground()
+	<-workerDone // an interrupted export records its failure before the pool drains
+	<-pollerDone
+	<-opsDone
+	if err := pool.DrainAndClose(shutdownCtx); err != nil {
+		log.Error("pool drain error", map[string]any{"error": err.Error()})
+	}
+	return 0
+}
+
+// buildFleet wires one platform-events consumer per configured queue (gap
+// 45). The library owns everything about consumption: it builds the SQS
+// client (events.NewSQSConsumer), loads every SQS_* setting (config.LoadSQS:
+// region, endpoint, batch size, long-poll, visibility timeout, concurrency,
+// max receive), decodes the envelope, and receives/deletes/extends
+// visibility. The service supplies only each queue's URL, the handler, the
+// Glue codec (WithConsumerCodec) and the dead-letter observer. Dedup is the
+// handler's job per the library contract, keyed on Envelope.ID
+// (processed_events, AL-INV-4).
+func buildFleet(awsCfg aws.Config, cfg config.Server, ingest consumer.BusIngester, log interface {
+	Debug(string, map[string]any)
+	Info(string, map[string]any)
+	Warn(string, map[string]any)
+	Error(string, map[string]any)
+}) (*consumer.Fleet, error) {
+	glueOpts := []func(*awsglue.Options){func(o *awsglue.Options) { o.Region = cfg.GlueRegistryRegion }}
+	if cfg.AWSEndpoint != "" {
+		ep := cfg.AWSEndpoint
+		glueOpts = append(glueOpts, func(o *awsglue.Options) { o.BaseEndpoint = &ep })
+	}
+	codec := glueadapter.NewCodec(glueadapter.NewRegistryResolver(awsglue.NewFromConfig(awsCfg, glueOpts...)))
+
+	sqsEnv := eventsconfig.LoadSQS()
+	eventsconfig.LogWarningsTo(log, sqsEnv.Warnings)
+	// SQS_MAX_RECEIVE_COUNT is the queues' redrive count (LLD §12); the
+	// dead-letter handler fires one short of it so SQS performs the move.
+	observeAt := consumer.DeadLetterObserveAt(sqsEnv.MaxReceiveCount)
+	libEnv := sqsEnv
+	libEnv.MaxReceiveCount = 0 // set explicitly below, not as the raw redrive count
+	opts := append(eventsconfig.SQSConsumerOptions(libEnv), events.WithMaxReceiveCount(observeAt))
+
+	queues := make([]consumer.Queue, 0, len(cfg.Queues))
+	for _, q := range cfg.Queues {
+		if q.URL == "" {
+			log.Warn(q.Name+" consumer disabled — queue URL unset", nil)
+		}
+		queues = append(queues, consumer.Queue{Name: q.Name, URL: q.URL, Topic: q.Topic, Consumer: q.Consumer, Concurrency: sqsEnv.Concurrency})
+	}
+	build := func(url string, h events.Handler, o ...events.ConsumerOption) (events.Consumer, error) {
+		c := eventsconfig.SQSConfigFromEnv(sqsEnv, log)
+		c.QueueURL = url // one consumer per inbound queue; everything else is the library's
+		return events.NewSQSConsumer(c, h, o...)
+	}
+	return consumer.NewFleet(queues, build, codec, metrics.Consumer{},
+		func(q consumer.Queue) events.Handler { return consumer.Handler(q, ingest) }, opts...)
+}
+
+// newSQSClient is the one raw *sqs.Client constructor (arch-lint). It is used
+// only for the DLQ depth gauge (GetQueueAttributes); consumption never
+// touches it, since platform-events builds its own client (gap 45).
+func newSQSClient(awsCfg aws.Config, cfg config.Server) *sqs.Client {
+	var opts []func(*sqs.Options)
+	if cfg.AWSEndpoint != "" {
+		ep := cfg.AWSEndpoint
+		opts = append(opts, func(o *sqs.Options) { o.BaseEndpoint = &ep })
+	}
+	return sqs.NewFromConfig(awsCfg, opts...)
+}
+
+// sqsDepth implements port.QueueDepths (sqs:GetQueueAttributes, the IAM
+// policy's ReadDLQDepthForAlerting statement).
+type sqsDepth struct{ c *sqs.Client }
+
+func (d sqsDepth) Depth(ctx context.Context, url string) (int64, error) {
+	out, err := d.c.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(url),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameApproximateNumberOfMessages},
+	})
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(out.Attributes[string(sqstypes.QueueAttributeNameApproximateNumberOfMessages)], 10, 64)
+}
+
+// opsQueues lists each configured inbound queue with its DLQ
+// (<queue>-dlq, LLD §25) for the depth gauges.
+func opsQueues(cfg config.Server) []service.OpsQueue {
+	var out []service.OpsQueue
+	for _, q := range cfg.Queues {
+		if q.URL != "" {
+			out = append(out, service.OpsQueue{Name: q.Name, URL: q.URL, DLQURL: q.URL + "-dlq"})
+		}
+	}
+	return out
+}
+
+// buildStore wires the S3 archive/export adapter. Against an emulator
+// endpoint (AWS_ENDPOINT_URL — floci/LocalStack) it uses path-style
+// addressing and omits SSE-KMS, which the emulator has no key for; in AWS
+// every export is SSE-KMS encrypted with AUDIT_ARCHIVE_KMS_KEY (§5.4).
+func buildStore(awsCfg aws.Config, cfg config.Server) *s3adapter.Store {
+	kmsKey := cfg.ArchiveKMSKey
+	var opts []func(*awss3.Options)
+	if cfg.AWSEndpoint != "" {
+		ep := cfg.AWSEndpoint
+		opts = append(opts, func(o *awss3.Options) { o.BaseEndpoint = &ep; o.UsePathStyle = true })
+		kmsKey = ""
+	}
+	return s3adapter.New(awss3.NewFromConfig(awsCfg, opts...), cfg.ArchiveBucket, kmsKey)
+}
+
+// newUUIDv7 mints audit_events.id (UUIDv7: recorded order within a
+// partition, LLD §4.2).
+func newUUIDv7() (string, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// pingerFunc adapts a plain func to httpadapter.Pinger.
+type pingerFunc func(context.Context) error
+
+func (f pingerFunc) Health(ctx context.Context) error { return f(ctx) }
+
+type warnLogger interface {
+	Warn(msg string, fields map[string]any)
+}
+
+// warnForbiddenPublisherConfig logs a startup warning if publisher-side
+// config is present (LLD §3.3.3). The values are never read further: this
+// service has no publisher and no outbox (AL-INV-10). Unlike
+// iam-authz-enrichment it does not call platform-events' LoadSNS/LoadOutbox
+// even for parity — CI forbids them (check-forbidden-events-bypass.sh).
+func warnForbiddenPublisherConfig(log warnLogger) {
+	for _, key := range []string{"SNS_TOPIC_ARN", "OUTBOX_DATABASE_URL"} {
+		if os.Getenv(key) != "" {
+			log.Warn(key+" is set but ignored — iam-audit-log publishes no bus events (AL-INV-10)", nil)
+		}
+	}
+}
+
+// appRoleOK asserts the pool authenticates as DB_APP_ROLE without
+// BYPASSRLS. Fatal outside dev; a warning in dev, where a local superuser
+// DSN is common.
+func appRoleOK(ctx context.Context, pool *pgcommon.Pool, cfg config.Server, log interface {
+	Warn(string, map[string]any)
+	Error(string, map[string]any)
+}) bool {
+	ri, err := pgadapter.CurrentRole(ctx, pool)
+	if err == nil {
+		err = pgadapter.CheckAppRole(ri, cfg.DBAppRole)
+	}
+	if err == nil {
+		return true
+	}
+	if config.IsDev(cfg.AppEnv) {
+		log.Warn("app DB role check failed (tolerated in dev)", map[string]any{"error": err.Error()})
+		return true
+	}
+	log.Error("app DB role check failed", map[string]any{"error": err.Error()})
+	return false
+}

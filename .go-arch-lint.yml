@@ -1,0 +1,76 @@
+# go-arch-lint v3 — enforces LLD §3.2 dependency rules:
+#   - core/domain imports nothing outside the standard library.
+#   - core/port imports core/domain only (no vendor at all; the trace-id
+#     helper is injected from the telemetry adapter, BUILD_PLAN gap 43).
+#   - core/service imports core/domain + core/port only.
+#   - adapters implement ports and never import each other.
+#   - cmd/* (composition roots) are the only place adapters meet.
+# Unlike iam-realm-provisioner (depOnAnyVendor: true), vendor use is
+# deny-by-default so the core stays framework-free by construction.
+version: 3
+workdir: .
+allow:
+  depOnAnyVendor: false
+  deepScan: false
+exclude: [test, scripts, deploy, docs]
+excludeFiles: ['.*_test\.go$']
+
+components:
+  domain:      { in: internal/core/domain }
+  port:        { in: internal/core/port }
+  service:     { in: internal/core/service }
+  requestctx:  { in: pkg/requestctx }
+  config:      { in: internal/config }
+  eventschema: { in: internal/eventschema }
+  apispec:     { in: api }
+
+  http:        { in: internal/adapter/inbound/http }
+  consumer:    { in: internal/adapter/inbound/consumer }
+
+  postgres:    { in: internal/adapter/outbound/postgres }
+  s3:          { in: internal/adapter/outbound/s3 }
+  glue:        { in: internal/adapter/outbound/glue }
+  metrics:     { in: internal/adapter/outbound/metrics }
+  catalog:     { in: internal/adapter/outbound/catalog }
+  telemetry:   { in: internal/adapter/outbound/telemetry }
+
+  jobs:        { in: cmd/reconciler/jobs }
+  server:      { in: cmd/server }
+  reconciler:  { in: cmd/reconciler }
+
+deps:
+  # domain, config, eventschema, apispec: leaves — no project or vendor deps
+  # (omitted from this map = may depend on nothing).
+  port:
+    mayDependOn: [domain]
+  service:
+    mayDependOn: [domain, port]
+  requestctx:  { anyVendorDeps: true }
+
+  # Inbound adapters drive the core; they may read the embedded specs.
+  http:
+    mayDependOn: [domain, port, service, requestctx, apispec]
+    anyVendorDeps: true
+  consumer:
+    mayDependOn: [domain, port, service, eventschema]
+    anyVendorDeps: true
+
+  # Outbound adapters implement ports; never each other.
+  postgres: { mayDependOn: [domain, port], anyVendorDeps: true }
+  s3:       { mayDependOn: [domain, port], anyVendorDeps: true }
+  glue:     { mayDependOn: [domain, port, eventschema], anyVendorDeps: true }
+  metrics:  { mayDependOn: [domain, port], anyVendorDeps: true }
+  catalog:  { mayDependOn: [domain, port], anyVendorDeps: true }
+  # The one seam onto gincommon's tracer provider and metrics registry (gap 43).
+  telemetry: { mayDependOn: [port], anyVendorDeps: true }
+
+  jobs:
+    mayDependOn: [domain, port, service]
+    anyVendorDeps: true
+
+  server:
+    mayDependOn: [domain, port, service, requestctx, config, eventschema, apispec, http, consumer, postgres, s3, glue, metrics, catalog, telemetry]
+    anyVendorDeps: true
+  reconciler:
+    mayDependOn: [domain, port, service, config, jobs, postgres, s3, metrics, telemetry]
+    anyVendorDeps: true

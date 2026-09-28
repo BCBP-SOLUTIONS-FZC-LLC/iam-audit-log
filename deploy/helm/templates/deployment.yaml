@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "iam-audit-log.fullname" . }}
+  labels:
+    {{- include "iam-audit-log.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "iam-audit-log.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # maxSurge: 0 keeps rollout node-count neutral. With hard pod
+      # anti-affinity below, a surge pod cannot be scheduled when every node
+      # already holds a replica — the rollout would stall indefinitely. Use
+      # maxUnavailable: 1 instead.
+      maxSurge: 0
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        {{- include "iam-audit-log.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        # Bump rotationEpoch after rotating an external secret; the checksum
+        # recycles pods when a chart-managed Secret changes.
+        rotationEpoch: {{ .Values.rotationEpoch | default "0" | quote }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "iam-audit-log.serviceAccountName" . }}
+      # 30s HTTP+metrics graceful-shutdown budget plus buffer for the 11
+      # in-process SQS consumers to finish an in-flight message —
+      # at-least-once delivery + processed_events dedup makes a redelivery
+      # safe if this is exceeded (AL-INV-4).
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          # cmd/server (LLD §13): the query + ingest API AND the 11-queue SQS
+          # consumer fleet, as audit_app — the image's default entrypoint.
+          # CronJobs run the SAME image with `command` overridden to the
+          # reconciler binary (templates/cronjobs.yaml).
+          image: "{{ .Values.image.repository }}:{{ include "iam-audit-log.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+          env:
+            {{- range $key, $val := merge (dict) .Values.serverEnv .Values.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+            {{- $secretName := include "iam-audit-log.serverSecretName" . }}
+            {{- range .Values.secrets.server.keys }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ . }}
+            {{- end }}
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        # Hard anti-affinity: require pods to land on different nodes.
+        # preferred (soft) anti-affinity allows all replicas on one node — a
+        # single node failure would take the service to zero despite the PDB.
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "iam-audit-log.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname

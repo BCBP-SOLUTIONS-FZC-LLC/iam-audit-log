@@ -1,0 +1,29 @@
+sequenceDiagram
+    participant MW as IdentityBridgeMiddleware
+    participant RC as requestctx.RequestContext
+    participant GUC as pgcommon GUC set
+    participant Pool as pgcommon Pool (audit_app)
+    participant PGB as PgBouncer (transaction pooling)
+    participant DB as PostgreSQL (RLS)
+
+    Note over MW,GUC: /api/v1/* chain: RequireAuth → Context → IdentityBridge<br/>(the ingest path binds the BODY tenant instead — Append sets GUC = entry.tenant_id)
+
+    MW ->>+ RC: requestctx.FromContext / parse gateway headers
+    RC -->>- MW: {UserID, TenantID, Roles}
+    MW ->> GUC: g.TenantID = rc.TenantID · pgcommon.WithGUCSet(ctx, g)
+
+    Note over Pool,DB: AppPoolConfig: GUCProvider = GUCSetFromContext and PGBouncerMode FORCED true<br/>(with PGBouncerMode false pgcommon binds session-level and the value leaks across checkouts)
+
+    Pool ->>+ PGB: acquire backend
+    PGB -->>- Pool: pooled connection
+    Pool ->>+ DB: BEGIN
+    Pool ->> DB: SELECT set_config('app.tenant_id', tenant, true)
+    Note over DB: is_local = true ⇒ scoped to this transaction only
+    Pool ->> DB: application query
+    Note over DB: FORCE RLS on audit_events, audit_export_jobs,<br/>audit_archive_objects, redacted_subjects<br/>policy tenant_isolation → rls_check_tenant(tenant_id, table)<br/>missing / malformed GUC ⇒ fails closed (0 rows, WITH CHECK rejects)<br/>violations sampled into rls_violation_log (1 %)
+    DB -->>- Pool: tenant-scoped rows
+    Pool ->> DB: COMMIT — GUC discarded
+    Pool ->> PGB: release backend (no residual GUC)
+
+    Note over MW,DB: Cross-tenant work never widens audit_app: it goes through narrow SECURITY DEFINER functions<br/>(claim_export_job, apply_redaction, audit_ops_stats, audit_rls_violation_counts, audit_ensure_partitions)<br/>or the separate audit_reconciler (BYPASSRLS) pool in cmd/reconciler only.
+    Note over DB,PGB: Tests: RLS Cases 1–4 · TestGUC_TransactionLocalNoLeakAcrossPooledBackend_ALINV3 · TestGUC_ClearedAtCommit_ALINV3

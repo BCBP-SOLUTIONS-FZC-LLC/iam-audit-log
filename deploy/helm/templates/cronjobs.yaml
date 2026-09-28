@@ -1,0 +1,82 @@
+{{- /*
+Reconciler CronJobs (LLD §8.5, §8.6, §12, §13), all from one manifest. Each
+runs the SAME image as the server Deployment with `command` overridden to
+/iam-audit-log-reconciler --job=<jobName>, singleton per run
+(concurrencyPolicy: Forbid), using ONLY the reconciler Secret
+(audit_reconciler DSN — never the audit_app one).
+*/ -}}
+{{- range $key, $job := .Values.cronjobs }}
+{{- if $job.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "iam-audit-log.fullname" $ }}-{{ $job.jobName }}
+  labels:
+    {{- include "iam-audit-log.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: cronjob-{{ $job.jobName }}
+spec:
+  schedule: {{ $job.schedule | quote }}
+  concurrencyPolicy: {{ $job.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ $job.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ $job.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ $job.activeDeadlineSeconds }}
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "iam-audit-log.selectorLabels" $ | nindent 12 }}
+            app.kubernetes.io/component: cronjob-{{ $job.jobName }}
+          annotations:
+            rotationEpoch: {{ $.Values.rotationEpoch | default "0" | quote }}
+            checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}
+        spec:
+          serviceAccountName: {{ include "iam-audit-log.serviceAccountName" $ }}
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml $.Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: {{ $job.jobName }}
+              image: "{{ $.Values.image.repository }}:{{ include "iam-audit-log.imageTag" $ }}"
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              # Same image as the server Deployment (single Dockerfile) —
+              # override the entrypoint to run the reconciler binary
+              # instead of the default /iam-audit-log-server.
+              command: ["/iam-audit-log-reconciler"]
+              args:
+                - "--job={{ $job.jobName }}"
+              securityContext:
+                {{- toYaml $.Values.securityContext | nindent 16 }}
+              env:
+                {{- range $envKey, $envVal := merge (dict) $.Values.reconcilerEnv $.Values.env }}
+                - name: {{ $envKey }}
+                  value: {{ $envVal | quote }}
+                {{- end }}
+                {{- $secretName := include "iam-audit-log.reconcilerSecretName" $ }}
+                {{- range $.Values.secrets.reconciler.keys }}
+                - name: {{ . }}
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $secretName }}
+                      key: {{ . }}
+                {{- end }}
+              resources:
+                {{- toYaml $job.resources | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+          {{- with $.Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $.Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+{{- end }}
+{{- end }}

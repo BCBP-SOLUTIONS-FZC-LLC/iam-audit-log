@@ -1,0 +1,31 @@
+graph LR
+    subgraph sources["Documentation sources"]
+        mmd["docs/architecture/mermaid/\n14 × .mmd source diagrams"]
+        arch["ARCHITECTURE.md\nembeds mermaid blocks + prose"]
+        claude[".claude/CLAUDE.md + siblings\narchitecture · database-schema\napi-caching-events · request-flows · operations"]
+        readme["README.md\ncapabilities · quick start · gates · docs index"]
+        asyncapi_yaml["api/asyncapi.yaml\nreceive-only AsyncAPI (65 messages)"]
+        lld["docs/lld/iam-lld-audit-log-service.md\nLLD rev 0.26"]
+        plan["docs/implementation/\nBUILD_PLAN.md · RELEASE_CHECKLIST.md"]
+        ops["docs/runbook.md · deploy/monitoring/"]
+    end
+
+    subgraph rendered["Rendered by"]
+        github["GitHub\nMarkdown + Mermaid preview"]
+        ide["IDE\nMermaid Preview plugin"]
+        live["mermaid.live"]
+        claude_ai["Claude Code\ncontext-aware assistance"]
+        asyncapi_viewer["GET /asyncapi\nevent-catalog viewer"]
+        grafana["Grafana / Prometheus"]
+    end
+
+    mmd -->|"embedded as\nfenced blocks"| arch
+    arch --> github
+    arch --> ide
+    mmd --> live
+    claude --> claude_ai
+    lld --> claude_ai
+    plan --> claude_ai
+    readme --> github
+    asyncapi_yaml --> asyncapi_viewer
+    ops --> grafana

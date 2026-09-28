@@ -1,0 +1,15 @@
+flowchart LR
+    UD["UserDeleted consumed\n(user-audit-q)"] --> T["audit_redaction_tasks pending\n(same tx as the user.deleted row)"]
+    T --> AR["apply_redaction(task)\nSECURITY DEFINER, owner audit_reconciler\nsecurity_3y rows: actor OR user target (D-15)\nmetadata → marker, actor_display → NULL"]
+    AR --> S{"subject in a sealed\nsecurity_3y object?\n(subject_ids, D-17)"}
+    S -- yes --> M["missed — routine\n(AL-Q15 Option A: archived rows retained)"]
+    S -- no --> AP["applied / not_applicable"]
+    AR -. "apply failed" .-> P["stays pending\nredaction_tasks_total{status=pending}"]
+    P -->|"redaction-retry (*/15 m, as reconciler)"| AR
+    AP --> RS[("redacted_subjects")]
+    M --> RS
+    RS -->|"checked inside every Append (D-18)"| LATE["late security_3y row\nredacted BEFORE insert"]
+    RS -->|"redaction-sweep (daily, 90 d window)"| SW["sweep_redactions()\nre-redact rows that slipped past"]
+    AR -. "rewrote rows" .-> INV["invalidate_security_archive()\n→ tier re-archived before any seal"]
+    SW -. "rewrote rows" .-> INV
+    TO["TenantOffboarded"] -. "no task (D-16)" .-> UD

@@ -1,0 +1,13 @@
+stateDiagram-v2
+    [*] --> pending
+    pending --> archiving: reconcile (month eligible, no pending redaction)
+    archiving --> archived: parts uploaded (SSE-KMS, Object Lock) + manifest
+    archiving --> failed: S3 / stream error
+    failed --> archiving: next run (rewrite unsealed parts)
+    archived --> verified: checksums + manifest + lock verified
+    archived --> failed: verify mismatch
+    verified --> pending: redaction rewrote a row (invalidate_security_archive)
+    verified --> pending: drop gate count_mismatch (late row) → re-archive
+    verified --> dropped: audit_drop_partition() → seal + DETACH / DROP
+    dropped --> pending: late row in DEFAULT → audit_reopen_partition() (D-19)
+    dropped --> [*]

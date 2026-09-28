@@ -1,0 +1,76 @@
+# iam-audit-log observability inventory: the single source of truth under the
+# Enterprise Platform Observability Standard. It lists every series this
+# service registers, with its tier, type, labels, status and (for
+# deprecated names) replacement and sunset.
+# test/unit/metrics_registry_test.go validates every registered collector
+# against this file and metric-lint.yaml, and the tier-1/tier-2 entries
+# against internal/adapter/outbound/metrics/registry.go (the machine-checked
+# ledger metrics-registry-lint.sh reads). A rename follows the same review as
+# a code change.
+service: audit-log          # the `service` label value (domain="iam" is its own label)
+domain: iam
+tier3_prefix: iam_audit_log_
+
+metrics:
+  # ── Tier 1: platform_* (Canonical in the Platform Observability Registry) ──
+  - { name: platform_messages_received_total,    tier: platform, type: counter,   labels: [queue, event_type],               status: canonical }
+  - { name: platform_messages_processed_total,   tier: platform, type: counter,   labels: [event_type],                      status: canonical }
+  - { name: platform_messages_failed_total,      tier: platform, type: counter,   labels: [event_type, reason],              status: canonical }
+  - { name: platform_retry_total,                tier: platform, type: counter,   labels: [event_type, reason],              status: canonical }
+  - { name: platform_dlq_messages_total,         tier: platform, type: counter,   labels: [queue, reason],                   status: canonical }
+  - { name: platform_duplicate_messages_total,   tier: platform, type: counter,   labels: [event_type],                      status: canonical }
+  - { name: platform_dependency_request_seconds, tier: platform, type: histogram, labels: [dependency, operation, outcome],   status: canonical }
+  - { name: platform_event_propagation_seconds,  tier: platform, type: histogram, labels: [event_type],                      status: canonical }
+  - { name: platform_queue_depth,                tier: platform, type: gauge,     labels: [queue],                           status: canonical }
+  - { name: platform_dlq_depth,                  tier: platform, type: gauge,     labels: [queue],                           status: canonical }
+
+  # ── Tier 2: iam_* (IAM Domain Registry; identical meaning in every IAM service) ──
+  - { name: iam_rls_violations_total,            tier: domain,   type: counter,   labels: [violation_type],                  status: canonical }
+
+  # ── Tier 3: iam_audit_log_* (service-owned, LLD §11) ──
+  - { name: iam_audit_log_events_ingested_total,        tier: service, type: counter,   labels: [source_service, ingest_mode, entry_type], status: current }
+  - { name: iam_audit_log_duplicate_events_total,       tier: service, type: counter,   labels: [consumer],                  status: current }   # includes direct_write replays, which are not messages
+  - { name: iam_audit_log_unknown_event_total,          tier: service, type: counter,   labels: [source_service],            status: current }
+  - { name: iam_audit_log_ingest_lag_seconds,           tier: service, type: histogram, labels: [],                          status: current }
+  - { name: iam_audit_log_directwrite_requests_total,   tier: service, type: counter,   labels: [source_service, result],    status: current }
+  - { name: iam_audit_log_query_window_clamped_total,   tier: service, type: counter,   labels: [plan_code],                 status: current }
+  - { name: iam_audit_log_query_archived_reads_total,   tier: service, type: counter,   labels: [],                          status: current }
+  - { name: iam_audit_log_export_jobs_total,            tier: service, type: counter,   labels: [status],                    status: current }
+  - { name: iam_audit_log_catalog_plans_poll_total,     tier: service, type: counter,   labels: [result],                    status: current }
+  - { name: iam_audit_log_catalog_plans_stale_seconds,  tier: service, type: gauge,     labels: [],                          status: current }
+  - { name: iam_audit_log_redaction_tasks_total,        tier: service, type: counter,   labels: [status],                    status: current }
+  - { name: iam_audit_log_redaction_pending_tasks,      tier: service, type: gauge,     labels: [],                          status: current }
+  - { name: iam_audit_log_redaction_blocked_archive_total, tier: service, type: counter, labels: [],                         status: current }
+  - { name: iam_audit_log_archive_partitions_total,     tier: service, type: counter,   labels: [tier, result],              status: current }
+  - { name: iam_audit_log_retention_pruned_total,       tier: service, type: counter,   labels: [tier],                      status: current }
+  - { name: iam_audit_log_archive_stalled_partitions,   tier: service, type: gauge,     labels: [],                          status: current }
+  - { name: iam_audit_log_archive_lag_seconds,          tier: service, type: gauge,     labels: [],                          status: current }
+  - { name: iam_audit_log_default_partition_rows,       tier: service, type: gauge,     labels: [],                          status: current }
+
+  # ── Deprecated (compatibility period: emitted in parallel with the
+  # replacement; dashboards, alerts, recording rules, SLOs and HPA already
+  # use the replacement; removed after the approved sunset) ──
+  - { name: iam_audit_log_dlq_messages_total,           tier: service, type: gauge, labels: [queue], status: deprecated, replaced_by: platform_dlq_depth, deprecated_since: "2026-09-27", sunset: "one release after deprecation, subject to observability-governance approval", reason: "a gauge must not end _total; DLQ depth is the Canonical platform_dlq_depth (queue label now the source queue, not <queue>-dlq)" }
+  - { name: iam_audit_log_default_partition_rows_total, tier: service, type: gauge, labels: [],      status: deprecated, replaced_by: iam_audit_log_default_partition_rows, deprecated_since: "2026-09-27", sunset: "one release after deprecation, subject to observability-governance approval", reason: "a gauge must not end _total" }
+  - { name: iam_audit_log_archive_stalled,              tier: service, type: gauge, labels: [],      status: deprecated, replaced_by: iam_audit_log_archive_stalled_partitions, deprecated_since: "2026-09-27", sunset: "one release after deprecation, subject to observability-governance approval", reason: "a gauge names its measured quantity" }
+
+# Labels every series carries, injected centrally (business.go platformLabels
+# / serviceLabels; naming rule 8). `version` also comes from gincommon.
+injected_labels:
+  platform: [domain, service, environment]
+  domain:   [service, environment]
+  service:  [service, environment]
+
+# Label vocabulary: names, meanings, allowed values and cardinality ("Label
+# governance"). Shared (platform/domain) metrics may use only keys listed
+# here; enumerated keys may take only their listed values.
+label_vocabulary:
+  queue:          { meaning: "inbound SQS queue name (*-audit-q)", cardinality: 11, values: [auth-audit-q, user-audit-q, membership-audit-q, tenant-audit-q, delegation-audit-q, serviceaccount-audit-q, tender-audit-q, billing-audit-q, usage-audit-q, wf-workflow-audit-q, wf-template-audit-q] }
+  event_type:     { meaning: "producer event type, bounded to the §7.1 taxonomy for its topic; anything else is \"unknown\"", cardinality: "≤ 70" }
+  reason:         { meaning: "why a message failed or was dead-lettered", cardinality: 4, values: [invalid_event, dependency_unavailable, internal, max_receive_exceeded] }
+  dependency:     { meaning: "synchronous dependency called", cardinality: 2, values: [catalog-admin, s3] }
+  operation:      { meaning: "operation on the dependency", cardinality: 5, values: [list_plans, read_archive, put_archive, verify_archive, put_export] }
+  outcome:        { meaning: "dependency call result", cardinality: 4, values: [success, error, timeout, not_found] }
+  violation_type: { meaning: "rls_check_tenant() violation class", cardinality: 3, values: [cross_tenant_access, missing_or_invalid_guc, other] }
+
+forbidden_label_keys: [tenant_id, user_id, realm, sub, email, request_id, event_id, session_id, actor_id, target_id, trace_id]
