@@ -69,6 +69,9 @@ env:
 # Server-only env.
 serverEnv:
   DB_APP_ROLE: "audit_app"
+  # Trace resource service.name. Unset, gincommon falls back to APP_NAME,
+  # then to "platform-gincommon"; matches cfg.ServiceName for this root.
+  OTEL_SERVICE_NAME: "iam-audit-log"
   APP_PORT: "8080"
   METRICS_PORT: "9090"
   PG_MAX_CONNS: "20"          # audit pool 20 conns via PgBouncer (HLD §7.1)
@@ -112,6 +115,7 @@ serverEnv:
 # Reconciler-only env.
 reconcilerEnv:
   DB_RECONCILER_ROLE: "audit_reconciler"
+  OTEL_SERVICE_NAME: "iam-audit-log-reconciler"   # matches cfg.ServiceName ("-reconciler")
   PG_MAX_CONNS: "4"
   PROCESSED_EVENTS_TTL_DAYS: "8"
   RECONCILER_TIMEOUT: "30m"
