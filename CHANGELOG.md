@@ -8,7 +8,21 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 - **Helm: `OTEL_SERVICE_NAME` is now set per composition root** (`serverEnv` `iam-audit-log`, `reconcilerEnv` `iam-audit-log-reconciler`, matching each root's `cfg.ServiceName`). Without it, gincommon's `InitTracingFromEnv` fell back to `APP_NAME`, which the chart never set, and then to `"platform-gincommon"`. Every span would have carried the library's name as its `service.name`.
 - **Dependencies (govulncheck):** `google.golang.org/grpc` v1.83.0 → v1.83.2 fixes GO-2026-6348, which the service calls: an HTTP/2 DATA-frame memory exhaustion reached through the gincommon OTel exporter. The same bump fixes GO-2026-6443, which it does not call. `golang.org/x/crypto` v0.54.0 → v0.56.0 fixes GO-2026-6355, -6354 and -6303, none of them called. GO-2026-5932 (x/crypto) has no fix yet and is not called (c62cf3e).
 
+### Changed — dependencies upgraded to latest (2026-09-28)
+- **AWS SDK v2:** core v1.47.1, `config` v1.33.6, `credentials` v1.20.6, `glue` v1.164.0, `s3` v1.113.4, `sns` v1.47.2 and `sqs` v1.52.1, plus `smithy-go` v1.28.2.
+- **Other direct dependencies:**
+  - `pgx/v5` v5.11.0;
+  - `otel` and `otel/trace` v1.46.0;
+  - `prometheus/client_model` v0.6.3;
+  - `jsonschema/v6` v6.0.3;
+  - `testify` v1.12.1;
+  - `x/time` v0.16.0.
+- **Tooling:** golangci-lint v2.14.0. Transitive dependencies were refreshed for every build tag.
+- **pgx v5.11 adds `TypeMap()` to `pgx.Rows`.** `test/dbseed`'s `bufferedRows` now implements it; it's test-only code.
+- **Already latest:** platform-events v1.4.0, platform-gincommon v1.3.0 and platform-pgcommon v1.3.0. gin, uuid, puddle, client_golang, swag, testcontainers and yaml.v3 had no newer release.
+
 ### Changed — developer tooling (2026-09-28)
+- **CI Trivy gate:** new `.trivyignore`, wired into `ci.yml`'s table and SARIF scans. Its one entry is DLA-4792-1 (`tzdata` 2026b → 2026c in the distroless base, UNKNOWN), expiring 2026-10-31. Upstream `:nonroot` has not been rebuilt yet, so `make pin-base-images` changes nothing, and the service loads no time zone. Every entry must carry a reason and an `exp:` date.
 - **`Makefile`:** mirrors iam-org-membership's structure. Adds `godoc`, `test-smoke`, `prometheusrule` and `docs-serve`, runs a parallel `make test`, and prints a summary of failing postgres tests (06c65e5).
 - **`.env-example`:** mirrors iam-org-membership's sectioned layout. Adds `APP_NAME` and `OTEL_SERVICE_NAME`, plus the OTel exporter and pool-tuning settings with notes on which library reads each. `PG_BOUNCER_MODE` changes from `false` to `true` to match the chart; both pools force it on regardless.
 
