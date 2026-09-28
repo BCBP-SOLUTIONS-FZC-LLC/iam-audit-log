@@ -2,7 +2,7 @@
 
 Guidance for Claude Code working in **`iam-audit-log`**: the Tender Management SaaS platform's compliance system of record. It is a Go service in the IAM subsystem, module `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`.
 
-- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.24).
+- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.26).
 - **Build trace, decisions and gaps:** `docs/implementation/BUILD_PLAN.md`.
 - Where the LLD and a BUILD_PLAN decision (D-n) disagree, the decision is the implemented behavior, and the LLD note it needs is recorded in BUILD_PLAN §C.
 
