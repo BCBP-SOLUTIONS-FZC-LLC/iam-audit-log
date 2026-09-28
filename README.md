@@ -352,24 +352,28 @@ In dev, `.env-example` points all three DSNs at the local `postgres` superuser. 
 | `make arch-lint` | `.github/scripts/arch-lint.sh`: go-arch-lint plus the confinement grep gates |
 | `make invariant-lint` | `check-grants.sh`, `check-forbidden-events-bypass.sh`, `check-asyncapi-receive-only.sh`, `check-metric-naming.sh`, `check-observability-confinement.sh` |
 | `make mod-verify` / `make vuln-check` | `go mod verify` / `govulncheck ./internal/... ./pkg/...` |
-| `make test` | Unit, then postgres, then integration (Docker required; e2e is separate) |
+| `make test` | Unit, postgres and integration in parallel (`-j3`, verbose, no `-race`/coverage; Docker required; e2e is separate) |
 | `make test-ci` | The same three in parallel, with `-race` and merged `coverage.out` (used in CI) |
 | `make test-unit` | Unit and black-box contract tests, no Docker |
 | `make test-postgres` | Postgres, RLS, grants, partitions and repositories (testcontainers). Parallelism is capped at `TEST_POSTGRES_PARALLEL` (default 4). |
 | `make test-integration` | SQS, SNS, S3 and Glue on floci, with the real consumer fleet and reconciler (`TEST_INTEGRATION_PARALLEL`, default 2) |
 | `make test-e2e` | The real router over HTTP plus the real binaries as processes |
+| `make test-smoke` | CI's image gate (`.github/scripts/smoke-tests.sh`: 200 MB limit + startup-gate check); needs `IMAGE_TAG` and `BINARY`, plus `ENTRYPOINT=/iam-audit-log-reconciler` for the reconciler leg |
 | `make race` | All three suites with `-race` and no coverage merge |
 | `make run` / `make run-reconciler JOB=<name>` | Run a composition root locally (sources `.env`) |
-| `make build` | Compile `bin/iam-audit-log-server` and `bin/iam-audit-log-reconciler` |
+| `make build` | Compile `bin/iam-audit-log-server` and `bin/iam-audit-log-reconciler`, then verify `./internal/...` and `./pkg/...` compile |
 | `make cover` / `make cover-func` | Coverage HTML report / per-function summary |
 | `make ci` | `tidy` + `fmt-check` + `vet` + `lint` + `arch-lint` + `invariant-lint` + `test-ci` + `build` |
 | `make docker-up` / `make docker-down` | Start `postgres` and `floci` / stop the stack |
 | `make swag` / `make swag-check` | Regenerate / verify `docs/swagger` |
+| `make docs-serve` | Run the server and print the `/asyncapi` doc URLs |
+| `make prometheusrule` | Regenerate the Helm `PrometheusRule` from `deploy/monitoring/` (`scripts/gen-prometheusrule.py`) |
 | `make migrate-create NAME=<x>` | New `NNNNNN_<x>.up.sql`/`.down.sql` pair |
 | `make pin-base-images` | Re-pin the Dockerfile base-image digests and write `.docker-digests` |
+| `make install-hooks` / `make godoc` / `make help` | Install the pre-commit hook / serve pkgsite at `:8080` / list every target |
 | `make clean` | Remove `bin/`, `.coverage/` and coverage files |
 
-There is no `make test-smoke`. The image size and startup gate (`.github/scripts/smoke-tests.sh`, 200 MB limit) runs only in `ci.yml`. `make test-ci` plus `make test-e2e` takes more than 10 minutes locally, so run it in the background.
+There are no schema-governance targets (unlike iam-org-membership): this service publishes nothing (AL-INV-10), so it owns no produced schemas to register. `make test-ci` plus `make test-e2e` takes more than 10 minutes locally, so run it in the background.
 
 ### Running a single test
 

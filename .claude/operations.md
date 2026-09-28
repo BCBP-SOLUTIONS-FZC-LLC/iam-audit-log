@@ -30,7 +30,7 @@ All run with `concurrencyPolicy: Forbid`. A blocked or stalled `reconcile` exits
   - `iam_rls_violations_total`.
 - **Deprecated, still emitted:** `iam_audit_log_dlq_messages_total`, `iam_audit_log_default_partition_rows_total`, `iam_audit_log_archive_stalled`. Never query them; the registry names the replacements.
 - **Reconciler-only counters** stay internal (no scrape endpoint on a CronJob, gap 40); the CronJob-failure alert covers them.
-- **Rules:** `deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml`. The Helm `PrometheusRule` is generated from them (`python3 scripts/gen-prometheusrule.py`). Dashboard `dashboard-audit-log.json`; HPA adapter rules `prometheus-adapter-rule.yaml`. See `deploy/monitoring/README.md`.
+- **Rules:** `deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml`. The Helm `PrometheusRule` is generated from them (`make prometheusrule`). Dashboard `dashboard-audit-log.json`; HPA adapter rules `prometheus-adapter-rule.yaml`. See `deploy/monitoring/README.md`.
 - **Runbook:** `docs/runbook.md`, RB-1..RB-10:
 
   | Runbook | Covers |

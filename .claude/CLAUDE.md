@@ -96,7 +96,7 @@ test/{unit,postgres,integration,e2e,fixtures,dbseed}
   - Register it in `internal/adapter/outbound/metrics/business.go` (Tier-1 `pLabels`, Tier-2/3 `sLabels`; never set `service`/`domain`/`environment` at a call site). Bound every label value; never use tenant, user, request or event ids as labels.
   - Add it to `deploy/monitoring/metric-registry.yaml` (shared names also to `registry.go`) and give it an LLD §11 row. `TestMetricRegistry_*` and `TestMetrics_LLDTier3Registered` check this.
   - To rename, keep the old name as `status: deprecated` with `replaced_by`/`sunset`, emit both, and move every rule, SLO, dashboard and HPA reference in the same change; CI rejects references to deprecated names.
-- **An alert, recording rule or SLO:** edit `deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml`, then run `python3 scripts/gen-prometheusrule.py` to regenerate the Helm `PrometheusRule` (a test keeps them identical).
+- **An alert, recording rule or SLO:** edit `deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml`, then run `make prometheusrule` (`scripts/gen-prometheusrule.py`) to regenerate the Helm `PrometheusRule` (a test keeps them identical).
 - **A migration:** use the next `NNNNNN_name.{up,down}.sql` under `internal/adapter/outbound/postgres/migrations/`. Bump the version in `test/postgres/migrations_test.go`, and put grants in guarded `DO $$ … $$` blocks.
 - **A reconciler job:** write the function in `cmd/reconciler/jobs`, register it in `Registry()`, and add a Helm `cronjobs` entry. Update the registry test and `test/unit/deploy_contract_test.go`.
 
