@@ -668,7 +668,7 @@ Metrics follow the **Enterprise Platform Observability Standard** (LLD §11 rev 
   - Redaction: `redaction_pending_tasks`, `redaction_tasks_total`, `redaction_blocked_archive_total`
   - Catalog poller: `catalog_plans_poll_total`, `catalog_plans_stale_seconds`
 
-The `registry.go` ledger and `deploy/monitoring/metric-registry.yaml` must agree. `TestMetricRegistry_*` checks this, and `metrics-registry-lint.sh` fails CI if a Proposed name is used as a live alert, recording-rule, SLO or HPA target. `check-metric-naming.sh` enforces tier prefixes, the `_total` and `_seconds` suffixes, and central labels. Library series come on top: gincommon `http_*`, pgcommon `pgmetrics` pool and query histograms, and platform-events `events_consumed_total`.
+The `registry.go` ledger and `deploy/monitoring/metric-registry.yaml` must agree. `TestMetricRegistry_*` checks this, and `metrics-registry-lint.sh` fails CI if a Proposed name is used as a live alert, recording-rule, SLO or HPA target. `check-metric-naming.sh` enforces tier prefixes, the `_total` and `_seconds` suffixes, and central labels. Library series come on top: gincommon `platform_http_*`, pgcommon `platform_db_*` (pool and query), and platform-events `platform_messages_*`.
 
 ### Alerts, dashboards and runbooks
 

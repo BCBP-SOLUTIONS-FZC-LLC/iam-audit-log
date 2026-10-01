@@ -42,5 +42,5 @@ None (AL-D5). The only in-process state is the CAT-I2 plan map, a stale-if-error
 - **Consumer:** the platform-events `NewSQSConsumer`, configured by `config.LoadSQS`. The Glue codec validates against the producer's registered schema version (AL-D12). Decode failure → redelivery → DLQ.
 - **Taxonomy:** `internal/core/domain/taxonomy.go`. An unknown type is persisted as `<domain>.unknown` with `security_3y` (AL-EVT-4). The workflow wire aliases are D-7; actor/target derivation is D-8; oversized payloads get a truncation marker (D-9).
 - **Dedup:** handlers are idempotent on `events.Envelope.ID`, the platform-events contract. The key goes into the `processed_events` ledger, backed by the `(source_event_id, occurred_at)` unique constraint.
-- **Malformed envelopes:** the library deletes a malformed envelope rather than DLQing it (D-3, gap 42 upstream). It is alerted via `events_consumed_total{status="malformed"}`.
+- **Malformed envelopes:** the library deletes a malformed envelope rather than DLQing it (D-3, gap 42 upstream). It is alerted via `platform_messages_failed_total{reason="malformed"}`.
 - **Redaction trigger:** `UserDeleted` on `user-audit-q` also creates a redaction task (see [request-flows.md](request-flows.md)). `TenantOffboarded` does not (D-16).

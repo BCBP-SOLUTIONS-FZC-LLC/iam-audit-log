@@ -13,11 +13,9 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/events"
 )
 
 // dlqObserveReceiveCount is one delivery short of the queues' own
@@ -51,13 +49,13 @@ type Queue struct {
 	Concurrency int
 }
 
-// Metrics is the Tier-1 instrumentation hook (nil-safe).
+// Metrics is the Tier-1 instrumentation hook (nil-safe). platform-events'
+// consumer records received / processed / failed / retry / propagation for
+// every message itself, so the fleet only reports what the library cannot
+// see: a message reaching the dead-letter threshold (eventType bounded by
+// domain.EventTypeLabel).
 type Metrics interface {
-	Received(queue, eventType string)
-	Processed(eventType string)
-	Failed(eventType, reason string)
-	DeadLettered(queue string)
-	Propagated(eventType string, took time.Duration)
+	DeadLettered(eventType string)
 }
 
 type running struct {
@@ -91,9 +89,9 @@ func NewFleet(queues []Queue, build Builder, codec events.Codec, m Metrics, hand
 			events.WithConsumerCodec(codec),
 			events.WithConcurrency(conc),
 			events.WithMaxReceiveCount(dlqObserveReceiveCount),
-			events.WithDeadLetterHandler(deadLetter(q.Name, m)),
+			events.WithDeadLetterHandler(deadLetter(q, m)),
 		}, extra...)
-		c, err := build(q.URL, instrument(q, m, handlerFor(q)), opts...)
+		c, err := build(q.URL, handlerFor(q), opts...)
 		if err != nil {
 			return nil, fmt.Errorf("build %s consumer: %w", q.Name, err)
 		}
@@ -149,50 +147,16 @@ func (f *Fleet) Health(context.Context) error {
 	return nil
 }
 
-// instrument wraps a queue's handler with the Tier-1 message metrics
-// (Platform Observability Registry label vocabulary): event_type is bounded
-// to the taxonomy (domain.EventTypeLabel), and reason to port.Reason*.
-func instrument(q Queue, m Metrics, h events.Handler) events.Handler {
-	return func(ctx context.Context, env events.Envelope[json.RawMessage]) error {
-		eventType := domain.EventTypeLabel(q.Topic, env.Type)
+// deadLetter is the dead-letter handler: it counts the message and returns
+// an error so the SQS redrive (not the library) moves it to <queue>-dlq.
+// platform-events therefore does not count it in platform_dlq_messages_total
+// itself (it records platform_messages_failed_total{reason="dead_letter_error"}
+// for the returned error); the service does, here.
+func deadLetter(q Queue, m Metrics) events.Handler {
+	return func(_ context.Context, env events.Envelope[json.RawMessage]) error {
 		if m != nil {
-			m.Received(q.Name, eventType)
+			m.DeadLettered(domain.EventTypeLabel(q.Topic, env.Type))
 		}
-		if err := h(ctx, env); err != nil {
-			if m != nil {
-				m.Failed(eventType, failureReason(err))
-			}
-			return err
-		}
-		if m != nil {
-			m.Processed(eventType)
-			if !env.Timestamp.IsZero() {
-				m.Propagated(eventType, time.Since(env.Timestamp))
-			}
-		}
-		return nil
-	}
-}
-
-// failureReason classifies a handler error into the registry's reason
-// vocabulary for platform_messages_failed_total / platform_retry_total.
-func failureReason(err error) string {
-	var de *domain.Error
-	switch {
-	case errors.As(err, &de) && de.Code == domain.ErrDependencyUnavailable:
-		return port.ReasonDependencyUnavailable
-	case errors.As(err, &de):
-		return port.ReasonInvalidEvent
-	default:
-		return port.ReasonInternal
-	}
-}
-
-func deadLetter(queue string, m Metrics) events.Handler {
-	return func(context.Context, events.Envelope[json.RawMessage]) error {
-		if m != nil {
-			m.DeadLettered(queue)
-		}
-		return errors.New("dead-letter threshold reached — left for SQS redrive to " + queue + "-dlq")
+		return errors.New("dead-letter threshold reached — left for SQS redrive to " + q.Name + "-dlq")
 	}
 }

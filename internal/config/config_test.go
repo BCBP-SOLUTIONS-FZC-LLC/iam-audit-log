@@ -84,7 +84,7 @@ func TestInboundQueues_Frozen(t *testing.T) {
 
 func TestLoadServer_ProductionRequiresEverything(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("APP_ENV", "production")
+	t.Setenv("APP_ENV", "prod")
 	t.Setenv("AUDIT_ARCHIVE_OBJECT_LOCK_MODE", "GOVERNANCE")
 	_, err := LoadServer("v")
 	if err == nil {
@@ -160,13 +160,35 @@ func TestValidateCommon_RejectsUnknownObjectLockMode(t *testing.T) {
 	}
 }
 
+// APP_ENV must be in the platform environment vocabulary (the metric
+// environment label): no aliases, so the old spellings are configuration
+// errors rather than a startup panic in platform-gincommon.
+func TestLoadServer_RejectsEnvironmentOutsideVocabulary(t *testing.T) {
+	for _, env := range []string{"production", "development", "Prod", "qa"} {
+		clearEnv(t)
+		t.Setenv("DATABASE_URL", "postgres://app")
+		t.Setenv("APP_ENV", env)
+		_, err := LoadServer("v")
+		if err == nil || !strings.Contains(err.Error(), "APP_ENV: must be one of local, dev, test, staging, prod") {
+			t.Errorf("APP_ENV=%s: err = %v", env, err)
+		}
+	}
+	for _, env := range Environments {
+		clearEnv(t)
+		t.Setenv("APP_ENV", env)
+		if _, err := LoadServer("v"); err != nil && strings.Contains(err.Error(), "APP_ENV:") {
+			t.Errorf("APP_ENV=%s rejected: %v", env, err)
+		}
+	}
+}
+
 func TestIsDev(t *testing.T) {
-	for _, e := range []string{"dev", "development", "local", "test"} {
+	for _, e := range []string{"dev", "local", "test"} {
 		if !IsDev(e) {
 			t.Errorf("%s should be dev", e)
 		}
 	}
-	for _, e := range []string{"production", "staging", ""} {
+	for _, e := range []string{"prod", "staging", "development", ""} {
 		if IsDev(e) {
 			t.Errorf("%q should not be dev", e)
 		}

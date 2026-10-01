@@ -82,7 +82,7 @@ non-zero, and the `kube_job_status_failed` alerts page on that (RB-9).
 | IAMAuditLogMessageFailures | `service:platform_messages_failure_ratio:5m` > 5% | Warning | RB-1 |
 | IAMAuditLogRetrySpike | `service:platform_retry:rate5m` by reason > 0.5/s | Warning | RB-1 |
 | IAMAuditLogQueueBacklog | `platform_queue_depth{queue}` > 1000 for 15 m | Warning | RB-1 |
-| IAMAuditLogMalformedEnvelopes | `events_consumed_total{status="malformed"}` increase | Critical (D-3) | RB-10 |
+| IAMAuditLogMalformedEnvelopes | `platform_messages_failed_total{reason="malformed"}` increase | Critical (D-3) | RB-10 |
 | IAMAuditLogUnknownEventTypes | `iam_audit_log_unknown_event_total` increase | Warning | — |
 | IAMAuditLogIngestLagHigh | `service:iam_audit_log_ingest_lag:p99_15m` > 50 ms | Warning (SLO) | — |
 | IAMAuditLogDirectWriteErrors | `directwrite_requests_total{result="error"}` > 5% | Warning | RB-6 |

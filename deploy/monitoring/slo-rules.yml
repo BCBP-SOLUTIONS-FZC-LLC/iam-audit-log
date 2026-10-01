@@ -7,48 +7,63 @@
 #
 #   SLO                       objective                       budget
 #   ingest lag                99% of rows ≤ 50 ms             1%     (HLD §3.4: p99 < 50 ms async)
-#   event propagation         99% of events ≤ 5 s             1%
+#   event propagation         99% of events ≤ 5 s             1%     (envelope time → received;
+#                                                                     Proposed metric)
 #   query API availability    99% of requests not 5xx         1%
 #   DLQ depth                 platform_dlq_depth == 0 always  none   (any DLQ'd audit event is a compliance
 #                                                                     incident: paged by IAMAuditLogDLQNotEmpty;
 #                                                                     slo:audit_log_dlq_depth:ok records compliance)
+#
+# The propagation, availability and DLQ-depth SLIs read Proposed (not yet
+# ratified) platform_* metrics: their recording rules carry a
+# "# metric_status: proposed" comment and their alerts the label
+# metric_status: proposed (metrics-registry-lint.sh).
 groups:
   - name: iam-audit-log.slo
     interval: 30s
     rules:
       # ---- ingest lag: bad = rows slower than 50 ms (bucket le="0.05") ----
       - record: slo:audit_log_ingest_lag:error_ratio_5m
-        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[5m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[5m])), 1e-9))
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{domain="iam", service="iam-audit-log", le="0.05"}[5m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{domain="iam", service="iam-audit-log"}[5m])), 1e-9))
       - record: slo:audit_log_ingest_lag:error_ratio_30m
-        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[30m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[30m])), 1e-9))
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{domain="iam", service="iam-audit-log", le="0.05"}[30m])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{domain="iam", service="iam-audit-log"}[30m])), 1e-9))
       - record: slo:audit_log_ingest_lag:error_ratio_1h
-        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[1h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[1h])), 1e-9))
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{domain="iam", service="iam-audit-log", le="0.05"}[1h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{domain="iam", service="iam-audit-log"}[1h])), 1e-9))
       - record: slo:audit_log_ingest_lag:error_ratio_6h
-        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{service="audit-log", le="0.05"}[6h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{service="audit-log"}[6h])), 1e-9))
+        expr: 1 - (sum(rate(iam_audit_log_ingest_lag_seconds_bucket{domain="iam", service="iam-audit-log", le="0.05"}[6h])) / clamp_min(sum(rate(iam_audit_log_ingest_lag_seconds_count{domain="iam", service="iam-audit-log"}[6h])), 1e-9))
 
       # ---- propagation: bad = events slower than 5 s (bucket le="5") ----
+      # metric_status: proposed
       - record: slo:audit_log_propagation:error_ratio_5m
-        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[5m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[5m])), 1e-9))
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="iam-audit-log", le="5"}[5m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="iam-audit-log"}[5m])), 1e-9))
+      # metric_status: proposed
       - record: slo:audit_log_propagation:error_ratio_30m
-        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[30m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[30m])), 1e-9))
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="iam-audit-log", le="5"}[30m])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="iam-audit-log"}[30m])), 1e-9))
+      # metric_status: proposed
       - record: slo:audit_log_propagation:error_ratio_1h
-        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[1h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[1h])), 1e-9))
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="iam-audit-log", le="5"}[1h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="iam-audit-log"}[1h])), 1e-9))
+      # metric_status: proposed
       - record: slo:audit_log_propagation:error_ratio_6h
-        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="audit-log", le="5"}[6h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="audit-log"}[6h])), 1e-9))
+        expr: 1 - (sum(rate(platform_event_propagation_seconds_bucket{domain="iam", service="iam-audit-log", le="5"}[6h])) / clamp_min(sum(rate(platform_event_propagation_seconds_count{domain="iam", service="iam-audit-log"}[6h])), 1e-9))
 
       # ---- query API availability: bad = 5xx ----
+      # metric_status: proposed
       - record: slo:audit_log_availability:error_ratio_5m
-        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[5m])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[5m])), 1e-9)
+        expr: sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log", status_class="5xx"}[5m])) / clamp_min(sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log"}[5m])), 1e-9)
+      # metric_status: proposed
       - record: slo:audit_log_availability:error_ratio_30m
-        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[30m])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[30m])), 1e-9)
+        expr: sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log", status_class="5xx"}[30m])) / clamp_min(sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log"}[30m])), 1e-9)
+      # metric_status: proposed
       - record: slo:audit_log_availability:error_ratio_1h
-        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[1h])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[1h])), 1e-9)
+        expr: sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log", status_class="5xx"}[1h])) / clamp_min(sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log"}[1h])), 1e-9)
+      # metric_status: proposed
       - record: slo:audit_log_availability:error_ratio_6h
-        expr: sum(rate(http_requests_total{job="iam-audit-log", status_class="5xx"}[6h])) / clamp_min(sum(rate(http_requests_total{job="iam-audit-log"}[6h])), 1e-9)
+        expr: sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log", status_class="5xx"}[6h])) / clamp_min(sum(rate(platform_http_requests_total{domain="iam", service="iam-audit-log"}[6h])), 1e-9)
 
       # ---- DLQ depth == 0 (1 = compliant) ----
+      # metric_status: proposed
       - record: slo:audit_log_dlq_depth:ok
-        expr: (max(platform_dlq_depth{domain="iam", service="audit-log"}) == bool 0)
+        expr: (max(platform_dlq_depth{domain="iam", service="iam-audit-log"}) == bool 0)
 
       # ---- burn-rate alerts ----
       - alert: IAMAuditLogIngestLagSLOFastBurn
@@ -88,10 +103,12 @@ groups:
         labels:
           severity: critical
           team: platform
+          metric_status: proposed
         annotations:
-          summary: Propagation SLO (99% of events persisted ≤ 5 s) burning fast
+          summary: Propagation SLO (99% of events received ≤ 5 s) burning fast
           description: >-
-            Events are reaching the store slowly. Check platform_queue_depth, the
+            Events are reaching the consumers slowly (envelope time → received;
+            iam_audit_log_ingest_lag_seconds covers the persist step). Check platform_queue_depth, the
             failure ratio and consumer health.
           runbook_url: docs/runbook.md#rb-1
 
@@ -103,6 +120,7 @@ groups:
         labels:
           severity: warning
           team: platform
+          metric_status: proposed
         annotations:
           summary: Propagation SLO (99% ≤ 5 s) burning slowly
           description: >-
@@ -117,6 +135,7 @@ groups:
         labels:
           severity: critical
           team: platform
+          metric_status: proposed
         annotations:
           summary: Query/ingest API availability SLO (99% non-5xx) burning fast
           description: >-
@@ -131,6 +150,7 @@ groups:
         labels:
           severity: warning
           team: platform
+          metric_status: proposed
         annotations:
           summary: Query/ingest API availability SLO (99% non-5xx) burning slowly
           description: >-

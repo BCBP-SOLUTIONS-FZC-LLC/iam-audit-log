@@ -38,12 +38,12 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 
-	eventsconfig "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/config"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
+	eventsconfig "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/config"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/events"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgmetrics"
 )
 
 // buildVersion is injected by -ldflags at build time (Dockerfile / Makefile).
@@ -53,7 +53,37 @@ var buildVersion = "dev"
 // drive the migration-failure exit path.
 var runMigrations = pgadapter.RunMigrations
 
-var libMetricsOnce sync.Once
+var (
+	libMetricsOnce sync.Once
+	libMetricsErr  error
+)
+
+// initLibraryMetrics registers platform-events' and platform-pgcommon's
+// platform_* metrics on gincommon's registerer with the same identity as the
+// service's own (taken from gincommon.MetricsConstLabels), logging every
+// RegistrationWarning (a disabled metric) and failing on an invalid identity.
+func initLibraryMetrics(log warnLogger) error {
+	libMetricsOnce.Do(func() {
+		labels := gincommon.MetricsConstLabels()
+		reg := gincommon.MetricsRegisterer()
+		evWarnings, err := events.InitMetrics(events.MetricsIdentityFromLabels(labels), reg)
+		for _, w := range evWarnings {
+			log.Warn("platform-events metric disabled", map[string]any{"metric": w.Metric, "error": w.Err.Error()})
+		}
+		if err != nil {
+			libMetricsErr = fmt.Errorf("platform-events metrics: %w", err)
+			return
+		}
+		pgWarnings, err := pgmetrics.InitWithIdentity(pgmetrics.IdentityFromLabels(labels), reg)
+		for _, w := range pgWarnings {
+			log.Warn("platform-pgcommon metric disabled", map[string]any{"metric": w.Metric, "error": w.Err.Error()})
+		}
+		if err != nil {
+			libMetricsErr = fmt.Errorf("platform-pgcommon metrics: %w", err)
+		}
+	})
+	return libMetricsErr
+}
 
 func main() { os.Exit(run()) }
 
@@ -84,18 +114,31 @@ func run() int {
 		}
 	}()
 
-	ginCfg := gincommon.Config{Logger: log, ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion}
+	ginCfg := gincommon.Config{
+		Logger: log, ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion,
+		// Observability identity (Enterprise Platform Observability Standard):
+		// the domain/service/environment const labels on every metric.
+		// Environment is APP_ENV, already validated by LoadServer.
+		Domain: config.ObservabilityDomain, Environment: cfg.AppEnv,
+	}
 	// Metrics init must precede any collector registration so business /
 	// events / pg collectors share gincommon.MetricsRegisterer() and its
-	// {service, version} const labels (sync.Once inside gincommon).
+	// {domain, service, environment} const labels (sync.Once inside gincommon).
 	_ = gincommon.ObservabilityMiddlewares(ginCfg)
-	metrics.Register(cfg.AppEnv)
-	// platform-events / pgmetrics init is not idempotent; guard it so run()
-	// stays re-entrant (composition-root tests call it repeatedly).
-	libMetricsOnce.Do(func() {
-		events.InitWithRegisterer(cfg.ServiceName, cfg.BuildVersion, gincommon.MetricsRegisterer())
-		pgmetrics.InitWithRegisterer(cfg.ServiceName, cfg.BuildVersion, gincommon.MetricsRegisterer())
-	})
+	// The service's collectors register BEFORE platform-events': the shared
+	// platform_* names (dlq, duplicates, dependency, queue depths) are then
+	// reused by the library instead of being refused as duplicates.
+	if err := metrics.Register(); err != nil {
+		log.Error("register metrics", map[string]any{"error": err.Error()})
+		return 1
+	}
+	// platform-events / pgmetrics init once per process, before any pool
+	// (pool gauges register in NewPool); guarded so run() stays re-entrant
+	// (composition-root tests call it repeatedly).
+	if err := initLibraryMetrics(log); err != nil {
+		log.Error("init library metrics", map[string]any{"error": err.Error()})
+		return 1
+	}
 
 	warnForbiddenPublisherConfig(log)
 

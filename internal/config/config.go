@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -151,10 +152,21 @@ type Reconciler struct {
 // first, and configuration errors are logged through it (BUILD_PLAN gap 43).
 func AppEnv() string { return envOr("APP_ENV", "dev") }
 
+// ObservabilityDomain is the Enterprise Platform Observability Standard
+// domain of this service: the `domain` label on every metric (passed as
+// gincommon.Config.Domain; OBSERVABILITY_DOMAIN carries the same value in
+// the deployment manifests).
+const ObservabilityDomain = "iam"
+
+// Environments is the platform's APP_ENV vocabulary — the `environment`
+// metric label every platform library validates (no aliases: "production"
+// and "development" are rejected).
+var Environments = []string{"local", "dev", "test", "staging", "prod"}
+
 // IsDev reports whether appEnv permits local-dev placeholders.
 func IsDev(appEnv string) bool {
 	switch appEnv {
-	case "dev", "development", "local", "test":
+	case "dev", "local", "test":
 		return true
 	}
 	return false
@@ -295,6 +307,9 @@ func LoadReconciler(buildVersion, job string) (Reconciler, error) {
 
 func validateCommon(c Common) []string {
 	var problems []string
+	if !slices.Contains(Environments, c.AppEnv) {
+		problems = append(problems, "APP_ENV: must be one of "+strings.Join(Environments, ", ")+" (the platform environment label; use prod, not production)")
+	}
 	switch c.ArchiveObjectLockMode {
 	case "COMPLIANCE", "GOVERNANCE":
 	default:

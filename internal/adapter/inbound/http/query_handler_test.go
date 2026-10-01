@@ -78,7 +78,7 @@ func (f *fakeExporter) Status(_ context.Context, _, id string) (service.ExportVi
 
 func queryRouter(q Querier, e Exporter, l *TenantRateLimiter) *Router {
 	return NewRouter(RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"},
+		GinConfig: gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"},
 		Query:     NewQueryHandler(q, e, l),
 	})
 }
@@ -123,7 +123,7 @@ func TestQueryRoutes_AuthZ(t *testing.T) {
 }
 
 func TestQueryRoutes_NotMountedWithoutHandler(t *testing.T) {
-	r := NewRouter(RouterConfig{GinConfig: gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"}})
+	r := NewRouter(RouterConfig{GinConfig: gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"}})
 	w := sendJSON(t, r, http.MethodGet, "/api/v1/audit/events", "", adminHeaders("tenant_admin"))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
@@ -437,7 +437,7 @@ func TestInternalListEvents_ServiceErrors(t *testing.T) {
 }
 
 func TestInternalListEvents_NotMountedWithoutHandler(t *testing.T) {
-	r := NewRouter(RouterConfig{GinConfig: gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"}})
+	r := NewRouter(RouterConfig{GinConfig: gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"}})
 	w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", systemHeaders())
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }

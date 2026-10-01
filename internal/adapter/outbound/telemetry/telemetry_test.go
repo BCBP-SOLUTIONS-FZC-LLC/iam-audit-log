@@ -40,7 +40,7 @@ func TestTraceID(t *testing.T) {
 // /metrics serves exactly gincommon's registry: a collector registered on
 // gincommon.MetricsRegisterer() appears in the scrape.
 func TestMetricsHandler_ServesGincommonRegistry(t *testing.T) {
-	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"})
+	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"})
 	c := prometheus.NewCounter(prometheus.CounterOpts{Name: "iam_audit_log_telemetry_probe_total", Help: "test"})
 	if err := gincommon.MetricsRegisterer().Register(c); err != nil {
 		t.Fatal(err)

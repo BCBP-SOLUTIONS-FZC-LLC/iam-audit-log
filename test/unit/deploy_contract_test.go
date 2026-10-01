@@ -62,8 +62,14 @@ func TestHelm_ProductionDefaults(t *testing.T) {
 	if v.ReplicaCount != 3 {
 		t.Errorf("replicaCount = %d, want 3", v.ReplicaCount)
 	}
-	if v.Env["AUDIT_ARCHIVE_OBJECT_LOCK_MODE"] != "COMPLIANCE" || v.Env["APP_ENV"] != "production" {
+	if v.Env["AUDIT_ARCHIVE_OBJECT_LOCK_MODE"] != "COMPLIANCE" || v.Env["APP_ENV"] != "prod" {
 		t.Errorf("env defaults = %v", v.Env)
+	}
+	// Observability identity (Enterprise Platform Observability Standard):
+	// the platform libraries reject an environment outside the vocabulary
+	// and refuse to start without a domain.
+	if v.Env["OBSERVABILITY_DOMAIN"] != "iam" {
+		t.Errorf("OBSERVABILITY_DOMAIN = %q, want iam", v.Env["OBSERVABILITY_DOMAIN"])
 	}
 	if v.ServerEnv["PG_MAX_CONNS"] != "20" {
 		t.Error("audit pool is 20 conns via PgBouncer (HLD §7.1)")

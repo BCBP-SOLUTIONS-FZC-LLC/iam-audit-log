@@ -53,7 +53,12 @@ resources:
 
 # Non-secret env shared by the server and every CronJob (LLD §12).
 env:
-  APP_ENV: "production"
+  # Platform environment vocabulary: local | dev | test | staging | prod (the
+  # `environment` metric label; "production" is rejected at startup).
+  APP_ENV: "prod"
+  # Enterprise Platform Observability Standard domain (`domain` label); the
+  # binaries also set it explicitly in gincommon.Config.
+  OBSERVABILITY_DOMAIN: "iam"
   SERVICE_NAME: "iam-audit-log"
   PG_BOUNCER_MODE: "true"
   PG_SLOW_QUERY_THRESHOLD: "200ms"

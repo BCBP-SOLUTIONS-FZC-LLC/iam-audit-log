@@ -5,6 +5,7 @@
 
 APP_NAME      ?= iam-audit-log
 APP_ENV       ?= dev
+OBSERVABILITY_DOMAIN ?= iam
 GO            ?= go
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
@@ -18,7 +19,7 @@ export GONOSUMDB  ?= github.com/BCBP-SOLUTIONS-FZC-LLC/*
 DOCKER_SOCKET     := $(shell [ -S /Users/$(USER)/.docker/run/docker.sock ] && echo unix:///Users/$(USER)/.docker/run/docker.sock || echo unix:///var/run/docker.sock)
 export DOCKER_HOST ?= $(DOCKER_SOCKET)
 
-export APP_NAME APP_ENV BUILD_VERSION
+export APP_NAME APP_ENV OBSERVABILITY_DOMAIN BUILD_VERSION
 
 # Test package groups (explicit to handle per-group build tags cleanly).
 TEST_UNIT_PKGS     := ./test/unit/...

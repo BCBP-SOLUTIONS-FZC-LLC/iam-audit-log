@@ -43,7 +43,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/fixtures"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
 const (
@@ -110,7 +110,7 @@ func newE2EEnvOpts(t *testing.T, o e2eOpts) *e2eEnv {
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
-	ginCfg := gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "e2e"}
+	ginCfg := gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "e2e"}
 	// Real ingest stack (AL-5/AL-6), as cmd/server wires it; small batch and
 	// rate limits so the e2e suite can exercise 422/429 cheaply.
 	ingest := service.NewIngestService(pgadapter.NewAuditRepository(pool), func() (string, error) {

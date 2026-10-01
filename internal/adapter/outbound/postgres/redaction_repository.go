@@ -9,7 +9,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
 // RedactionRepository implements port.RedactionTasks on the

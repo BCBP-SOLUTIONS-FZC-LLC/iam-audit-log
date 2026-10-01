@@ -324,7 +324,7 @@ jobs:
             exit 0
           fi
           # status_class="5xx" matches the label emitted by platform-gincommon.
-          QUERY='sum(rate(http_requests_total{job=~".*iam-audit-log.*",status_class="5xx"}[2m]))/sum(rate(http_requests_total{job=~".*iam-audit-log.*"}[2m]))'
+          QUERY='sum(rate(platform_http_requests_total{job=~".*iam-audit-log.*",status_class="5xx"}[2m]))/sum(rate(platform_http_requests_total{job=~".*iam-audit-log.*"}[2m]))'
           # Sleep AFTER confirming Prometheus is configured so the 2-minute window
           # only runs when there is actually something to measure.
           sleep 120

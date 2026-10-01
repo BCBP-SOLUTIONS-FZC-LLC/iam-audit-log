@@ -5,9 +5,9 @@ go 1.26.6
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
 require (
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events v1.4.0
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.3.0
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon v1.3.0
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.0.0
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon v1.4.0
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.0
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
@@ -22,6 +22,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
+	github.com/prometheus/common v0.72.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
 	github.com/swaggo/swag v1.16.6
@@ -251,7 +252,6 @@ require (
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
-	github.com/prometheus/common v0.71.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/quasilyte/go-ruleguard v0.4.5 // indirect
 	github.com/quasilyte/go-ruleguard/dsl v0.3.23 // indirect

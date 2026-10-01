@@ -15,12 +15,12 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/pkg/requestctx"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
-	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"})
+	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"})
 	os.Exit(m.Run())
 }
 
@@ -42,7 +42,7 @@ func probeRouter(ready map[string]Pinger) *Router {
 		c.JSON(http.StatusOK, gin.H{"tenant": rc.TenantID.String(), "user": rc.UserID.String(), "guc_tenant": g.TenantID})
 	}
 	return NewRouter(RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"},
+		GinConfig: gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"},
 		Docs:      DocsConfig{Environment: "test"},
 		Ready:     ready,
 		Audit:     func(g *gin.RouterGroup) { g.GET("/probe", echo) },
@@ -178,14 +178,14 @@ func TestRequireIdempotencyKey(t *testing.T) {
 
 func TestDocsHiddenInProductionUnlessEnabled(t *testing.T) {
 	r := NewRouter(RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"},
-		Docs:      DocsConfig{Environment: "production"},
+		GinConfig: gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"},
+		Docs:      DocsConfig{Environment: "prod"},
 	})
 	assert.Equal(t, http.StatusNotFound, do(t, r, http.MethodGet, "/asyncapi.yaml", nil).Code)
 
 	r = NewRouter(RouterConfig{
-		GinConfig: gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"},
-		Docs:      DocsConfig{Environment: "production", Enabled: true, AuthToken: "s3cret"},
+		GinConfig: gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"},
+		Docs:      DocsConfig{Environment: "prod", Enabled: true, AuthToken: "s3cret"},
 	})
 	assert.Equal(t, http.StatusUnauthorized, do(t, r, http.MethodGet, "/asyncapi.yaml", nil).Code)
 	assert.Equal(t, http.StatusOK, do(t, r, http.MethodGet, "/asyncapi.yaml", map[string]string{"Authorization": "Bearer s3cret"}).Code)

@@ -49,7 +49,7 @@ func freePort(t *testing.T) string {
 // fail-fast requirement of LLD §12 satisfied) for the given role DSNs.
 func productionEnv(roles fixtures.Roles, appPort, metricsPort string) []string {
 	env := []string{
-		"APP_ENV=production",
+		"APP_ENV=prod",
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"DATABASE_URL=" + roles.AppDSN,
@@ -163,7 +163,7 @@ func TestReconcilerBinary_ReconcileJobAsAuditReconciler(t *testing.T) {
 
 	cmd := exec.Command(bin, "--job=reconcile")
 	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"), "APP_ENV=production", "PG_SSLMODE=disable",
+		"PATH=" + os.Getenv("PATH"), "APP_ENV=prod", "PG_SSLMODE=disable",
 		"RECONCILER_DATABASE_URL=" + roles.ReconcilerDSN,
 	}
 	out, err := cmd.CombinedOutput()

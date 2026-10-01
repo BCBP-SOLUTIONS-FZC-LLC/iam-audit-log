@@ -20,8 +20,9 @@ type IngestMetrics interface {
 	// created | duplicate | rejected | error.
 	DirectWrite(sourceService, result string)
 	// DuplicateMessage counts a redelivered bus message deduplicated by the
-	// ledger (platform_duplicate_messages_total; eventType already bounded).
-	DuplicateMessage(eventType string)
+	// ledger (platform_duplicate_messages_total{queue,event_type}; queue is
+	// the inbound queue name, eventType already bounded).
+	DuplicateMessage(queue, eventType string)
 }
 
 // QueryMetrics records the read path (LLD §11 Tier-3).
@@ -63,25 +64,25 @@ type OpsMetrics interface {
 
 // Label vocabularies of the shared (platform_* / iam_*) metrics this service
 // emits. They are part of the observability contract (Enterprise Platform
-// Observability Standard, "Label governance") and mirror the allowed values
-// in deploy/monitoring/metric-registry.yaml; TestMetricRegistry_* checks the
+// Observability Standard, "Label governance"), use the Platform
+// Observability Registry's vocabulary, and mirror the allowed values in
+// deploy/monitoring/metric-registry.yaml; TestMetricRegistry_* checks the
 // two agree.
 const (
-	// ReasonInvalidEvent: the handler rejected the event (a domain error).
-	ReasonInvalidEvent = "invalid_event"
-	// ReasonDependencyUnavailable: a dependency (Postgres) was unreachable.
-	ReasonDependencyUnavailable = "dependency_unavailable"
-	// ReasonInternal: any other handler failure.
-	ReasonInternal = "internal"
-	// ReasonMaxReceiveExceeded: the message reached the dead-letter threshold.
-	ReasonMaxReceiveExceeded = "max_receive_exceeded"
+	// ReasonMaxReceiveCount: the message reached the dead-letter threshold
+	// (platform_dlq_messages_total; platform-events' value for the same case).
+	ReasonMaxReceiveCount = "max_receive_count"
+	// OperationConsume is platform_dlq_messages_total's operation for a
+	// consumed message.
+	OperationConsume = "consume"
 
-	// OutcomeSuccess / OutcomeError / OutcomeTimeout / OutcomeNotFound are the
-	// platform_dependency_request_seconds outcomes.
-	OutcomeSuccess  = "success"
-	OutcomeError    = "error"
-	OutcomeTimeout  = "timeout"
-	OutcomeNotFound = "not_found"
+	// OutcomeSuccess / OutcomeFailure / OutcomeError are the registry's
+	// platform_dependency_request_seconds outcomes: success; failure = the
+	// dependency answered with a business rejection (an S3 object missing);
+	// error = a system or transport fault, timeouts included.
+	OutcomeSuccess = "success"
+	OutcomeFailure = "failure"
+	OutcomeError   = "error"
 
 	// Dependency and operation values for platform_dependency_request_seconds.
 	DependencyCatalogAdmin = "catalog-admin"

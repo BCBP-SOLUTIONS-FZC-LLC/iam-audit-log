@@ -30,8 +30,8 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgmetrics"
 )
 
 // buildVersion is injected by -ldflags at build time.
@@ -42,8 +42,12 @@ var buildVersion = "dev"
 // Phase 1/7 jobs land).
 var jobRegistry = jobs.Registry
 
-// libMetricsOnce keeps run() re-entrant: pgmetrics init is not idempotent.
-var libMetricsOnce sync.Once
+// libMetricsOnce keeps run() re-entrant: pgmetrics init runs once per process.
+var (
+	libMetricsOnce     sync.Once
+	libMetricsErr      error
+	libMetricsWarnings []pgmetrics.RegistrationWarning
+)
 
 func main() { os.Exit(run()) }
 
@@ -93,11 +97,28 @@ func run() int {
 
 	// No /metrics listener on a CronJob; collectors still exist because
 	// jobs increment them (pushed via the platform's CronJob scrape path).
-	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{Logger: rawLog, ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion})
-	metrics.Register(cfg.AppEnv)
-	libMetricsOnce.Do(func() {
-		pgmetrics.InitWithRegisterer(cfg.ServiceName, cfg.BuildVersion, gincommon.MetricsRegisterer())
+	// The reconciler uses no platform-events API, so only pgcommon's
+	// metrics are initialized here (with gincommon's identity labels), before
+	// the pool is created so its connection gauges register.
+	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{
+		Logger: rawLog, ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion,
+		Domain: config.ObservabilityDomain, Environment: cfg.AppEnv, // APP_ENV, validated by LoadReconciler
 	})
+	if err := metrics.Register(); err != nil {
+		log.Error("register metrics", "error", err.Error())
+		return 1
+	}
+	libMetricsOnce.Do(func() {
+		libMetricsWarnings, libMetricsErr = pgmetrics.InitWithIdentity(
+			pgmetrics.IdentityFromLabels(gincommon.MetricsConstLabels()), gincommon.MetricsRegisterer())
+		for _, w := range libMetricsWarnings {
+			log.Warn("platform-pgcommon metric disabled", "metric", w.Metric, "error", w.Err.Error())
+		}
+	})
+	if libMetricsErr != nil {
+		log.Error("init platform-pgcommon metrics", "error", libMetricsErr.Error())
+		return 1
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()

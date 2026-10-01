@@ -618,7 +618,7 @@ flowchart LR
     C -. "handler error → redelivery" .-> Q
     C -. "receive 4" .-> OBS
     Q -. "receive 5+ : SQS redrive" .-> DLQ
-    C -. "malformed envelope: library deletes (D-3, RB-10)" .-> X["events_consumed_total{status=malformed}"]
+    C -. "malformed envelope: library deletes (D-3, RB-10)" .-> X["platform_messages_failed_total{reason="malformed"}"]
 
     NOPUB["No publisher, no outbox, no raw SNS/SQS transport (AL-INV-10)\ncheck-forbidden-events-bypass.sh · check-outbox-access.sh · asyncapi receive-only"]
 ```
@@ -628,7 +628,7 @@ flowchart LR
 - **Dedup.** It follows the library's contract: handlers are idempotent on `Envelope.ID` (`processed_events`, AL-INV-4).
 - **Codec.** A local, decode-only Glue codec validates every payload against the producer's registered schema version (AL-D12). An unresolvable version or a violation is a decode failure, so the message is redelivered and reaches the DLQ.
 - **Unknown types.** An unrecognized type is persisted as `<domain>.unknown` (AL-EVT-4).
-- **Known gap (D-3, gap 42).** platform-events v1.4.0 *deletes* a malformed envelope, and logs its body, rather than leaving it for the DLQ. It's alarmed via `events_consumed_total{status="malformed"}` (RB-10) and raised upstream.
+- **Known gap (D-3, gap 42).** platform-events v1.4.0 *deletes* a malformed envelope, and logs its body, rather than leaving it for the DLQ. It's alarmed via `platform_messages_failed_total{reason="malformed"}` (RB-10) and raised upstream.
 
 ---
 
@@ -644,7 +644,7 @@ graph LR
         panic["PanicRecovery\n· recover, log, 500 JSON"]
         reqid["RequestID\n· x-request-id / generated"]
         trace["Tracing (OTel)\n· W3C traceparent, server span"]
-        metricsmw["Metrics\n· http_requests_total{method,route,status_class}\n· http_request_duration_seconds"]
+        metricsmw["Metrics\n· platform_http_requests_total{method,route,status_class}\n· platform_http_request_duration_seconds"]
         logging["Logging (Zap)\n· http_request log, IDs only"]
     end
 

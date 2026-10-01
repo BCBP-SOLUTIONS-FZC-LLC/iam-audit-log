@@ -46,8 +46,8 @@ func TestDependencyOutcome(t *testing.T) {
 		want string
 	}{
 		"nil":       {nil, port.OutcomeSuccess},
-		"missing":   {fmt.Errorf("get: %w", port.ErrObjectMissing), port.OutcomeNotFound},
-		"deadline":  {fmt.Errorf("get: %w", context.DeadlineExceeded), port.OutcomeTimeout},
+		"missing":   {fmt.Errorf("get: %w", port.ErrObjectMissing), port.OutcomeFailure},
+		"deadline":  {fmt.Errorf("get: %w", context.DeadlineExceeded), port.OutcomeError},
 		"other":     {errors.New("boom"), port.OutcomeError},
 		"cancelled": {context.Canceled, port.OutcomeError},
 	} {
@@ -68,9 +68,11 @@ func TestDependency_Observe(t *testing.T) {
 
 // The CAT-I2 poll adapter reports through the registry labels.
 func TestCatalogPoll_DependencyLabels(t *testing.T) {
-	before := depCount(t, "catalog-admin", "list_plans", "timeout")
+	// A poll timeout is outcome="error" on the dependency histogram (the
+	// registry's vocabulary); the poll counter keeps result="timeout".
+	before := depCount(t, "catalog-admin", "list_plans", "error")
 	CatalogPoll{}.PollResult("timeout", time.Millisecond)
-	if got := depCount(t, "catalog-admin", "list_plans", "timeout"); got != before+1 {
+	if got := depCount(t, "catalog-admin", "list_plans", "error"); got != before+1 {
 		t.Errorf("catalog timeout observations = %d, want %d", got, before+1)
 	}
 }
@@ -160,11 +162,11 @@ func TestInstrumentedS3(t *testing.T) {
 
 	// Errors pass through unchanged and are classified.
 	inner.err = fmt.Errorf("no such key: %w", port.ErrObjectMissing)
-	before = depCount(t, "s3", port.OperationVerifyArchive, port.OutcomeNotFound)
+	before = depCount(t, "s3", port.OperationVerifyArchive, port.OutcomeFailure)
 	if _, err := arc.ArchiveChecksum(ctx, "k", time.Now()); !errors.Is(err, port.ErrObjectMissing) {
 		t.Errorf("error passthrough: %v", err)
 	}
-	if depCount(t, "s3", port.OperationVerifyArchive, port.OutcomeNotFound) != before+1 {
+	if depCount(t, "s3", port.OperationVerifyArchive, port.OutcomeFailure) != before+1 {
 		t.Error("not_found not observed")
 	}
 	inner.err = errors.New("s3 down")

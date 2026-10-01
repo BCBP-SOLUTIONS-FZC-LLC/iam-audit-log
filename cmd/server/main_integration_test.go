@@ -126,7 +126,7 @@ func TestServer_StartupFailuresExit1(t *testing.T) {
 	// BYPASSRLS; the testcontainers superuser must be refused (AL-INV-3).
 	t.Run("production refuses a non-audit_app role", func(t *testing.T) {
 		setDevEnv(t, dsn)
-		t.Setenv("APP_ENV", "production")
+		t.Setenv("APP_ENV", "prod")
 		for _, q := range config.InboundQueues() {
 			t.Setenv(q.EnvVar, "http://sqs.local/"+q.Name)
 		}

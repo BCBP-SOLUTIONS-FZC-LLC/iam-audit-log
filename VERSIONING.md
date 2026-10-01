@@ -180,7 +180,7 @@ When cutting a tagged release:
    - **`deploy-gate`** (requires `KUBECONFIG_B64`; **not skippable**, runs under `production-data-migrations`):
      - a live `helm upgrade --install --wait --atomic` with the per-root existing Secrets;
      - deployed-digest verification against what was pushed, then `kubectl rollout status`;
-     - a Prometheus-backed error-rate check (`http_requests_total{status_class="5xx"}`, this service's own platform-gincommon HTTP metric) that auto-rolls back via `helm rollback` on failure.
+     - a Prometheus-backed error-rate check (`platform_http_requests_total{status_class="5xx"}`, this service's own platform-gincommon HTTP metric) that auto-rolls back via `helm rollback` on failure.
      The error-rate check is skipped (not failed) if `PROMETHEUS_URL` isn't set, but the job as a whole still requires `KUBECONFIG_B64`.
    - **`publish`:** creates the GitHub Release with the CHANGELOG section as notes, plus the binaries, checksums, SBOM and provenance. Runs only if `build`, `docker` **and** `deploy-gate` all succeeded.
 

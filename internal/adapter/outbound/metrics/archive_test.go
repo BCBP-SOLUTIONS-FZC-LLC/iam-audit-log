@@ -54,14 +54,8 @@ func TestArchiveAdapter(t *testing.T) {
 	if got := gaugeValue(t, "iam_audit_log_archive_stalled_partitions"); got != 3 {
 		t.Errorf("stalled = %v", got)
 	}
-	if got := gaugeValue(t, "iam_audit_log_archive_stalled"); got != 3 {
-		t.Errorf("deprecated stalled twin = %v", got)
-	}
 	a.Stalled(0)
 	if got := gaugeValue(t, "iam_audit_log_archive_stalled_partitions"); got != 0 {
 		t.Errorf("stalled reset = %v", got)
-	}
-	if got := gaugeValue(t, "iam_audit_log_archive_stalled"); got != 0 {
-		t.Errorf("deprecated stalled twin reset = %v", got)
 	}
 }

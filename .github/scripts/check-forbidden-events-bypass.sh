@@ -21,7 +21,7 @@ fail() { echo "::error::$1"; echo "$2"; exit 1; }
 hits=$(scan 'NewSNSPublisher|SNSConfig\b|SNSConfigFromEnv|LoadSNS\(|LoadOutbox\(|RunnerConfigFromEnv|\bWithCodec\(')
 [ -z "$hits" ] || fail "AL-INV-10: SNS publisher / publisher-config wiring detected. iam-audit-log publishes nothing." "$hits"
 
-hits=$(scan '"github\.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/outbox"|\boutbox\.')
+hits=$(scan '"github\.com/BCBP-SOLUTIONS-FZC-LLC/platform-events(/v[0-9]+)?/pkg/outbox"|\boutbox\.')
 [ -z "$hits" ] || fail "AL-INV-10: platform-events outbox referenced. There is no outbox in this service (no ApplySchema, no Runner, no Enqueue)." "$hits"
 
 hits=$(grep -RIn -i 'outbox_events' --include='*.go' --include='*.sql' cmd/ internal/ 2>/dev/null | grep -v '_test\.go' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|--)' || true)

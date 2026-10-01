@@ -1,6 +1,8 @@
 package unit_test
 
 import (
+	"bytes"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -8,14 +10,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/config"
 	coredomain "github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/events"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/obsregistry"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgmetrics"
 )
 
 // The Enterprise Platform Observability Standard's CI validation (gap 46):
@@ -59,30 +64,43 @@ type metricLintFile struct {
 
 var gatherOnce struct {
 	sync.Once
-	families map[string]*dto.MetricFamily
+	families map[string]*dto.MetricFamily // the service's own families
+	all      []*dto.MetricFamily          // every family, libraries included
+	warnings []string                     // platform-events / pgcommon RegistrationWarnings
 }
 
-// gatherAll registers every collector on gincommon's registry (as both
-// composition roots do), observes a sample child for each so every family
-// appears, and gathers them.
+// gatherAll registers every collector on gincommon's registry in the
+// composition roots' order (gincommon → business.go → platform-events →
+// platform-pgcommon), observes a sample child for each of the service's
+// collectors so every family appears, and gathers them. The service's own
+// families are those that appear between gincommon's init and the library
+// inits.
 func gatherAll(t *testing.T) map[string]*dto.MetricFamily {
 	t.Helper()
 	gatherOnce.Do(func() {
-		_ = gincommon.ObservabilityMiddlewares(gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "conformance"})
-		metrics.Register("test")
+		_ = gincommon.ObservabilityMiddlewares(gincommon.Config{
+			Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "conformance",
+		})
+		g := gincommon.MetricsGatherer()
+		lib := map[string]bool{}
+		before, err := g.Gather()
+		if err != nil {
+			panic(err)
+		}
+		for _, mf := range before {
+			lib[mf.GetName()] = true
+		}
+		if err := metrics.Register(); err != nil {
+			panic(err)
+		}
 
-		c := metrics.Consumer{}
-		c.Received("user-audit-q", "UserDeleted")
-		c.Processed("UserDeleted")
-		c.Failed("UserDeleted", port.ReasonInternal)
-		c.DeadLettered("user-audit-q")
-		c.Propagated("UserDeleted", time.Second)
+		metrics.Consumer{}.DeadLettered("UserDeleted")
 
 		in := metrics.Ingest{}
 		in.Ingested(coredomain.AuditEntry{SourceService: "iam-user-profile", IngestMode: coredomain.IngestBus, EntryType: "user.deleted",
 			OccurredAt: time.Now().Add(-time.Second), RecordedAt: time.Now()})
 		in.Duplicate(coredomain.ConsumerDirectWrite)
-		in.DuplicateMessage("UserDeleted")
+		in.DuplicateMessage("user-audit-q", "UserDeleted")
 		in.Unknown("iam-user-profile")
 		in.DirectWrite("iam-catalog-admin", "created")
 
@@ -106,34 +124,48 @@ func gatherAll(t *testing.T) map[string]*dto.MetricFamily {
 		a.RedactionBlocked()
 		a.Stalled(0)
 
-		g, ok := gincommon.MetricsRegisterer().(prometheus.Gatherer)
-		if !ok {
-			panic("gincommon.MetricsRegisterer is not a Gatherer")
-		}
 		mfs, err := g.Gather()
 		if err != nil {
 			panic(err)
 		}
 		gatherOnce.families = map[string]*dto.MetricFamily{}
 		for _, mf := range mfs {
-			gatherOnce.families[mf.GetName()] = mf
+			if !lib[mf.GetName()] {
+				gatherOnce.families[mf.GetName()] = mf
+			}
+		}
+
+		// The libraries register after the service, as in cmd/server: the
+		// platform_* names they share with business.go must be reused, not
+		// refused (a refusal is a RegistrationWarning).
+		labels := gincommon.MetricsConstLabels()
+		evw, err := events.InitMetrics(events.MetricsIdentityFromLabels(labels), gincommon.MetricsRegisterer())
+		if err != nil {
+			panic(err)
+		}
+		for _, w := range evw {
+			gatherOnce.warnings = append(gatherOnce.warnings, w.Error())
+		}
+		pgw, err := pgmetrics.InitWithIdentity(pgmetrics.IdentityFromLabels(labels), gincommon.MetricsRegisterer())
+		if err != nil {
+			panic(err)
+		}
+		for _, w := range pgw {
+			gatherOnce.warnings = append(gatherOnce.warnings, w.Metric+": "+w.Err.Error())
+		}
+		if gatherOnce.all, err = g.Gather(); err != nil {
+			panic(err)
 		}
 	})
 	return gatherOnce.families
 }
 
-// ownFamilies is the set of families this service registers (business.go):
-// library-owned families (gincommon HTTP, pgmetrics, platform-events,
-// Go/process collectors) carry no platform_/iam_ prefix.
+// ownFamilies is the set of families this service registers (business.go);
+// gincommon's, platform-events' and platform-pgcommon's own families are
+// excluded.
 func ownFamilies(t *testing.T) map[string]*dto.MetricFamily {
 	t.Helper()
-	out := map[string]*dto.MetricFamily{}
-	for name, mf := range gatherAll(t) {
-		if strings.HasPrefix(name, "platform_") || strings.HasPrefix(name, "iam_") {
-			out[name] = mf
-		}
-	}
-	return out
+	return gatherAll(t)
 }
 
 func loadMetricRegistry(t *testing.T) metricRegistryFile {
@@ -250,6 +282,22 @@ func conformance(t *testing.T, reg metricRegistryFile, lint metricLintFile, fams
 			}
 		}
 
+		// Deprecation metadata is a registry-level rule: it applies to every
+		// declared entry, emitted or not (a deprecated entry is often no
+		// longer registered in-process), so it runs before the inventory check.
+		if m.Status == "deprecated" {
+			r, ok := byName[m.ReplacedBy]
+			switch {
+			case m.ReplacedBy == "" || !ok:
+				add("deprecation_metadata", m.Name+" is deprecated without a registered replaced_by")
+			case r.Status == "deprecated":
+				add("deprecation_metadata", m.Name+" is replaced by another deprecated metric "+m.ReplacedBy)
+			}
+			if m.Sunset == "" || m.DeprecatedSince == "" {
+				add("deprecation_metadata", m.Name+" is deprecated without deprecated_since/sunset")
+			}
+		}
+
 		mf, ok := fams[m.Name]
 		if !ok {
 			add("inventory_complete", m.Name+" is in metric-registry.yaml but never registered")
@@ -271,17 +319,15 @@ func conformance(t *testing.T, reg metricRegistryFile, lint metricLintFile, fams
 		if !labels["service"][reg.Service] || len(labels["service"]) != 1 {
 			add("central_injection", m.Name+": service label must be exactly "+reg.Service)
 		}
-		if m.Tier == "platform" && (!labels["domain"][reg.Domain] || len(labels["domain"]) != 1) {
+		if !labels["domain"][reg.Domain] || len(labels["domain"]) != 1 {
 			add("central_injection", m.Name+": domain label must be exactly "+reg.Domain)
 		}
-		if m.Tier != "platform" && labels["domain"] != nil {
-			add("central_injection", m.Name+": only platform_* carries a domain label")
-		}
 
-		// Dimension keys beyond the injected set (and gincommon's version).
+		// Dimension keys beyond the injected set (version is not exempt: it
+		// is only on gincommon's platform_build_info).
 		var dims []string
 		for k := range labels {
-			if !slices.Contains(injected, k) && k != "version" {
+			if !slices.Contains(injected, k) {
 				dims = append(dims, k)
 			}
 		}
@@ -298,8 +344,9 @@ func conformance(t *testing.T, reg metricRegistryFile, lint metricLintFile, fams
 			switch {
 			case !ok:
 				add("shared_registry_compliance", m.Name+" is a shared metric absent from registry.go (rule 11)")
-			case e.Status != metrics.StatusCanonical || m.Status != "canonical":
-				add("shared_registry_compliance", m.Name+" is not Canonical in both registry.go and the yaml")
+			case (e.Status == metrics.StatusCanonical) != (m.Status == "canonical") ||
+				(e.Status == metrics.StatusProposed) != (m.Status == "proposed"):
+				add("shared_registry_compliance", m.Name+" has a different status in registry.go and the yaml")
 			default:
 				r := append([]string{}, e.Labels...)
 				sort.Strings(r)
@@ -338,19 +385,6 @@ func conformance(t *testing.T, reg metricRegistryFile, lint metricLintFile, fams
 			}
 		}
 
-		// Deprecation metadata.
-		if m.Status == "deprecated" {
-			r, ok := byName[m.ReplacedBy]
-			switch {
-			case m.ReplacedBy == "" || !ok:
-				add("deprecation_metadata", m.Name+" is deprecated without a registered replaced_by")
-			case r.Status == "deprecated":
-				add("deprecation_metadata", m.Name+" is replaced by another deprecated metric "+m.ReplacedBy)
-			}
-			if m.Sunset == "" || m.DeprecatedSince == "" {
-				add("deprecation_metadata", m.Name+" is deprecated without deprecated_since/sunset")
-			}
-		}
 	}
 	// Every ratified ledger entry is actually emitted and declared.
 	for name := range shared {
@@ -401,10 +435,11 @@ func TestMetricRegistry_VocabularyMatchesCode(t *testing.T) {
 		t.Errorf("queue vocabulary %v != config.InboundQueues %v", got, queues)
 	}
 	for key, vals := range map[string][]string{
-		"reason":     {port.ReasonInvalidEvent, port.ReasonDependencyUnavailable, port.ReasonInternal, port.ReasonMaxReceiveExceeded},
-		"outcome":    {port.OutcomeSuccess, port.OutcomeError, port.OutcomeTimeout, port.OutcomeNotFound},
+		"reason":     {port.ReasonMaxReceiveCount},
+		"outcome":    {port.OutcomeSuccess, port.OutcomeFailure, port.OutcomeError},
 		"dependency": {port.DependencyCatalogAdmin, port.DependencyS3},
-		"operation":  {port.OperationListPlans, port.OperationReadArchive, port.OperationPutArchive, port.OperationVerifyArchive, port.OperationPutExport},
+		"operation": {port.OperationConsume, port.OperationListPlans, port.OperationReadArchive, port.OperationPutArchive,
+			port.OperationVerifyArchive, port.OperationPutExport},
 	} {
 		allowed := voc[key].Values
 		for _, v := range vals {
@@ -416,10 +451,80 @@ func TestMetricRegistry_VocabularyMatchesCode(t *testing.T) {
 			t.Errorf("%s vocabulary %v lists values the code never emits (%v)", key, allowed, vals)
 		}
 	}
-	// The catalog poller's result strings are the outcome vocabulary too.
-	for _, r := range []string{"success", "error", "timeout"} {
-		if !slices.Contains(voc["outcome"].Values, r) {
-			t.Errorf("catalog poll result %q is not an outcome value", r)
+}
+
+// The ledger (registry.go) agrees with the central Platform Observability
+// Registry: same label set, and status Canonical exactly where the central
+// registry says approved, Proposed where it says proposed. A name the
+// central registry removed or never defined fails here.
+func TestRegistryLedger_MatchesPlatformRegistry(t *testing.T) {
+	central := obsregistry.Default()
+	for _, e := range append(append([]metrics.RegistryEntry{}, metrics.PlatformRegistry...), metrics.LibraryRegistry...) {
+		m, ok := central.Lookup(e.Name)
+		if !ok {
+			t.Errorf("%s is not in the Platform Observability Registry", e.Name)
+			continue
+		}
+		want := metrics.StatusProposed
+		switch m.Status {
+		case obsregistry.StatusApproved:
+			want = metrics.StatusCanonical
+		case obsregistry.StatusProposed:
+		default:
+			t.Errorf("%s has registry status %s", e.Name, m.Status)
+			continue
+		}
+		if e.Status != want {
+			t.Errorf("%s: ledger status %v, registry %s", e.Name, e.Status, m.Status)
+		}
+		if !slices.Equal(e.Labels, m.Labels) {
+			t.Errorf("%s: ledger labels %v, registry %v", e.Name, e.Labels, m.Labels)
+		}
+	}
+}
+
+// platform-events and platform-pgcommon register after business.go and
+// reuse the collectors it built from the registry: no shared platform_*
+// metric is disabled (a RegistrationWarning would mean the library's
+// recordings are lost).
+func TestMetrics_LibrariesShareServiceCollectors(t *testing.T) {
+	gatherAll(t)
+	for _, w := range gatherOnce.warnings {
+		t.Errorf("library metric disabled: %s", w)
+	}
+}
+
+// The full process scrape (gincommon, business.go, platform-events,
+// platform-pgcommon) passes the Platform Observability Registry validation
+// that metricslint check runs; Tier-2 iam_* names the central IAM domain
+// registry does not define yet (iam_rls_violations_total) are the only
+// accepted findings. METRICS_SCRAPE_OUT=<file> also writes the scrape for
+// metricslint check.
+func TestMetrics_ScrapeValidatesAgainstRegistry(t *testing.T) {
+	gatherAll(t)
+	var buf bytes.Buffer
+	enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeTextPlain))
+	for _, mf := range gatherOnce.all {
+		if err := enc.Encode(mf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out := os.Getenv("METRICS_SCRAPE_OUT"); out != "" {
+		if err := os.WriteFile(out, buf.Bytes(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep, err := obsregistry.ValidateText(bytes.NewReader(buf.Bytes()), obsregistry.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := map[string]bool{}
+	for _, e := range metrics.DomainRegistry {
+		pending[e.Name] = true
+	}
+	for _, f := range rep.Errors() {
+		if !pending[f.Metric] {
+			t.Error(f.String())
 		}
 	}
 }
@@ -444,12 +549,7 @@ func TestMetricRegistry_ChecksAreGated(t *testing.T) {
 		"label_vocabulary_compliance": func(r *metricRegistryFile) { delete(r.LabelVocabulary, "queue") },
 		"inventory_complete":          func(r *metricRegistryFile) { r.Metrics = r.Metrics[1:] },
 		"deprecation_metadata": func(r *metricRegistryFile) {
-			for i := range r.Metrics {
-				if r.Metrics[i].Status == "deprecated" {
-					r.Metrics[i].ReplacedBy = ""
-					return
-				}
-			}
+			r.Metrics = append(r.Metrics, regMetric{Name: "iam_audit_log_old_total", Tier: "service", Type: "counter", Status: "deprecated"})
 		},
 		"label_cardinality_allowlist": func(r *metricRegistryFile) {},
 		"shared_registry_compliance": func(r *metricRegistryFile) {

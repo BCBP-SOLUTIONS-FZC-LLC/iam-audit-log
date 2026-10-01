@@ -15,14 +15,15 @@ spec:
   endpoints:
     # Metrics are served on the dedicated "metrics" port (9090), separate
     # from the "http" API port — scraping never touches the API surface.
-    # Covers the iam_audit_log_* (Tier 3, authoritative) business
-    # metrics (§14), this service's three shadow-emitted Tier 1 platform_*
-    # candidates pending Platform Observability Registry ratification
-    # (platform_dependency_request_seconds, platform_duplicate_messages_total,
-    # platform_rls_violations_total — Status: Proposed, see
-    # internal/adapter/outbound/metrics/registry.go), and the passthrough
-    # http_*/events_*/sqs_* metrics platform-gincommon/platform-events
-    # already emit.
+    # Covers every series this process exposes, all carrying
+    # {domain="iam", service="iam-audit-log", environment}: the Tier 3
+    # iam_audit_log_* and Tier 2 iam_rls_violations_total business metrics
+    # (§11), the Tier 1 platform_* metrics the service records (dlq, duplicate,
+    # dependency, queue/DLQ depth — statuses in
+    # internal/adapter/outbound/metrics/registry.go), and the platform_*
+    # metrics platform-gincommon (platform_http_*, platform_build_info),
+    # platform-events (platform_messages_*, platform_dependency_request_seconds
+    # for sqs/codec) and platform-pgcommon (platform_db_*) emit.
     - port: metrics
       path: /metrics
       interval: {{ .Values.serviceMonitor.interval }}

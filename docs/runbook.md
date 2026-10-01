@@ -227,7 +227,7 @@ Every job is idempotent and safe to re-run. Use `kubectl create job --from=cronj
 
 ## RB-10 — Malformed envelopes
 
-**Alert:** `IAMAuditLogMalformedEnvelopes` (`events_consumed_total{status="malformed"}` increase).
+**Alert:** `IAMAuditLogMalformedEnvelopes` (`platform_messages_failed_total{reason="malformed"}` increase).
 **Known gap (D-3):** platform-events v1.4.0 **deletes** a message whose body is not a valid envelope. It is not retried and not DLQ'd, so the message is gone once this fires.
 1. Find the logs: `kubectl -n $NS logs deploy/$REL | grep "failed to unmarshal message body"`. They carry the queue and message id. (The library also logs the raw body, BUILD_PLAN gap 42, so handle these logs as sensitive.)
 2. Identify the producer from the queue (`<topic>` → `*-audit-q`), and fix its envelope serialisation.

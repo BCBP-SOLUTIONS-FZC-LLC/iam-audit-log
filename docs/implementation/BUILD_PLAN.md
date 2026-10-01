@@ -220,7 +220,7 @@ Pinned (from sibling `go.mod`, matches LLD §3.1): Go `1.26.6`, `platform-events
   - `dlq_messages_total{queue}`.
 
   Eligibility is identical to `domain.ArchiveEligible`. Reconciler-only counters (`archive_partitions_total`, `retention_pruned_total`, `redaction_blocked_archive_total`) stay internal, and the CronJob-failure alert covers them.
-- **D-3 (gap 3):** Keep the library consumer. Add a Critical alert on `events_consumed_total{status="malformed"} > 0`
+- **D-3 (gap 3):** Keep the library consumer. Add a Critical alert on `platform_messages_failed_total{reason="malformed"} > 0`
   and a runbook entry, and file a platform-events fix so malformed messages are left for the DLQ. This is a known gap against AL-EVT-4.
 
 Blocking (need a decision before the phase noted; 1–3 resolved above):

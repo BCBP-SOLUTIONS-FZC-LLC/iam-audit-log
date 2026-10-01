@@ -30,14 +30,14 @@ type recMetrics struct {
 	dupMessages []string
 }
 
-func (m *recMetrics) Ingested(e domain.AuditEntry) { m.ingested = append(m.ingested, e) }
-func (m *recMetrics) Duplicate(c string)           { m.duplicates = append(m.duplicates, c) }
-func (m *recMetrics) Unknown(s string)             { m.unknown = append(m.unknown, s) }
-func (m *recMetrics) DuplicateMessage(et string)   { m.dupMessages = append(m.dupMessages, et) }
-func (m *recMetrics) DirectWrite(s, r string)      { m.directWrite = append(m.directWrite, s+"|"+r) }
-func (m *recMetrics) WindowClamped(p string)       { m.clamped = append(m.clamped, p) }
-func (m *recMetrics) ArchivedRead()                { m.archived++ }
-func (m *recMetrics) ExportJob(s string)           { m.exports = append(m.exports, s) }
+func (m *recMetrics) Ingested(e domain.AuditEntry)  { m.ingested = append(m.ingested, e) }
+func (m *recMetrics) Duplicate(c string)            { m.duplicates = append(m.duplicates, c) }
+func (m *recMetrics) Unknown(s string)              { m.unknown = append(m.unknown, s) }
+func (m *recMetrics) DuplicateMessage(_, et string) { m.dupMessages = append(m.dupMessages, et) }
+func (m *recMetrics) DirectWrite(s, r string)       { m.directWrite = append(m.directWrite, s+"|"+r) }
+func (m *recMetrics) WindowClamped(p string)        { m.clamped = append(m.clamped, p) }
+func (m *recMetrics) ArchivedRead()                 { m.archived++ }
+func (m *recMetrics) ExportJob(s string)            { m.exports = append(m.exports, s) }
 
 func (m *recMetrics) SetOpsStats(s domain.OpsStats) {
 	m.mu.Lock()

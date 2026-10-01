@@ -43,7 +43,7 @@ func (f *fakeWriter) DirectWriteBatch(_ context.Context, cs []domain.DirectWrite
 
 func ingestRouter(w DirectWriter, limiter *TenantRateLimiter) *Router {
 	return NewRouter(RouterConfig{
-		GinConfig:    gincommon.Config{ServiceName: "iam-audit-log", BuildVersion: "test"},
+		GinConfig:    gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"},
 		Ingest:       NewIngestHandler(w),
 		BatchLimiter: limiter,
 	})

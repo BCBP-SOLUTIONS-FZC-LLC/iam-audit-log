@@ -7,10 +7,11 @@
 #   - name matches ^(platform|iam)_[a-z0-9_]+$ (namespace + snake_case)
 #   - every Counter/CounterVec name ends in _total
 #   - every Histogram/HistogramVec name ends in _seconds
-#   - a platform_* collector's ConstLabels is platformLabels(...) (carries
-#     domain+service+environment)
-#   - an iam_* collector's ConstLabels is serviceLabels(...) (carries
-#     service+environment, no domain — Tier 2 and Tier 3 alike)
+#   - a platform_* collector is never built with prometheus.New* — it must
+#     come from the central Platform Observability Registry via
+#     gincommon.NewShared*Vec (registry name, help, labels and buckets)
+#   - an iam_* collector's ConstLabels is sLabels (gincommon's
+#     MetricsConstLabels: domain+service+environment, Tier 2 and Tier 3 alike)
 #
 # Does NOT (and structurally cannot) validate the classification judgment
 # itself (shared vs. service-specific) — that's a review-time call per the
@@ -82,10 +83,18 @@ for block in block_re.finditer(body):
     const_labels = cl_m.group(1) if cl_m else None
     is_platform = name.startswith("platform_")
     is_iam = name.startswith("iam_")
-    if is_platform and const_labels != "pLabels":
-        errors.append(f'"{name}": platform_* collector must use ConstLabels: pLabels (carries domain+service+environment), got {const_labels!r}')
+    if is_platform:
+        errors.append(f'"{name}": platform_* collector must be built with gincommon.NewShared*Vec from the Platform Observability Registry, not prometheus.New{kind}')
     if is_iam and const_labels != "sLabels":
-        errors.append(f'"{name}": iam_* collector must use ConstLabels: sLabels (carries service+environment, no domain), got {const_labels!r}')
+        errors.append(f'"{name}": iam_* collector must use ConstLabels: sLabels (gincommon.MetricsConstLabels: domain+service+environment), got {const_labels!r}')
+
+# Registry-built platform_* collectors: names must be registry-style literals.
+shared_re = re.compile(r'gincommon\.NewShared(?:Counter|Gauge|Histogram)Vec\([^,]+,\s*"([^"]+)"\)')
+shared = shared_re.findall(body)
+for name in shared:
+    count += 1
+    if not name.startswith("platform_"):
+        errors.append(f'"{name}": gincommon.NewShared*Vec is for registry (platform_*) metrics in this service')
 
 if errors:
     for e in errors:

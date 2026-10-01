@@ -155,41 +155,33 @@ func TestQueryAdapter(t *testing.T) {
 }
 
 // Ops gauges (D-21): each value set, and set again (a gauge, not a
-// counter). The deprecated names are emitted in parallel with their
-// replacements during the compatibility period.
+// counter).
 func TestOpsAdapter(t *testing.T) {
 	o := Ops{}
 	o.SetOpsStats(coredomain.OpsStats{DefaultPartitionRows: 3, StalledPartitions: 2, ArchiveLagSeconds: 7200.5, PendingRedactions: 4})
 	for name, want := range map[string]float64{
-		"iam_audit_log_default_partition_rows":       3,
-		"iam_audit_log_default_partition_rows_total": 3, // deprecated twin
-		"iam_audit_log_archive_stalled_partitions":   2,
-		"iam_audit_log_archive_stalled":              2, // deprecated twin
-		"iam_audit_log_archive_lag_seconds":          7200.5,
-		"iam_audit_log_redaction_pending_tasks":      4,
+		"iam_audit_log_default_partition_rows":     3,
+		"iam_audit_log_archive_stalled_partitions": 2,
+		"iam_audit_log_archive_lag_seconds":        7200.5,
+		"iam_audit_log_redaction_pending_tasks":    4,
 	} {
 		if got := gaugeValue(t, name); got != want {
 			t.Errorf("%s = %v, want %v", name, got, want)
 		}
 	}
 	o.SetOpsStats(coredomain.OpsStats{})
-	for _, name := range []string{"iam_audit_log_default_partition_rows", "iam_audit_log_default_partition_rows_total",
-		"iam_audit_log_archive_stalled_partitions", "iam_audit_log_archive_stalled",
+	for _, name := range []string{"iam_audit_log_default_partition_rows", "iam_audit_log_archive_stalled_partitions",
 		"iam_audit_log_archive_lag_seconds", "iam_audit_log_redaction_pending_tasks"} {
 		if got := gaugeValue(t, name); got != 0 {
 			t.Errorf("%s reset = %v", name, got)
 		}
 	}
 
-	// platform_dlq_depth is keyed by the source queue; the deprecated gauge
-	// keeps its old "<queue>-dlq" label value.
+	// platform_dlq_depth is keyed by the source queue.
 	o.SetDLQDepth("user-audit-q", 5)
 	o.SetDLQDepth("auth-audit-q", 0)
 	if got := labeledGauge(t, "platform_dlq_depth", map[string]string{"queue": "user-audit-q"}); got != 5 {
 		t.Errorf("platform_dlq_depth user = %v", got)
-	}
-	if got := labeledGauge(t, "iam_audit_log_dlq_messages_total", map[string]string{"queue": "user-audit-q-dlq"}); got != 5 {
-		t.Errorf("legacy dlq user = %v", got)
 	}
 	o.SetDLQDepth("user-audit-q", 1)
 	if got := labeledGauge(t, "platform_dlq_depth", map[string]string{"queue": "user-audit-q"}); got != 1 {
@@ -197,9 +189,6 @@ func TestOpsAdapter(t *testing.T) {
 	}
 	if got := labeledGauge(t, "platform_dlq_depth", map[string]string{"queue": "auth-audit-q"}); got != 0 {
 		t.Errorf("platform_dlq_depth auth = %v", got)
-	}
-	if got := labeledGauge(t, "iam_audit_log_dlq_messages_total", map[string]string{"queue": "auth-audit-q-dlq"}); got != 0 {
-		t.Errorf("legacy dlq auth = %v", got)
 	}
 
 	o.SetQueueDepth("tenant-audit-q", 42)

@@ -19,15 +19,15 @@ func (Dependency) ObserveDependency(dependency, operation, outcome string, took 
 	DependencyRequestSeconds.WithLabelValues(dependency, operation, outcome).Observe(max(took, 0).Seconds())
 }
 
-// dependencyOutcome maps a call's error to the registry's outcome vocabulary.
+// dependencyOutcome maps a call's error to the registry's outcome vocabulary
+// (success | failure | error): a missing object is the dependency's business
+// answer (failure); a timeout or any other fault is an error.
 func dependencyOutcome(err error) string {
 	switch {
 	case err == nil:
 		return port.OutcomeSuccess
 	case errors.Is(err, port.ErrObjectMissing):
-		return port.OutcomeNotFound
-	case errors.Is(err, context.DeadlineExceeded):
-		return port.OutcomeTimeout
+		return port.OutcomeFailure
 	default:
 		return port.OutcomeError
 	}

@@ -50,7 +50,7 @@ func TestRun_DispatchesJobAgainstPostgres(t *testing.T) {
 	})
 
 	t.Run("production: wrong DB role is fatal (rule 5)", func(t *testing.T) {
-		t.Setenv("APP_ENV", "production")
+		t.Setenv("APP_ENV", "prod")
 		withArgs(t, "--job=ok")
 		if code := run(); code != 1 {
 			t.Fatalf("exit %d, want 1 — superuser is not audit_reconciler", code)
