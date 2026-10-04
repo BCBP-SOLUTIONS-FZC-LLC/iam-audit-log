@@ -119,15 +119,14 @@ var LibraryRegistry = []RegistryEntry{
 
 // DomainRegistry is the Tier-2 (iam_*) ledger this service emits. Each name
 // must mean the same thing in every IAM service. iam_rls_violations_total is
-// the IAM domain metric iam-user-profile established (its LLD §11.2), with
-// the same violation_type vocabulary. It is not (yet) in the central
-// registry's IAM domain entries: metricslint check reports it until IAM
-// observability governance ratifies it there.
+// the IAM domain metric iam-user-profile established (its LLD §11.2); since
+// platform-gincommon v1.5.0 it is a central registry entry (status proposed,
+// no IAM owner yet), and business.go builds it with NewSharedCounterVec.
 var DomainRegistry = []RegistryEntry{
 	{
 		Name:           "iam_rls_violations_total",
 		RequiredLabels: []string{"domain", "service", "environment"},
 		Labels:         []string{"violation_type"},
-		Status:         StatusCanonical,
+		Status:         StatusProposed,
 	},
 }

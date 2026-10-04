@@ -7,11 +7,14 @@
 #   - name matches ^(platform|iam)_[a-z0-9_]+$ (namespace + snake_case)
 #   - every Counter/CounterVec name ends in _total
 #   - every Histogram/HistogramVec name ends in _seconds
-#   - a platform_* collector is never built with prometheus.New* — it must
-#     come from the central Platform Observability Registry via
+#   - Tier 1/2 (platform_*, and the iam_* names the registry defines) come
+#     from the central Platform Observability Registry via
 #     gincommon.NewShared*Vec (registry name, help, labels and buckets)
-#   - an iam_* collector's ConstLabels is sLabels (gincommon's
-#     MetricsConstLabels: domain+service+environment, Tier 2 and Tier 3 alike)
+#   - Tier 3 (iam_audit_log_*) is built with gincommon.NewCounterVec /
+#     NewCounter / NewGaugeVec / NewGauge / NewHistogramVec, which inject
+#     the identity const labels; prometheus.New* is allowed only for a
+#     GaugeFunc (gincommon has no constructor for it), whose ConstLabels must
+#     be sLabels (gincommon.MetricsConstLabels: domain+service+environment)
 #
 # Does NOT (and structurally cannot) validate the classification judgment
 # itself (shared vs. service-specific) — that's a review-time call per the
@@ -32,11 +35,11 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as f:
     text = f.read()
 
-# Only scan registerMetrics()'s body — Register()/other functions don't
+# Only scan buildCollectors()'s body — Register()/other functions don't
 # construct collectors.
-m = re.search(r"func registerMetrics\(.*?\n\}\n", text, re.DOTALL)
+m = re.search(r"func buildCollectors\(.*?\n\}\n", text, re.DOTALL)
 if not m:
-    print(f"::error file={path}::could not locate registerMetrics() body")
+    print(f"::error file={path}::could not locate buildCollectors() body")
     sys.exit(1)
 body = m.group(0)
 
@@ -83,18 +86,33 @@ for block in block_re.finditer(body):
     const_labels = cl_m.group(1) if cl_m else None
     is_platform = name.startswith("platform_")
     is_iam = name.startswith("iam_")
-    if is_platform:
-        errors.append(f'"{name}": platform_* collector must be built with gincommon.NewShared*Vec from the Platform Observability Registry, not prometheus.New{kind}')
-    if is_iam and const_labels != "sLabels":
+    if kind != "GaugeFunc":
+        errors.append(f'"{name}": build it with gincommon.New{kind} (Tier 3) or gincommon.NewShared*Vec (registry), not prometheus.New{kind}')
+    elif is_platform:
+        errors.append(f'"{name}": platform_* collector must be built with gincommon.NewShared*Vec from the Platform Observability Registry')
+    elif is_iam and const_labels != "sLabels":
         errors.append(f'"{name}": iam_* collector must use ConstLabels: sLabels (gincommon.MetricsConstLabels: domain+service+environment), got {const_labels!r}')
 
-# Registry-built platform_* collectors: names must be registry-style literals.
+# Registry-built Tier 1/2 collectors: platform_* or registry iam_* names.
 shared_re = re.compile(r'gincommon\.NewShared(?:Counter|Gauge|Histogram)Vec\([^,]+,\s*"([^"]+)"\)')
-shared = shared_re.findall(body)
-for name in shared:
+for name in shared_re.findall(body):
     count += 1
-    if not name.startswith("platform_"):
-        errors.append(f'"{name}": gincommon.NewShared*Vec is for registry (platform_*) metrics in this service')
+    if not (name.startswith("platform_") or name.startswith("iam_")) or name.startswith("iam_audit_log_"):
+        errors.append(f'"{name}": gincommon.NewShared*Vec is for registry (platform_* / Tier-2 iam_*) metrics')
+
+# Tier 3 collectors built with gincommon's validating constructors.
+tier3_re = re.compile(r'gincommon\.New(?P<kind>CounterVec|Counter|GaugeVec|Gauge|HistogramVec)\([^,]+,\s*"(?P<name>[^"]+)"')
+for t3 in tier3_re.finditer(body):
+    kind, name = t3.group("kind"), t3.group("name")
+    count += 1
+    if not name.startswith("iam_audit_log_") or not namespace_re.match(name):
+        errors.append(f'"{name}": Tier 3 collector must be iam_audit_log_<snake_case>')
+    if kind.startswith("Counter") and not name.endswith("_total"):
+        errors.append(f'"{name}": {kind} must end in _total')
+    if kind.startswith("Histogram") and not name.endswith("_seconds"):
+        errors.append(f'"{name}": {kind} must end in _seconds')
+    if kind.startswith("Gauge") and name.endswith("_total"):
+        errors.append(f'"{name}": a gauge must not end in _total')
 
 if errors:
     for e in errors:

@@ -14,6 +14,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	pgdomain "github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/domain"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
 func isUnavailable(err error) bool {
@@ -29,6 +30,7 @@ func TestWrapConnErr(t *testing.T) {
 		&pgconn.PgError{Code: "53300", Message: "too many connections"},
 		&pgconn.PgError{Code: "57P01", Message: "admin shutdown"},
 		&pgconn.PgError{Code: "58030", Message: "io error"},
+		&pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"},
 		puddle.ErrClosedPool,
 		io.EOF,
 		fmt.Errorf("read: %w", io.ErrUnexpectedEOF),
@@ -96,6 +98,36 @@ func TestPoolConfigs(t *testing.T) {
 	if recBare.Tracer != nil || recBare.Logger != nil {
 		t.Error("nil tracer/logger must stay unset")
 	}
+}
+
+// cmd/reconciler has no DATABASE_URL: ConfigFromEnv's "PG_USER/PG_DBNAME
+// required" warning describes a DSN the pool never uses and is dropped;
+// pool-tuning warnings are kept.
+func TestReconcilerPoolConfig_DropsDSNSourceWarnings(t *testing.T) {
+	for _, k := range []string{"DATABASE_URL", "PG_USER", "PG_DBNAME", "PG_HOST"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("PG_MAX_CONNS", "not-a-number")
+	_, appWarnings := AppPoolConfig("postgres://app", nil, nil)
+	if !hasWarning(appWarnings, "PG_USER/PG_DBNAME") {
+		t.Fatalf("precondition: ConfigFromEnv should warn without DATABASE_URL, got %+v", appWarnings)
+	}
+	_, warnings := ReconcilerPoolConfig("postgres://recon", nil, nil)
+	if hasWarning(warnings, "PG_USER/PG_DBNAME") {
+		t.Errorf("DSN-source warning kept: %+v", warnings)
+	}
+	if !hasWarning(warnings, "PG_MAX_CONNS") {
+		t.Errorf("pool-tuning warning dropped: %+v", warnings)
+	}
+}
+
+func hasWarning(ws []pgcommon.ConfigWarning, key string) bool {
+	for _, w := range ws {
+		if w.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLoggerAdapter_ForwardsAllLevels(t *testing.T) {

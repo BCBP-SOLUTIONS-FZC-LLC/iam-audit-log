@@ -1,4 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- if and (not .Values.networkPolicy.internalCallers) (not .Values.networkPolicy.allowNoInternalCallers) }}
+{{- fail "networkPolicy.internalCallers must list the AL-5/AL-6/AL-7 caller pods (or set networkPolicy.allowNoInternalCallers=true)." }}
+{{- end }}
 # NetworkPolicy — the primary peer control for /api/v1/internal/* (LLD §10.2;
 # RequireSystemRole is defense-in-depth). Applies to the server pods and the
 # reconciler CronJob pods (same selector labels).
@@ -31,13 +34,16 @@ spec:
         - port: {{ .Values.service.port }}
           protocol: TCP
 
-    # Mesh-internal /api/v1/internal/* (AL-5..AL-7) from same-namespace IAM
-    # producers (Catalog, Realm Provisioner, O&M, Group Mapping, Tender ACL).
+    # Mesh-internal /api/v1/internal/* (AL-5..AL-7) from the listed caller
+    # pods only, never the whole namespace. NetworkPolicy is L4: the
+    # caller's identity and path are checked by templates/mesh.yaml.
+    {{- with .Values.networkPolicy.internalCallers }}
     - from:
-        - podSelector: {}
+        {{- toYaml . | nindent 8 }}
       ports:
-        - port: {{ .Values.service.port }}
+        - port: {{ $.Values.service.port }}
           protocol: TCP
+    {{- end }}
 
     {{- if .Values.networkPolicy.metricsIngress.enabled }}
     - from:
@@ -75,7 +81,9 @@ spec:
           protocol: TCP
     # iam-catalog-admin CAT-I2 plans poller (AL-D15), same namespace.
     - to:
-        - podSelector: {}
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.catalogPodLabels | nindent 14 }}
       ports:
         - port: 8080
           protocol: TCP
@@ -83,6 +91,13 @@ spec:
     - ports:
         - port: 4317
           protocol: TCP
+    {{- if or .Values.mesh.enabled .Values.mesh.authorizationPolicy.enabled .Values.mesh.peerAuthentication.enabled }}
+    # istiod: xDS config and SDS certificate signing (the only control-plane
+    # port a sidecar dials).
+    - ports:
+        - port: 15012
+          protocol: TCP
+    {{- end }}
 
     {{- with .Values.networkPolicy.additionalEgressRules }}
     {{- toYaml . | nindent 4 }}

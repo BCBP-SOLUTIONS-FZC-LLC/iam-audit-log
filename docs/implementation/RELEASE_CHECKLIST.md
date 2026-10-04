@@ -39,6 +39,49 @@ first needs it. Each item says what fails if it is missing. Background is in
       `EXPORT_SIGNED_URL_TTL`** (7 days) (gap 30, decision D-11).
       **If missing:** export objects accumulate indefinitely.
 
+## IAM role (IRSA, Terraform)
+
+- [ ] **`deploy/iam/policy.json`'s `ArchiveKMS` statement names the KMS key
+      ARN** (`arn:aws:kms:<region>:<account>:key/<key-id>`), not the
+      `alias/iam-audit-archive` placeholder, and `ACCOUNT_ID` is substituted
+      everywhere. KMS authorizes `GenerateDataKey` / `Decrypt` against the
+      key, so an alias ARN in `Resource` grants nothing.
+      **If missing:** every SSE-KMS `PutObject` and `GetObject` is
+      `AccessDenied`. Archival stalls (RB-2) and archived reads and exports
+      return `503`.
+- [ ] **The role may send to the 11 audit DLQs** (`sqs:SendMessage` on
+      `*-audit-q-dlq`, policy statement `ForwardPoisonToOwnDLQ`, decision
+      D-22). platform-events forwards malformed and undecodable messages there
+      instead of deleting them.
+      **If missing:** the consumer cannot forward; the message stays visible
+      and SQS's own redrive moves it after `maxReceiveCount` (no loss, just
+      slower), and `platform_messages_failed_total{reason="dead_letter_error"}`
+      rises.
+
+## Service mesh (Istio)
+
+- [ ] **Istio (security.istio.io/v1, 1.22+) is installed and the `iam`
+      namespace is meshed.** The chart renders an `AuthorizationPolicy` and a
+      `PeerAuthentication` (`templates/mesh.yaml`) and labels the server pods
+      for injection. `APP_ENV=prod` refuses to render without the policy unless
+      `mesh.acknowledgeNoMesh=true` (a tracked security exception).
+      **If missing:** the install fails on the unknown CRD kinds. Without the
+      policy, any pod admitted by the NetworkPolicy can forge AL-5/AL-6
+      entries or read any tenant through AL-7 with a header.
+- [ ] **`mesh.authorizationPolicy.internalCallerPrincipals` and
+      `networkPolicy.internalCallers` list exactly the real AL-5/AL-6/AL-7
+      callers** (defaults: Catalog Admin, Realm Provisioner, Org & Membership, Group Mapping, Tender ACL,
+      as `cluster.local/ns/iam/sa/<release>`). Confirm each caller's service
+      account name.
+      **If missing:** a caller not listed gets `403 RBAC: access denied` from
+      the sidecar, and its entries wait in its own retry queue.
+- [ ] **The gateway reaches `/api/v1/audit/*`.** With a non-injected Envoy
+      Gateway (default) it sends plaintext, which the policy allows only from
+      sources without a mesh principal. If the gateway is mesh-injected, set
+      `mesh.authorizationPolicy.gatewayPrincipals` and
+      `mesh.peerAuthentication.apiPortMode: STRICT`.
+      **If missing:** tenant admins get `403` on AL-1..AL-4.
+
 ## Cluster
 
 - [ ] The service is deployed in the `iam` namespace (AL-Q17).

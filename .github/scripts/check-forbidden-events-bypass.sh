@@ -33,6 +33,12 @@ hits=$(scan '"github\.com/aws/aws-sdk-go-v2/service/sns"')
 hits=$(scan '\.(Publish|PublishBatch)\(')
 [ -z "$hits" ] || fail "AL-INV-10: a Publish/PublishBatch call exists." "$hits"
 
+# D-22: the one SQS writer is platform-events' DLQ publisher, wired once in
+# cmd/server/main.go for WithDLQForwarding (poison messages to the queue's own
+# DLQ). It is not a bus publisher; anywhere else it is.
+hits=$(scan 'NewSQSDLQPublisher(WithClient)?\(|WithDLQForwarding\(|\.SendToDLQ\(' | grep -v '^cmd/server/main\.go:' || true)
+[ -z "$hits" ] || fail "D-22: the DLQ publisher may only be wired for WithDLQForwarding in cmd/server/main.go." "$hits"
+
 # ── 2. SQS only via platform-events' consumer (O&M check #1/#2). ───────────
 hits=$(grep -RIl -E '"github\.com/aws/aws-sdk-go-v2/service/sqs"' --include='*.go' cmd/ internal/ pkg/ 2>/dev/null | grep -v '_test\.go$' | grep -v '^cmd/server/main\.go$' || true)
 [ -z "$hits" ] || fail "aws-sdk-go-v2/service/sqs imported outside cmd/server/main.go (its only use is the DLQ depth gauge; consume via events.NewSQSConsumer)." "$hits"

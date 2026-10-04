@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"errors"
 	"os"
 	"testing"
 
@@ -83,4 +84,32 @@ func counterOr0(t *testing.T, name string, want map[string]string) float64 {
 		}
 	}
 	return 0
+}
+
+// A constructor error inside build aborts it and becomes Register's error;
+// any other panic is not swallowed.
+func TestBuild_MustAbortsWithError(t *testing.T) {
+	cause := errors.New("bad name")
+	var after bool
+	err := build(func() {
+		_ = must(0, cause)
+		after = true
+	})
+	if !errors.Is(err, cause) || after {
+		t.Fatalf("err = %v, ran past must = %v", err, after)
+	}
+	if err := build(func() { mustOK(nil); _ = must(1, nil) }); err != nil {
+		t.Fatalf("no error: got %v", err)
+	}
+	// A rejected Tier 3 name is the real-world case.
+	err = build(func() { _ = must(gincommon.NewCounterVec(nil, "iam_audit_log_not_a_counter", "x")) })
+	if err == nil {
+		t.Fatal("gincommon accepted a counter without _total")
+	}
+	defer func() {
+		if r := recover(); r != "boom" {
+			t.Fatalf("recovered %v, want the original panic", r)
+		}
+	}()
+	_ = build(func() { panic("boom") })
 }

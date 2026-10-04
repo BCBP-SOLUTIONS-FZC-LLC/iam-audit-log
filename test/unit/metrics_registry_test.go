@@ -459,7 +459,8 @@ func TestMetricRegistry_VocabularyMatchesCode(t *testing.T) {
 // central registry removed or never defined fails here.
 func TestRegistryLedger_MatchesPlatformRegistry(t *testing.T) {
 	central := obsregistry.Default()
-	for _, e := range append(append([]metrics.RegistryEntry{}, metrics.PlatformRegistry...), metrics.LibraryRegistry...) {
+	ledger := append(append([]metrics.RegistryEntry{}, metrics.PlatformRegistry...), metrics.LibraryRegistry...)
+	for _, e := range append(ledger, metrics.DomainRegistry...) {
 		m, ok := central.Lookup(e.Name)
 		if !ok {
 			t.Errorf("%s is not in the Platform Observability Registry", e.Name)
@@ -496,10 +497,9 @@ func TestMetrics_LibrariesShareServiceCollectors(t *testing.T) {
 
 // The full process scrape (gincommon, business.go, platform-events,
 // platform-pgcommon) passes the Platform Observability Registry validation
-// that metricslint check runs; Tier-2 iam_* names the central IAM domain
-// registry does not define yet (iam_rls_violations_total) are the only
-// accepted findings. METRICS_SCRAPE_OUT=<file> also writes the scrape for
-// metricslint check.
+// that metricslint check runs, with no accepted findings: every Tier-2 iam_*
+// name is a registry entry since platform-gincommon v1.5.0.
+// METRICS_SCRAPE_OUT=<file> also writes the scrape for metricslint check.
 func TestMetrics_ScrapeValidatesAgainstRegistry(t *testing.T) {
 	gatherAll(t)
 	var buf bytes.Buffer
@@ -518,14 +518,8 @@ func TestMetrics_ScrapeValidatesAgainstRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := map[string]bool{}
-	for _, e := range metrics.DomainRegistry {
-		pending[e.Name] = true
-	}
 	for _, f := range rep.Errors() {
-		if !pending[f.Metric] {
-			t.Error(f.String())
-		}
+		t.Error(f.String())
 	}
 }
 

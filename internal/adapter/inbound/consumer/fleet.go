@@ -121,14 +121,23 @@ func (f *Fleet) Start(ctx context.Context, onExit func(queue string, err error))
 	}
 }
 
-// Stop drains every consumer (in-flight handlers finish) and waits.
+// Stop drains every consumer (in-flight handlers finish) and waits. The
+// consumers stop concurrently: each Stop cancels its receive loop, then waits
+// up to SQS_DRAIN_TIMEOUT (+5 s) for its handlers. Stopping them one after
+// another would let the later queues keep receiving while the earlier ones
+// drain, and would add up to 11 drain timeouts against
+// terminationGracePeriodSeconds.
 func (f *Fleet) Stop() error {
-	var errs []error
-	for _, r := range f.consumers {
-		if err := r.consumer.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", r.name, err))
-		}
+	errs := make([]error, len(f.consumers))
+	var stopping sync.WaitGroup
+	for i, r := range f.consumers {
+		stopping.Go(func() {
+			if err := r.consumer.Stop(); err != nil {
+				errs[i] = fmt.Errorf("%s: %w", r.name, err)
+			}
+		})
 	}
+	stopping.Wait()
 	f.wg.Wait()
 	return errors.Join(errs...)
 }

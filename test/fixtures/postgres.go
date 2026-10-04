@@ -29,19 +29,30 @@ func StartPostgres(t testing.TB) string {
 	ctx := context.Background()
 	var (
 		c   *tcpostgres.PostgresContainer
+		dsn string
 		err error
 	)
+	// On a loaded Docker host the "ready" log line can come before the port
+	// mapping is published ("port 5432/tcp not found"), so the wait includes
+	// the listening port, and a container whose DSN still cannot be resolved
+	// counts as a failed attempt: it is terminated and a fresh one started.
 	for attempt := 1; attempt <= 3; attempt++ {
 		c, err = tcpostgres.Run(ctx, PostgresImage,
 			tcpostgres.WithDatabase("audit"),
 			tcpostgres.WithUsername("postgres"),
 			tcpostgres.WithPassword("testpassword"),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).WithStartupTimeout(60*time.Second)),
+			testcontainers.WithWaitStrategy(wait.ForAll(
+				wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
+				wait.ForListeningPort("5432/tcp"),
+			).WithDeadline(90*time.Second)),
 		)
 		if err == nil {
-			break
+			dsn, err = c.ConnectionString(ctx, "sslmode=disable")
+			if err == nil {
+				break
+			}
+			_ = c.Terminate(ctx) //nolint:errcheck // discarding a half-started container before retrying
+			c = nil
 		}
 		time.Sleep(time.Duration(attempt) * time.Second)
 	}
@@ -53,9 +64,5 @@ func StartPostgres(t testing.TB) string {
 			t.Logf("terminate postgres container: %v", err)
 		}
 	})
-	dsn, err := c.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("postgres dsn: %v", err)
-	}
 	return dsn
 }

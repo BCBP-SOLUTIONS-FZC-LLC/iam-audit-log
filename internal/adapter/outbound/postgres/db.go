@@ -26,7 +26,6 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/puddle/v2"
 )
 
 // AppPoolConfig returns the pgcommon.Config for cmd/server's audit_app pool.
@@ -61,6 +60,7 @@ func AppPoolConfig(dsn string, log port.Logger, tracer port.Tracer) (pgcommon.Co
 // production (matching the siblings' SystemPoolConfig).
 func ReconcilerPoolConfig(dsn string, log port.Logger, tracer port.Tracer) (pgcommon.Config, []pgcommon.ConfigWarning) {
 	cfg, warnings := pgcommon.ConfigFromEnv()
+	warnings = withoutDSNSourceWarnings(warnings)
 	cfg.DSN = dsn
 	cfg.GUCProvider = nil
 	cfg.PGBouncerMode = true
@@ -71,6 +71,28 @@ func ReconcilerPoolConfig(dsn string, log port.Logger, tracer port.Tracer) (pgco
 		cfg.Logger = NewLoggerAdapter(log)
 	}
 	return cfg, warnings
+}
+
+// dsnSourceKeys are the ConfigFromEnv warnings about building the DSN from
+// DATABASE_URL or PG_HOST/PG_USER/PG_DBNAME/PG_SSLMODE.
+var dsnSourceKeys = map[string]bool{
+	"DATABASE_URL": true, "PGSSLMODE": true, "PG_HOST": true, "PG_SSLMODE": true, "PG_USER/PG_DBNAME": true,
+}
+
+// withoutDSNSourceWarnings drops the warnings about a DSN the caller replaces
+// with its own. cmd/reconciler has no DATABASE_URL (rule 5: it never loads the
+// app DSN), so ConfigFromEnv falls back to PG_USER/PG_DBNAME and warns that
+// "database connections will fail" on every run, although the pool connects
+// with RECONCILER_DATABASE_URL. The pool-tuning warnings (PG_MAX_CONNS, ...)
+// still apply and are kept.
+func withoutDSNSourceWarnings(warnings []pgcommon.ConfigWarning) []pgcommon.ConfigWarning {
+	kept := warnings[:0:0]
+	for _, w := range warnings {
+		if !dsnSourceKeys[w.Key] {
+			kept = append(kept, w)
+		}
+	}
+	return kept
 }
 
 // TxRunner wraps pgcommon.Pool to run a unit of work in one transaction.
@@ -128,7 +150,8 @@ func withPool(ctx context.Context, pool *pgcommon.Pool, fn func(pgx.Tx) error) e
 }
 
 // wrapConnErr converts positively-identified connectivity/resource failures
-// (SQLSTATE 08/53/57/58, a closed pool, Go-level network errors) into
+// (SQLSTATE 08/53/57/58 and a closed pool, classified by pgcommon's Is*
+// helpers; Go-level network errors) into
 // domain.ErrDependencyUnavailable. Everything else — SQL integrity errors
 // and a callback's own business errors — passes through unchanged so the
 // service layer can classify it (mirrors iam-realm-provisioner).
@@ -141,7 +164,8 @@ func wrapConnErr(err error) error {
 		return err
 	}
 	if pgcommon.IsConnectionException(err) || pgcommon.IsInsufficientResources(err) ||
-		isOperatorOrSystemErrorSQLState(err) || errors.Is(err, puddle.ErrClosedPool) || isNetworkError(err) {
+		pgcommon.IsOperatorIntervention(err) || pgcommon.IsQueryCanceled(err) || pgcommon.IsSystemError(err) ||
+		pgcommon.IsPoolClosed(err) || isNetworkError(err) {
 		return domain.NewError(domain.ErrDependencyUnavailable, "database unavailable")
 	}
 	return err
@@ -166,14 +190,4 @@ func isNetworkError(err error) bool {
 	return strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "broken pipe")
-}
-
-// isOperatorOrSystemErrorSQLState reports SQLSTATE class 57/58; pgcommon
-// v1.3.0 has helpers for 08/53 only.
-func isOperatorOrSystemErrorSQLState(err error) bool {
-	if !pgcommon.IsPgError(err) {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "SQLSTATE 57") || strings.Contains(msg, "SQLSTATE 58")
 }

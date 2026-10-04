@@ -106,7 +106,18 @@ func run() int {
 	}
 	// gin writes nothing itself; requests are logged by gincommon (gap 43).
 	telemetry.QuietGin()
-	shutdownTracing := gincommon.InitTracingFromEnv()
+	// Tracing carries the same identity as the metrics (service.name,
+	// service.namespace=domain, deployment.environment.name), and its init
+	// warnings and SDK errors go through the gincommon logger.
+	// OTEL_EXPORTER_OTLP_ENDPOINT=none turns export off (gincommon v1.6.0).
+	shutdownTracing, err := gincommon.InitTracingWithConfig(gincommon.TracingConfig{
+		ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion,
+		Domain: config.ObservabilityDomain, Environment: cfg.AppEnv, Logger: log,
+	})
+	if err != nil {
+		log.Error("init tracing", map[string]any{"error": err.Error()})
+		return 1
+	}
 	defer shutdownTracing()
 	defer func() {
 		if err := gincommon.Shutdown(log); err != nil {
@@ -198,7 +209,7 @@ func run() int {
 	pollerDone := make(chan struct{})
 	go func() {
 		defer close(pollerDone)
-		plans.Run(ctx)
+		supervise(ctx, log, "catalog_plans_poller", 5*time.Second, plans.Run)
 	}()
 
 	// ── 3d. SQS consumer fleet (LLD §7.1) — one platform-events consumer per
@@ -230,11 +241,12 @@ func run() int {
 	exportStore := metrics.InstrumentedExportStore{Inner: store}
 	reader := pgadapter.NewQueryRepository(pool)
 	query := service.NewQueryService(reader, archiveReader, service.QueryConfig{
-		DefaultWindowDays: cfg.DefaultQueryWindowDays,
-		Windows:           plans,
-		SyncMaxRows:       cfg.ArchiveSyncMaxRows,
-		SyncMaxBytes:      cfg.ArchiveSyncMaxBytes,
-		Metrics:           metrics.Query{},
+		DefaultWindowDays:      cfg.DefaultQueryWindowDays,
+		Windows:                plans,
+		SyncMaxRows:            cfg.ArchiveSyncMaxRows,
+		SyncMaxBytes:           cfg.ArchiveSyncMaxBytes,
+		ArchiveReadConcurrency: cfg.ArchiveReadConcurrency,
+		Metrics:                metrics.Query{},
 	}, log)
 	exports := service.NewExportService(pgadapter.NewExportRepository(pool), reader, archiveReader, exportStore, query, newUUIDv7,
 		service.ExportConfig{
@@ -248,7 +260,7 @@ func run() int {
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		exports.Run(ctx)
+		supervise(ctx, log, "export_worker", 5*time.Second, exports.Run)
 	}()
 
 	// ── 3f. Ops gauges (LLD §11, §20; decision D-21, gaps 40/41): the
@@ -266,7 +278,7 @@ func run() int {
 	opsDone := make(chan struct{})
 	go func() {
 		defer close(opsDone)
-		ops.Run(ctx)
+		supervise(ctx, log, "ops_monitor", 5*time.Second, ops.Run)
 	}()
 
 	// ── 4. Router ─────────────────────────────────────────────────────────
@@ -383,6 +395,20 @@ func buildFleet(awsCfg aws.Config, cfg config.Server, ingest consumer.BusIngeste
 	libEnv := sqsEnv
 	libEnv.MaxReceiveCount = 0 // set explicitly below, not as the raw redrive count
 	opts := append(eventsconfig.SQSConsumerOptions(libEnv), events.WithMaxReceiveCount(observeAt))
+
+	// D-22 (closes D-3): a body that is not an envelope, or past the
+	// threshold and undecodable, is forwarded to the queue's own RedrivePolicy
+	// DLQ instead of being deleted. Not a bus publisher (AL-INV-10): it only
+	// moves a poison message to <queue>-dlq, never publishes an event.
+	// The threshold path is unchanged: the dead-letter handler returns an
+	// error, so the SQS redrive still moves those and the service counts them.
+	dlq, err := events.NewSQSDLQPublisher(events.DLQConfig{
+		Region: sqsEnv.Region, EndpointURL: sqsEnv.EndpointURL, ConsumerName: cfg.ServiceName, Logger: log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dlq publisher: %w", err)
+	}
+	opts = append(opts, events.WithDLQForwarding(dlq))
 
 	queues := make([]consumer.Queue, 0, len(cfg.Queues))
 	for _, q := range cfg.Queues {

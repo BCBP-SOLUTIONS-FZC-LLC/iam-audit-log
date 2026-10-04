@@ -4,7 +4,9 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`
 **Module:** Go 1.26.6 · private module · deployed as two binaries from one image (`cmd/server`, `cmd/reconciler`)
-**Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.26** (as-built through Phase 8 and the platform-library / observability-standard alignment). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-21) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
+**Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.28** (as-built through Phase 8, the platform-library / observability-standard alignment, and the production-readiness hardening). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-23) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
+
+**Status:** shared libraries at their latest releases (platform-gincommon v1.6.0, platform-events/v2 v2.0.0, platform-pgcommon/v2 v2.0.0); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
 
 ---
 
@@ -76,7 +78,7 @@ AL-1 query parameters are `from`, `to`, `entry_type` (repeatable), `actor_id`, `
 
 ### Internal routes (3): `/api/v1/internal/*`, mesh mTLS, NetworkPolicy, `iam-system` role
 
-`RequireSystemRole` gates this prefix. An unrecognized peer gets `403 forbidden_peer`.
+The caller's identity is checked by the mesh, not by a header. The chart's Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`) allows this prefix only from the listed caller principals (`mesh.authorizationPolicy.internalCallerPrincipals`), which exist only over mTLS. The NetworkPolicy admits only the listed caller pods (`networkPolicy.internalCallers`), never the whole namespace. `APP_ENV=prod` refuses to render without the policy. In the service, `RequireSystemRole` is defense in depth: without the `iam-system` role the request gets `403 forbidden_peer`.
 
 | # | Method & Path | Caller | Purpose |
 |---|---|---|---|
@@ -149,9 +151,10 @@ Ports and adapters: dependencies point inward, and outer layers are never import
 iam-audit-log/
 ├── cmd/
 │   ├── server/                        # Composition root: pgcommon pool (audit_app) + migrations, 11-queue consumer fleet,
-│   │                                  #   CAT-I2 plan poller, export worker, OpsMonitor gauges (D-21), API :8080 + /metrics :9090
+│   │                                  #   CAT-I2 plan poller, export worker, OpsMonitor gauges (D-21), API :8080 + /metrics :9090;
+│   │                                  #   background loops run under supervise.go (panic → logged restart)
 │   └── reconciler/                    # One binary, --job=<name>; jobs/ holds reconcile, redaction-retry, redaction-sweep,
-│                                      #   processed-events-prune
+│                                      #   processed-events-prune; one run per job (reconciler_job_lease)
 ├── internal/
 │   ├── config/                        # Env parsing + fail-fast validation for both roots (LLD §12)
 │   ├── eventschema/                   # Embedded consumed-event schemas
@@ -165,21 +168,23 @@ iam-audit-log/
 │       │   ├── http/                  # router.go, AL-1..AL-7 handlers, DTOs, middleware, rate limiters, AsyncAPI
 │       │   └── consumer/              # SQS consumer fleet: one platform-events consumer per *-audit-q
 │       └── outbound/
-│           ├── postgres/              # pgcommon pools, repositories, migrations 000001..000010
+│           ├── postgres/              # pgcommon pools, repositories, migrations 000001..000011
 │           ├── s3/                    # Archive objects + exports (SSE-KMS, Object Lock, presign)
 │           ├── glue/                  # Decode-only Glue Schema Registry codec (AL-D12)
 │           ├── catalog/               # CAT-I2 client (GET /api/v1/internal/plans)
 │           ├── metrics/               # Three-tier Prometheus collectors + registry.go ledger
-│           └── telemetry/             # The only home for OTel / promhttp wiring (gap 43)
+│           └── telemetry/             # Thin wrappers over gincommon tracing / /metrics (gap 43)
 ├── pkg/requestctx/                    # Typed RequestContext{UserID, TenantID, Roles, ClientIP, UserAgent}
 ├── api/asyncapi.yaml                  # 11 consumed channels, receive-only
 ├── docs/
 │   ├── lld/                           # The spec: §17 error taxonomy, §16 open questions, §22 decisions
-│   ├── implementation/                # BUILD_PLAN.md (phases, D-1..D-21, gaps), RELEASE_CHECKLIST.md
+│   ├── implementation/                # BUILD_PLAN.md (phases, D-1..D-23, gaps), RELEASE_CHECKLIST.md
 │   ├── architecture/                  # Mermaid diagrams
 │   ├── swagger/                       # Generated REST contract (make swag)
+│   ├── observability/                 # Observability standard here, generated metric inventory, migration, per-alert runbooks
 │   └── runbook.md                     # RB-1..RB-10
-├── deploy/                            # helm/ (Deployment + 4 CronJobs), monitoring/ (rules, registry, dashboard), iam/policy.json
+├── deploy/                            # helm/ (Deployment + 4 CronJobs, NetworkPolicy, Istio mesh policy), monitoring/ (rules, registry,
+│                                      #   dashboard), iam/policy.json
 ├── scripts/                           # init-floci.sh, merge_coverage.py, gen-prometheusrule.py
 ├── .githooks/pre-commit               # tidy + fmt-check + vet + lint; installed by make setup
 └── test/                              # unit (black-box contracts), postgres (RLS/grants/partitions), integration (floci),
@@ -221,9 +226,9 @@ iam-audit-log/
 
 | Library | Version | Purpose | Confinement rule (CI) |
 |---|---|---|---|
-| `platform-gincommon` | v1.3.0 | HTTP middleware, Zap logger, OTel tracing, the Prometheus registry | **All logs, metrics and traces go through gincommon only**. OTel and promhttp are wired only in `outbound/telemetry` (gap 43, `check-observability-confinement.sh`). |
-| `platform-pgcommon` | v1.3.0 | pgx/v5 pools, `ConfigFromEnv`, GUC injection, transactions, error classification, migrations | **Every DB connection, config value and operation goes through pgcommon only** (gap 44, `arch-lint.sh`) |
-| `platform-events` | v1.4.0 | SQS consumer, envelope, `config.LoadSQS`, dedup | **Events, SQS config and dedup go through platform-events only**, with no publisher or outbox APIs (gap 45, `check-forbidden-events-bypass.sh`, `check-outbox-access.sh`) |
+| `platform-gincommon` | v1.6.0 | HTTP middleware, Zap logger, tracing API (`InitTracingWithConfig`, `NewSpanTracer`, `SpanTraceID`), the Prometheus registry, `MetricsHandler`, registry-built `NewShared*Vec` and validating Tier-3 constructors | **All logs, metrics and traces go through gincommon only**. Nothing imports OpenTelemetry or promhttp (gap 43, `check-observability-confinement.sh`). |
+| `platform-pgcommon/v2` | v2.0.0 | pgx/v5 pools, `ConfigFromEnv`, GUC injection, transactions, error classification, migrations | **Every DB connection, config value and operation goes through pgcommon only** (gap 44, `arch-lint.sh`) |
+| `platform-events/v2` | v2.0.0 | SQS consumer, envelope, `config.LoadSQS`, dedup | **Events, SQS config and dedup go through platform-events only**, with no publisher or outbox APIs (gap 45, `check-forbidden-events-bypass.sh`, `check-outbox-access.sh`) |
 
 ---
 
@@ -270,6 +275,8 @@ This path is for audit facts that have no bus event (AL-D1). The **caller invari
 | Realm Provisioner | `config.idp.changed` |
 | Signup / onboarding | `tenant.owner_signed_up` |
 | Operator tooling | `security.cross_tenant_access` on every `admin_readonly` session |
+
+**Being allowed to call AL-5/AL-6 (D-23).** `/api/v1/internal/*` admits only listed callers: the producer's pods in `networkPolicy.internalCallers` and its SPIFFE principal (`cluster.local/ns/<ns>/sa/<serviceaccount>`) in `mesh.authorizationPolicy.internalCallerPrincipals`. The defaults cover Catalog Admin, Realm Provisioner, Org & Membership, Group Mapping and Tender ACL in the `iam` namespace. A new producer (Signup, operator tooling) is added per environment; until then its calls get `403 RBAC: access denied` from the sidecar and wait in its own retry queue (AUDIT-CALLER-1).
 
 ### 4. Catalog / Admin Config: CAT-I2 plan windows (this service calls out)
 
@@ -366,6 +373,7 @@ In dev, `.env-example` points all three DSNs at the local `postgres` superuser. 
 | `make ci` | `tidy` + `fmt-check` + `vet` + `lint` + `arch-lint` + `invariant-lint` + `test-ci` + `build` |
 | `make docker-up` / `make docker-down` | Start `postgres` and `floci` / stop the stack |
 | `make swag` / `make swag-check` | Regenerate / verify `docs/swagger` |
+| `make metrics-lint` / `make metrics-inventory` | platform-gincommon `metricslint` + inventory drift / regenerate `docs/observability/metric-registry.md` |
 | `make docs-serve` | Run the server and print the `/asyncapi` doc URLs |
 | `make prometheusrule` | Regenerate the Helm `PrometheusRule` from `deploy/monitoring/` (`scripts/gen-prometheusrule.py`) |
 | `make migrate-create NAME=<x>` | New `NNNNNN_<x>.up.sql`/`.down.sql` pair |
@@ -563,11 +571,14 @@ docker compose exec floci aws --region ap-south-1 sqs receive-message \
 - **`test/postgres/grants_test.go`**: `TestGrants_LeastPrivilegeMatrix_ALINV1`. CI's `check-grants.sh` mirrors it statically.
 - **`test/postgres/archive_test.go`**: the drop gate. Drop is blocked while unverified (AL-INV-9) and on a count mismatch, it refuses while a redaction is pending (AL-INV-12), and a dropped month re-opens on late rows (D-19).
 - **`test/integration/bus_ingest_test.go`**: `TestBus_PublishedEventPersistedOnceDespiteRedelivery_ALINV4_ALINV5` and `TestBus_SameRowShapeAsDirectWrite_ALINV2`, against real SNS and SQS on floci.
+- **`test/postgres/role_confinement_test.go`** and **`job_lease_test.go`**: the reconciler's repositories are refused as `audit_app` (42501) and its reads stay fail-closed; one reconciler run per job (migration `000011`).
+- **`test/integration/wire_test.go`**: `TestWire_MalformedEnvelopeForwardedToDLQ_D22`, a non-envelope body lands in its queue's DLQ instead of being deleted.
+- **`test/unit/deploy_contract_test.go`** / **`observability_contract_test.go`**: `TestHelm_InternalRoutesRequireMeshIdentity` (mesh policy + caller allow-list), `TestIAMPolicy_LeastPrivilege` (DLQ send only), `TestAlerts_RunbookURLsResolve`.
 - **`test/unit/metrics_registry_test.go`**: `TestMetricRegistry_Conformance`, `…_VocabularyMatchesCode`, `…_ForbiddenLabelsAgree`, `…_ChecksAreGated`. They keep `registry.go`, the code and `deploy/monitoring/metric-registry.yaml` in lockstep. `TestAlerts_StaticMirrorMatchesHelm` keeps the static rule files and the Helm `PrometheusRule` identical.
 
 ### Coverage
 
-`.github/scripts/coverage-gate.sh` reads the total from `go tool cover -func=coverage.out` and fails below `COVERAGE_THRESHOLD` (**95%**, set in `validate-test.yml`). Coverage is measured over `./cmd/...`, `./internal/...` and `./pkg/...` (`COVER_PKG_LIST`). It is merged across the unit, postgres and integration suites by `scripts/merge_coverage.py`. The e2e suite runs separately, without coverage or `-race`. The latest merged total is **96.5%**, as recorded in BUILD_PLAN and reproduced by the Phase 8 `make test-ci` runs.
+`.github/scripts/coverage-gate.sh` reads the total from `go tool cover -func=coverage.out` and fails below `COVERAGE_THRESHOLD` (**95%**, set in `validate-test.yml`). Coverage is measured over `./cmd/...`, `./internal/...` and `./pkg/...` (`COVER_PKG_LIST`). It is merged across the unit, postgres and integration suites by `scripts/merge_coverage.py`. The e2e suite runs separately, without coverage or `-race`. The latest merged total is **96.5%** (2026-10-04). Tests that need `APP_ENV=prod` run in a re-executed child process (`fixtures.InOwnProcess`), because gincommon allows one metrics identity per process; the child's coverage is merged through `-test.gocoverdir`. The postgres package needs about 6–7 minutes under `-race`, hence `TEST_POSTGRES_TIMEOUT` (1500 s). Run one `make test-ci` per working tree at a time: concurrent runs write the same `.coverage/*.out` files and corrupt the merged profile.
 
 ---
 
@@ -577,18 +588,18 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `APP_ENV` / `SERVICE_NAME` / `BUILD_VERSION` | `dev` / `iam-audit-log` / build ldflag | Env-gated behavior (`dev`, `development`, `local` and `test` relax checks). The reconciler appends `-reconciler` to `SERVICE_NAME`. |
+| `APP_ENV` / `SERVICE_NAME` / `BUILD_VERSION` | `dev` / `iam-audit-log` / build ldflag | `APP_ENV` is one of `local`, `dev`, `test`, `staging` or `prod`; `local`, `dev` and `test` relax checks. `SERVICE_NAME` is the one source of the service name (metrics `service` label, logs, trace `service.name`), passed to the platform libraries in code, so `APP_NAME` / `OTEL_SERVICE_NAME` are not read. The reconciler's traces append `-reconciler`. |
 | `APP_PORT` / `METRICS_PORT` | `8080` / `9090` | API listener / dedicated `/metrics` listener |
 | `DATABASE_URL` | — | **Required.** `audit_app` DSN (via PgBouncer in production) |
 | `DB_APP_ROLE` | `audit_app` | Role the server pool must authenticate as (no BYPASSRLS). Fatal outside dev, warning in dev. |
 | `MIGRATION_DATABASE_URL` | — | **Required outside dev.** `audit_migrator`, direct to Postgres (not PgBouncer). Falls back to `DATABASE_URL` in dev. |
 | `RECONCILER_DATABASE_URL` / `DB_RECONCILER_ROLE` | — / `audit_reconciler` | **Required for `cmd/reconciler`.** BYPASSRLS role, never given to the server |
-| `PG_MAX_CONNS` / `PG_MIN_CONNS` / `PG_SLOW_QUERY_THRESHOLD` / `PG_MAX_CONN_LIFETIME` / `PG_MAX_CONN_IDLE_TIME` / `PG_HEALTH_CHECK_PERIOD` / `PG_SSLMODE` | library defaults (Helm: `20` server, `4` reconciler; `200ms`) | **pgcommon** `ConfigFromEnv` pool tunables |
+| `PG_MAX_CONNS` / `PG_MIN_CONNS` / `PG_SLOW_QUERY_THRESHOLD` / `PG_MAX_CONN_LIFETIME` / `PG_MAX_CONN_IDLE_TIME` / `PG_HEALTH_CHECK_PERIOD` / `PG_STATEMENT_TIMEOUT` / `PG_LOCK_TIMEOUT` / `PG_POOL_NAME` | library defaults (Helm: `20` server, `4` reconciler; `200ms`) | **pgcommon** `ConfigFromEnv` pool tunables. Each pool gets its DSN explicitly, so `PG_HOST`/`PG_USER`/`PG_DBNAME`/`PG_SSLMODE` are never used (sslmode belongs in the DSN). |
 | `PG_BOUNCER_MODE` | read by pgcommon | **Overridden to `true`** for both pools regardless (AL-INV-3) |
 | `AWS_REGION` / `AWS_ENDPOINT_URL` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `ap-south-1` / — | floci override in dev (`http://localhost:4573`); IRSA in production |
 | `GLUE_REGISTRY_REGION` | `ap-south-1` | Region for the decode-only Glue codec |
 | `AUTH_AUDIT_QUEUE_URL` … `WF_TEMPLATE_AUDIT_QUEUE_URL` (11) | — | **Required outside dev**, one per inbound queue (LLD §7.1) |
-| `SQS_MAX_RECEIVE_COUNT` / `SQS_VISIBILITY_TIMEOUT` / `SQS_CONCURRENCY` | `.env`: `5` / `30s` / `4` | **platform-events** `config.LoadSQS`. `SQS_MAX_RECEIVE_COUNT` also sets the dead-letter observe point (one short). |
+| `SQS_MAX_RECEIVE_COUNT` / `SQS_VISIBILITY_TIMEOUT` / `SQS_CONCURRENCY` / `SQS_HANDLER_TIMEOUT` / `SQS_DRAIN_TIMEOUT` / `SQS_MAX_MESSAGES` / `SQS_WAIT_SECONDS` | Helm: `5` / `30s` / `4` / `20s` / `15s` / library `10` / `20` | **platform-events** `config.LoadSQS`. `SQS_MAX_RECEIVE_COUNT` also sets the dead-letter observe point (one short). The fleet stops every queue concurrently, so `SQS_DRAIN_TIMEOUT` (+5 s) bounds the whole SIGTERM drain. `SQS_QUEUE_DEPTH_INTERVAL` stays unset: `OpsMonitor` publishes the queue-depth gauges. |
 | `AUDIT_ARCHIVE_BUCKET` / `AUDIT_ARCHIVE_KMS_KEY` | `iam-audit-archive` / `alias/iam-audit-archive` | Archive and export bucket, SSE-KMS key |
 | `AUDIT_ARCHIVE_OBJECT_LOCK_MODE` | `COMPLIANCE` | `COMPLIANCE` or `GOVERNANCE`. Must be `COMPLIANCE` outside dev. |
 | `AUDIT_HOT_WINDOW_DAYS` / `AUDIT_PRECREATE_MONTHS` / `AUDIT_WRITABLE_TRAILING_MONTHS` | `90` / `3` / `3` | Archival eligibility, partition look-ahead, and how many trailing months stay writable |
@@ -598,6 +609,7 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 | `MAX_INGEST_BATCH` / `MAX_METADATA_BYTES` | `500` / `8192` | AL-6 batch cap / metadata cap (compact bytes) |
 | `INGEST_BATCH_RATE_LIMIT_RPS` / `INGEST_BATCH_RATE_LIMIT_BURST` | `10` / `20` | AL-6 per-tenant bucket (D-5) |
 | `ARCHIVE_SYNC_MAX_ROWS` / `ARCHIVE_SYNC_MAX_BYTES` | `10000` / `52428800` | Archived-read sync bounds: above them AL-1 returns `202`, AL-7 returns `422` (D-10, D-14) |
+| `ARCHIVE_READ_CONCURRENCY` | `2` | Synchronous archived reads (AL-1/AL-7) in memory at once per replica, 1–32. Each holds up to the sync bounds; the rest wait within their request deadline. |
 | `EXPORT_SIGNED_URL_TTL` | `168h` | Export object lifetime |
 | `EXPORT_DOWNLOAD_URL_TTL` | `15m` | Per-poll presigned URL TTL, at most `168h` (SigV4 limit) (D-11) |
 | `EXPORT_RATE_LIMIT_PER_MINUTE` / `EXPORT_RATE_LIMIT_BURST` | `10` / `5` | AL-3 per-tenant bucket (§10.5) |
@@ -610,7 +622,9 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 | `REDACTION_SWEEP_WINDOW` | `2160h` | `redaction-sweep` look-back (24 h–9600 h) |
 | `ARCHIVE_PART_MAX_ROWS` / `ARCHIVE_WORK_DIR` | `50000` / `os.TempDir()` | Rows per archive part (1000–1000000), temp dir |
 | `DOCS_ENABLED` / `DOCS_AUTH_TOKEN` | `false` / — | AsyncAPI route gating in production |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` (+ `OTEL_EXPORTER_OTLP_INSECURE`, `OTEL_TRACES_SAMPLER_RATIO`, …) | unset (Helm: `otel-collector.observability.svc.cluster.local:4317`) | **gincommon** `InitTracingFromEnv`. Tracing is opt-in. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_INSECURE` / `OTEL_TRACES_SAMPLER_RATIO` / `OTEL_PROPAGATOR_BAGGAGE` / `OTEL_TRACES_IGNORE_REMOTE_PARENT_SAMPLED` | `localhost:4317` / `true` in dev / `1.0` dev, `0.1` otherwise / `false` / `false` (Helm: collector endpoint, `false`, `0.1`, `false`, `false`) | **gincommon** `InitTracingWithConfig`. Set the endpoint to `none` (or `OTEL_TRACES_EXPORTER=none`) to turn export off. |
+| `LOG_LEVEL` / `LOG_SAMPLING` | `debug` in dev/local, else `info` / `false` | **gincommon** logger |
+| `OBSERVABILITY_DOMAIN` | `iam` | **gincommon** identity fallback; the binaries also pass `domain=iam` in code |
 | `SNS_TOPIC_ARN` / `OUTBOX_DATABASE_URL` | — | **Never read.** If set, the server logs a warning and ignores it (AL-INV-10). |
 
 `LoadServer` and `LoadReconciler` report **every** missing or invalid variable at once and abort startup (fail-fast).
@@ -630,6 +644,8 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 | **Exports** | SSE-KMS objects, reached only through short-lived presigned URLs minted per AL-4 poll (default 15 m). No long-lived link is stored. |
 | **Log hygiene** | Logs carry identifiers, never payloads or `metadata` (`TestLogHygiene_NoPayloadFields`). Metric labels exclude unbounded keys such as `tenant_id`, `user_id`, `actor_id` and `event_id` (registry `forbidden` list). |
 | **Least-privilege AWS** | `deploy/iam/policy.json`, checked by `TestIAMPolicy_LeastPrivilege`: SQS receive, delete, visibility and attributes; S3 object, retention and Object Lock actions on the archive bucket; KMS `Decrypt`, `GenerateDataKey` and `DescribeKey`; Glue `GetSchemaVersion` and `GetSchemaByDefinition` only |
+| **Internal-route identity (D-23)** | The service checks only the `iam-system` role header on `/api/v1/internal/*`, so the chart checks the caller: an Istio `AuthorizationPolicy` (`templates/mesh.yaml`) allows the prefix only from the SPIFFE principals in `mesh.authorizationPolicy.internalCallerPrincipals`, and `/api/v1/audit/*` only from the gateway; the NetworkPolicy admits only `networkPolicy.internalCallers`. `APP_ENV=prod` refuses to render without the policy (`mesh.acknowledgeNoMesh` is the tracked escape hatch). |
+| **Poison messages (D-22)** | Malformed or undecodable messages are forwarded to their queue's own DLQ (`events.WithDLQForwarding`), never deleted; the IRSA role may `SendMessage` to the audit DLQs only. platform-events logs only the body's size and SHA-256. |
 | **Pod hardening** | Distroless `nonroot` (UID 65532), `readOnlyRootFilesystem`, all capabilities dropped, `seccompProfile: RuntimeDefault`, NetworkPolicy enabled by default. The public ingress exposes only `/api/v1/audit` (`TestHelm_IngressExposesOnlyPublicAuditAPI`). |
 
 ---
@@ -647,28 +663,24 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 
 ### Metrics
 
-Metrics follow the **Enterprise Platform Observability Standard** (LLD §11 rev 0.26, gap 46), implemented in `internal/adapter/outbound/metrics/business.go`. Constant labels are injected centrally, never at a call site. The service label value is **`service="audit-log"`**. Every collector registers on `gincommon.MetricsRegisterer()`.
+Metrics follow the **Enterprise Platform Observability Standard** (LLD §11, gap 46), as implemented in `internal/adapter/outbound/metrics/business.go`. Every collector registers on `gincommon.MetricsRegisterer()`. gincommon injects `domain="iam"`, `service="iam-audit-log"` and `environment` centrally, never at a call site.
 
-- **Tier 1 — `platform_*`** (carries `domain="iam"`, `service` and `environment`; all 10 are Canonical in the Platform Observability Registry, and this service adds none of its own):
-  - `platform_messages_received_total{queue,event_type}`
-  - `platform_messages_processed_total{event_type}`
-  - `platform_messages_failed_total{event_type,reason}`
-  - `platform_retry_total{event_type,reason}`
-  - `platform_dlq_messages_total{queue,reason}`
-  - `platform_duplicate_messages_total{event_type}`
-  - `platform_dependency_request_seconds{dependency,operation,outcome}` (Catalog CAT-I2 and S3)
-  - `platform_event_propagation_seconds{event_type}`
-  - `platform_queue_depth{queue}`
-  - `platform_dlq_depth{queue}`
-- **Tier 2 — `iam_*`** (carries `service` and `environment`): `iam_rls_violations_total{violation_type}`
-- **Tier 3 — `iam_audit_log_*`** (unique to this service):
-  - Ingest: `events_ingested_total`, `duplicate_events_total`, `unknown_event_total`, `ingest_lag_seconds`, `directwrite_requests_total`, `dlq_messages_total`
-  - Query and export: `query_window_clamped_total`, `query_archived_reads_total`, `export_jobs_total`
-  - Storage and archive: `default_partition_rows`, `default_partition_rows_total`, `archive_stalled`, `archive_stalled_partitions`, `archive_lag_seconds`, `archive_partitions_total`, `retention_pruned_total`
-  - Redaction: `redaction_pending_tasks`, `redaction_tasks_total`, `redaction_blocked_archive_total`
-  - Catalog poller: `catalog_plans_poll_total`, `catalog_plans_stale_seconds`
+- **Tier 1 — `platform_*`:** recorded by the libraries.
+  - gincommon: `platform_http_*`.
+  - platform-events: `platform_messages_*`, `platform_retry_total`, `platform_event_propagation_seconds`.
+  - pgcommon: `platform_db_*`.
+  - The service builds the five it records into from the registry (`gincommon.NewShared*Vec`): `platform_dlq_messages_total`, `platform_duplicate_messages_total`, `platform_dependency_request_seconds` (Catalog CAT-I2 and S3), `platform_queue_depth` and `platform_dlq_depth`.
+- **Tier 2 — `iam_*`:** `iam_rls_violations_total{violation_type}`, built from its registry entry (status proposed).
+- **Tier 3 — `iam_audit_log_*`:** 18 service-owned metrics (ingest, query and export, archival, redaction, catalog poller), built with gincommon's validating constructors.
 
-The `registry.go` ledger and `deploy/monitoring/metric-registry.yaml` must agree. `TestMetricRegistry_*` checks this, and `metrics-registry-lint.sh` fails CI if a Proposed name is used as a live alert, recording-rule, SLO or HPA target. `check-metric-naming.sh` enforces tier prefixes, the `_total` and `_seconds` suffixes, and central labels. Library series come on top: gincommon `platform_http_*`, pgcommon `platform_db_*` (pool and query), and platform-events `platform_messages_*`.
+| Doc | Contents |
+|---|---|
+| [`docs/observability/README.md`](docs/observability/README.md) | How the standard is implemented here: identity, tiers, who counts what, proposed metrics, adding a metric, CI checks, SLOs, HPA |
+| [`docs/observability/metric-registry.md`](docs/observability/metric-registry.md) | The generated inventory of every metric (`make metrics-inventory`; CI fails when it is stale) |
+| [`docs/observability/migration.md`](docs/observability/migration.md) | Renamed and removed metric names |
+| [`docs/observability/runbooks.md`](docs/observability/runbooks.md) | Per-alert triage |
+
+`make metrics-lint` runs platform-gincommon's `metricslint` on a real scrape, the reference check on `deploy/` and the operator docs, and the inventory drift check. `check-metric-naming.sh` and `metrics-registry-lint.sh` cover construction and the marking of proposed metrics.
 
 ### Alerts, dashboards and runbooks
 
@@ -679,11 +691,11 @@ The `registry.go` ledger and `deploy/monitoring/metric-registry.yaml` must agree
 - `recording-rules.yml`: 20 `service:<metric>:<agg>` rules
 - `dashboard-audit-log.json`: the Grafana dashboard
 
-The Helm `PrometheusRule` (30 alerts) is **generated** from the three rule files by `scripts/gen-prometheusrule.py`. Every alert links a runbook in [`docs/runbook.md`](docs/runbook.md) (RB-1..RB-10).
+The Helm `PrometheusRule` (30 alerts) is **generated** from the three rule files by `scripts/gen-prometheusrule.py`. Every alert has a triage entry in [`docs/observability/runbooks.md`](docs/observability/runbooks.md), and links a full procedure in [`docs/runbook.md`](docs/runbook.md) (RB-1..RB-10).
 
 ### Tracing and logs
 
-`gincommon.InitTracingFromEnv()` is gated on `OTEL_EXPORTER_OTLP_ENDPOINT`. pgcommon emits a span per query through the telemetry tracer. Each reconciler run is wrapped in a `reconciler.<job>` span. Logs are structured Zap through gincommon only (gap 43). They carry identifiers such as `tenant_id`, `event_type` and `job`, and never an event payload or metadata.
+`gincommon.InitTracingWithConfig` starts tracing with the same identity as the metrics (service, version, `domain=iam`, environment). Export goes to `OTEL_EXPORTER_OTLP_ENDPOINT` unless it is `none`. pgcommon emits a span per query through the telemetry tracer. Each reconciler run is wrapped in a `reconciler.<job>` span. Logs are structured Zap through gincommon only (gap 43). They carry identifiers such as `tenant_id`, `event_type` and `job`, and never an event payload or metadata.
 
 ---
 
@@ -713,16 +725,18 @@ The image has `EXPOSE 8080 9090`.
 | HPA | Off by default (`autoscaling.enabled: false`). When enabled: 3–6 replicas, CPU 70% / memory 80%, optionally scaling on `targetQueueDepthPerReplica` via `platform_queue_depth`. |
 | PDB | `minAvailable: 2` |
 | Resources | CPU `250m`/`1`, memory `256Mi`/`512Mi` |
-| `terminationGracePeriodSeconds` | `45` |
+| `terminationGracePeriodSeconds` | `45`: HTTP shutdown, then the consumer fleet drains concurrently within `SQS_DRAIN_TIMEOUT` (15 s), then the pool |
+| Database timeouts | server `PG_STATEMENT_TIMEOUT=30s` / `PG_LOCK_TIMEOUT=5s`; reconciler `25m` / `10s` |
+| Service mesh | `mesh.*`: Istio `AuthorizationPolicy` + `PeerAuthentication`, sidecar injection on the server (`holdApplicationUntilProxyStarts`, 40 s drain), opted out on CronJobs |
 | Probes | `startupProbe` on `/healthz` with a 120 s budget for migrations. Liveness on `/healthz`, readiness on `/readyz`. |
 | Monitoring | `ServiceMonitor` (30 s), `PrometheusRule` |
-| Network and ingress | NetworkPolicy. HTTPRoute or Ingress is off by default and exposes only `/api/v1/audit`. |
+| Network and ingress | NetworkPolicy: `/api/v1/internal/*` callers from `networkPolicy.internalCallers` only, Catalog egress to Catalog Admin only, istiod egress when meshed. HTTPRoute or Ingress is off by default and exposes only `/api/v1/audit`. |
 
 Secrets are split per root: `DATABASE_URL` and `MIGRATION_DATABASE_URL` for the server, `RECONCILER_DATABASE_URL` for the reconciler.
 
 ### Migration safety
 
-`cmd/server` runs `internal/adapter/outbound/postgres/migrations/` at startup through pgcommon's migrate runner, as `audit_migrator` on a direct connection. The runner takes an advisory lock, so migrations must not go through PgBouncer. There are 10 up/down pairs: `000001_schema`, `000002_rls`, `000003_roles`, `000004_triggers`, `000005_partition_bootstrap`, `000006_archive_manifest_export_claim`, `000007_redaction`, `000008_reconciler`, `000009_ops_stats` and `000010_rls_violation_export`. Prerequisites outside this repo (Terraform, the Object Lock bucket, KMS, IRSA, the queues) are listed in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
+`cmd/server` runs `internal/adapter/outbound/postgres/migrations/` at startup through pgcommon's migrate runner, as `audit_migrator` on a direct connection. The runner takes an advisory lock, so migrations must not go through PgBouncer. There are 11 up/down pairs: `000001_schema`, `000002_rls`, `000003_roles`, `000004_triggers`, `000005_partition_bootstrap`, `000006_archive_manifest_export_claim`, `000007_redaction`, `000008_reconciler`, `000009_ops_stats`, `000010_rls_violation_export` and `000011_reconciler_lease`. Prerequisites outside this repo (Terraform, the Object Lock bucket, KMS, IRSA, the queues) are listed in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
 
 ---
 
@@ -744,7 +758,7 @@ Five workflow files:
   3. RLS-6 non-`LOCAL` `SET app.tenant_id` grep
   4. `check-metric-naming.sh`
   5. `check-observability-confinement.sh`
-  6. `metrics-registry-lint.sh`
+  6. `metrics-registry-lint.sh` and `metricslint.sh` (`make metrics-lint`: gincommon `metricslint` on a real scrape, the reference check, inventory drift)
   7. `check-forbidden-events-bypass.sh` and `check-outbox-access.sh` (AL-INV-10)
   8. `check-asyncapi-receive-only.sh`
   9. `check-grants.sh` (AL-INV-1)
@@ -895,9 +909,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, extending the taxo
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Detailed architecture narrative |
 | [`docs/architecture/`](docs/architecture/README.md) | Mermaid diagrams |
 | [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | The LLD: §5 API, §7 events, §11 observability, §17 error taxonomy, §22 decisions |
-| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → test map, D-1..D-21, gaps |
+| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → test map, D-1..D-23, gaps |
 | [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites outside this repo |
 | [`docs/runbook.md`](docs/runbook.md) | RB-1..RB-10 |
+| [`docs/observability/`](docs/observability/README.md) | Observability standard as implemented here, metric inventory, migration, per-alert runbooks |
 | [`deploy/monitoring/README.md`](deploy/monitoring/README.md) | Metric inventory, rule files, dashboard |
 | [`CHANGELOG.md`](CHANGELOG.md) / [`VERSIONING.md`](VERSIONING.md) | Release history / versioning policy |
 

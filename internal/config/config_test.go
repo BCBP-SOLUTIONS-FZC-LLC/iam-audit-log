@@ -40,6 +40,7 @@ func TestLoadServer_Defaults(t *testing.T) {
 		"AUDIT_PRECREATE_MONTHS":          {c.PrecreateMonths, 3},
 		"AUDIT_WRITABLE_TRAILING_MONTHS":  {c.WritableTrailingMonths, 3},
 		"AUDIT_DEFAULT_QUERY_WINDOW_DAYS": {c.DefaultQueryWindowDays, 365},
+		"ARCHIVE_READ_CONCURRENCY":        {c.ArchiveReadConcurrency, 2},
 		"CATALOG_BASE_URL":                {c.CatalogBaseURL, "http://iam-catalog-admin.iam.svc.cluster.local:8080"},
 		"CATALOG_PLANS_POLL_INTERVAL":     {c.CatalogPollInterval, 600 * time.Second},
 		"CATALOG_PLANS_POLL_TIMEOUT":      {c.CatalogPollTimeout, 3 * time.Second},
@@ -112,6 +113,9 @@ func TestLoadReconciler_NeverUsesAppDSN(t *testing.T) {
 	}
 	if c.ReconcilerDatabaseURL != "postgres://recon" || c.DBReconcilerRole != "audit_reconciler" {
 		t.Errorf("unexpected reconciler DB config: %+v", c)
+	}
+	if c.ServiceName != "iam-audit-log-reconciler" || c.MetricsServiceName != "iam-audit-log" {
+		t.Errorf("ServiceName %q / MetricsServiceName %q", c.ServiceName, c.MetricsServiceName)
 	}
 	if c.ProcessedEventsTTLDays != 8 {
 		t.Errorf("PROCESSED_EVENTS_TTL_DAYS default %d, want 8", c.ProcessedEventsTTLDays)

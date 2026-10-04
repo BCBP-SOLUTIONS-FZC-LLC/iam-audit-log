@@ -79,7 +79,7 @@ groups:
           description: >-
             The 1 h and 5 m error ratios exceed 14.4× the 1% budget. Check the SQS
             backlog, consumer replicas and Postgres latency.
-          runbook_url: docs/runbook.md#rb-1
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogIngestLagSLOSlowBurn
         expr: |
@@ -93,7 +93,7 @@ groups:
           summary: Ingest-lag SLO (99% ≤ 50 ms) burning slowly
           description: >-
             The 6 h and 30 m error ratios exceed 6× the 1% budget.
-          runbook_url: docs/runbook.md#rb-1
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogPropagationSLOFastBurn
         expr: |
@@ -110,7 +110,7 @@ groups:
             Events are reaching the consumers slowly (envelope time → received;
             iam_audit_log_ingest_lag_seconds covers the persist step). Check platform_queue_depth, the
             failure ratio and consumer health.
-          runbook_url: docs/runbook.md#rb-1
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogPropagationSLOSlowBurn
         expr: |
@@ -125,7 +125,7 @@ groups:
           summary: Propagation SLO (99% ≤ 5 s) burning slowly
           description: >-
             The 6 h and 30 m error ratios exceed 6× the 1% budget.
-          runbook_url: docs/runbook.md#rb-1
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogAvailabilitySLOFastBurn
         expr: |
@@ -140,7 +140,7 @@ groups:
           summary: Query/ingest API availability SLO (99% non-5xx) burning fast
           description: >-
             Check Postgres and S3 reachability (dependency_unavailable) and recent deploys.
-          runbook_url: docs/runbook.md#rb-6
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-6--direct-write-producer-failing
 
       - alert: IAMAuditLogAvailabilitySLOSlowBurn
         expr: |
@@ -155,4 +155,4 @@ groups:
           summary: Query/ingest API availability SLO (99% non-5xx) burning slowly
           description: >-
             The 6 h and 30 m error ratios exceed 6× the 1% budget.
-          runbook_url: docs/runbook.md#rb-6
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-6--direct-write-producer-failing

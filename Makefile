@@ -19,7 +19,7 @@ export GONOSUMDB  ?= github.com/BCBP-SOLUTIONS-FZC-LLC/*
 DOCKER_SOCKET     := $(shell [ -S /Users/$(USER)/.docker/run/docker.sock ] && echo unix:///Users/$(USER)/.docker/run/docker.sock || echo unix:///var/run/docker.sock)
 export DOCKER_HOST ?= $(DOCKER_SOCKET)
 
-export APP_NAME APP_ENV OBSERVABILITY_DOMAIN BUILD_VERSION
+export APP_ENV OBSERVABILITY_DOMAIN BUILD_VERSION
 
 # Test package groups (explicit to handle per-group build tags cleanly).
 TEST_UNIT_PKGS     := ./test/unit/...
@@ -36,6 +36,10 @@ TEST_E2E_PKGS      := ./test/e2e/...
 # (validate-test.yml). Override on the CLI on a bigger box, e.g.
 # `make test-postgres TEST_POSTGRES_PARALLEL=8`.
 TEST_POSTGRES_PARALLEL ?= 4
+# The postgres package alone takes ~6–7 min with -race (350–405 s measured,
+# more at CI's -parallel 1); 300 s timed the whole package out. Keep it under
+# validate-test.yml's 40-minute job limit.
+TEST_POSTGRES_TIMEOUT ?= 1500s
 # The integration tier shares ONE floci per run (test/integration/
 # harness_test.go); keep this low so queue/DLQ assertions stay deterministic.
 TEST_INTEGRATION_PARALLEL ?= 2
@@ -107,6 +111,8 @@ help:
 	@echo "  make lint             - run golangci-lint (default build + every test build tag)"
 	@echo "  make arch-lint        - go-arch-lint against .go-arch-lint.yml + grep gates (LLD §3.2)"
 	@echo "  make invariant-lint   - AL-INV-1 grants, platform-events/gincommon confinement, receive-only AsyncAPI, metric naming"
+	@echo "  make metrics-lint     - platform-gincommon metricslint (scrape, refs) + docs/observability inventory drift"
+	@echo "  make metrics-inventory - regenerate docs/observability/metric-registry.md"
 	@echo "  make test             - unit + postgres + integration tests (requires Docker)"
 	@echo "  make test-ci          - test with race detector + merged coverage (used in CI; 95% gate)"
 	@echo "  make test-unit        - unit tests only (no Docker required)"
@@ -122,7 +128,7 @@ help:
 	@echo "  make migrate-create NAME=<desc> - scaffold the next NNNNNN_<desc>.{up,down}.sql"
 	@echo "  make cover            - coverage HTML report"
 	@echo "  make cover-func       - coverage summary by function"
-	@echo "  make ci               - tidy + fmt-check + vet + lint + arch-lint + invariant-lint + test-ci + build"
+	@echo "  make ci               - tidy + fmt-check + vet + lint + arch-lint + invariant-lint + metrics-lint + test-ci + build"
 	@echo "  make docker-up        - start local Postgres + floci (SNS/SQS/S3/Glue)"
 	@echo "  make docker-down      - stop local containers"
 	@echo "  make mod-verify       - go mod verify"
@@ -190,6 +196,19 @@ lint:
 arch-lint:
 	bash .github/scripts/arch-lint.sh
 
+# metrics-lint: platform-gincommon's metricslint over a real /metrics scrape,
+# the alert/dashboard/runbook references, and the docs/observability inventory
+# (the same script CI's validate-quality.yml runs).
+.PHONY: metrics-lint
+metrics-lint:
+	bash .github/scripts/metricslint.sh
+
+# metrics-inventory: regenerate docs/observability/metric-registry.md from the
+# pinned registry and a real scrape (metrics-lint fails when it is stale).
+.PHONY: metrics-inventory
+metrics-inventory:
+	METRICS_INVENTORY_WRITE=1 bash .github/scripts/metricslint.sh
+
 # invariant-lint: the service-specific CI gates —
 #   check-grants.sh                     AL-INV-1 (audit_app INSERT+SELECT only)
 #   check-forbidden-events-bypass.sh    AL-INV-10 + platform-events-only (gap 45)
@@ -220,7 +239,7 @@ _test-unit: | .coverage
 .PHONY: _test-postgres
 _test-postgres: | .coverage
 	{ $(GO) test $(TEST_POSTGRES_PKGS) \
-	  -tags=integration -race -count=1 -timeout 300s -parallel $(TEST_POSTGRES_PARALLEL) \
+	  -tags=integration -race -count=1 -timeout $(TEST_POSTGRES_TIMEOUT) -parallel $(TEST_POSTGRES_PARALLEL) \
 	  -coverpkg=$(COVER_PKG_LIST) \
 	  -coverprofile=.coverage/postgres.out \
 	  2>&1; echo $$? >.coverage/postgres.exitcode; } | tee .coverage/postgres.raw; \
@@ -247,7 +266,7 @@ test:
 _test-unit-plain:
 	$(GO) test $(TEST_UNIT_PKGS) $(TEST_INTERNAL_PKGS) -count=1 -timeout 120s -v
 _test-postgres-plain:
-	$(GO) test $(TEST_POSTGRES_PKGS) -tags=integration -count=1 -timeout 300s -parallel $(TEST_POSTGRES_PARALLEL) -v
+	$(GO) test $(TEST_POSTGRES_PKGS) -tags=integration -count=1 -timeout $(TEST_POSTGRES_TIMEOUT) -parallel $(TEST_POSTGRES_PARALLEL) -v
 _test-integration-plain:
 	$(GO) test $(TEST_INT_PKGS) -tags=integration -count=1 -timeout 600s -parallel $(TEST_INTEGRATION_PARALLEL) -v
 
@@ -271,7 +290,7 @@ test-unit:
 
 .PHONY: test-postgres
 test-postgres:
-	$(GO) test $(TEST_POSTGRES_PKGS) -tags=integration -count=1 -timeout 300s -parallel $(TEST_POSTGRES_PARALLEL) -v
+	$(GO) test $(TEST_POSTGRES_PKGS) -tags=integration -count=1 -timeout $(TEST_POSTGRES_TIMEOUT) -parallel $(TEST_POSTGRES_PARALLEL) -v
 
 .PHONY: test-integration
 test-integration:
@@ -359,7 +378,7 @@ docker-down:
 # -----------------------------
 
 .PHONY: ci
-ci: tidy fmt-check vet lint arch-lint invariant-lint test-ci build
+ci: tidy fmt-check vet lint arch-lint invariant-lint metrics-lint test-ci build
 
 # -----------------------------
 # COVERAGE

@@ -8,11 +8,13 @@ import (
 	"errors"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -119,27 +121,51 @@ func TestWire_UnackedMessageRedrivesToDLQ_ALEVT4(t *testing.T) {
 	assert.GreaterOrEqual(t, deliveries.Load()+deadLettered.Load(), int32(4), "every receive up to maxReceiveCount is observed")
 }
 
-// Decision D-3 (BUILD_PLAN §C): platform-events v1.4.0 deletes a message
-// whose body is not a valid envelope — no retry, no DLQ, handler never
-// called. This test pins the library behavior so the Critical
-// events_consumed_total{status="malformed"} alert stays justified; if an
-// upstream fix starts leaving such messages for the DLQ, this test fails
-// and the D-3 workaround can be retired.
-func TestWire_MalformedEnvelopeDeletedByLibrary_KnownGapD3(t *testing.T) {
+// Decision D-22 (BUILD_PLAN §C, supersedes D-3): with WithDLQForwarding, as
+// cmd/server wires it, a body that is not a valid envelope is forwarded to
+// its queue's own DLQ (raw body kept, DLQReason=malformed) and only then
+// deleted from the source queue. The handler never sees it.
+func TestWire_MalformedEnvelopeForwardedToDLQ_D22(t *testing.T) {
 	e := newEnv(t)
 	url := e.queueURL(t, "tenant-audit-q")
 	dlq := e.queueURL(t, "tenant-audit-q-dlq")
+	ctx := context.Background()
+	// Shared floci: start from an empty DLQ and match only this test's body.
+	_, err := e.sqs.PurgeQueue(ctx, &sqs.PurgeQueueInput{QueueUrl: aws.String(dlq)})
+	require.NoError(t, err)
 
+	pub, err := events.NewSQSDLQPublisherWithClient(events.DLQConfig{Region: "ap-south-1", ConsumerName: "iam-audit-log"}, e.sqs)
+	require.NoError(t, err)
 	var calls atomic.Int32
 	e.startConsumer(t, url, func(context.Context, events.Envelope[json.RawMessage]) error {
 		calls.Add(1)
 		return nil
-	}, events.WithVisibilityTimeout(time.Second))
+	}, events.WithVisibilityTimeout(2*time.Second), events.WithDLQForwarding(pub))
 
-	e.publish(t, "iam-tenant-events", []byte("{not an envelope"))
+	body := "{not an envelope " + uuid.NewString()
+	e.publish(t, "iam-tenant-events", []byte(body))
 
-	eventually(t, 30*time.Second, func() bool { return e.approxCount(t, url) == 0 }, "malformed message was not consumed")
-	time.Sleep(2 * time.Second)
+	var reason string
+	eventually(t, 30*time.Second, func() bool {
+		out, err := e.sqs.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl: aws.String(dlq), MaxNumberOfMessages: 10, VisibilityTimeout: 0,
+			MessageAttributeNames: []string{"All"},
+		})
+		if err != nil {
+			return false
+		}
+		for _, m := range out.Messages {
+			if aws.ToString(m.Body) == body {
+				if a, ok := m.MessageAttributes[events.DLQAttrReason]; ok {
+					reason = aws.ToString(a.StringValue)
+				}
+				return true
+			}
+		}
+		return false
+	}, "malformed message was not forwarded to the DLQ")
+	// DLQReason is the human-readable cause; the metric carries the code.
+	assert.True(t, strings.HasPrefix(reason, "malformed message body"), "DLQReason = %q", reason)
 	assert.Zero(t, calls.Load(), "handler must never see a malformed body")
-	assert.Zero(t, e.approxCount(t, dlq), "known gap D-3: the library deletes it instead of DLQ'ing")
+	eventually(t, 15*time.Second, func() bool { return e.approxCount(t, url) == 0 }, "source copy was not deleted after the forward")
 }

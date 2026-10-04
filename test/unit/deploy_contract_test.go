@@ -27,6 +27,18 @@ type helmValues struct {
 		JobName           string `yaml:"jobName"`
 		ConcurrencyPolicy string `yaml:"concurrencyPolicy"`
 	} `yaml:"cronjobs"`
+	NetworkPolicy struct {
+		Enabled                bool             `yaml:"enabled"`
+		InternalCallers        []map[string]any `yaml:"internalCallers"`
+		AllowNoInternalCallers bool             `yaml:"allowNoInternalCallers"`
+	} `yaml:"networkPolicy"`
+	Mesh struct {
+		AcknowledgeNoMesh   bool `yaml:"acknowledgeNoMesh"`
+		AuthorizationPolicy struct {
+			Enabled                  bool     `yaml:"enabled"`
+			InternalCallerPrincipals []string `yaml:"internalCallerPrincipals"`
+		} `yaml:"authorizationPolicy"`
+	} `yaml:"mesh"`
 }
 
 func loadValues(t *testing.T) helmValues {
@@ -120,6 +132,44 @@ func TestHelm_IngressExposesOnlyPublicAuditAPI(t *testing.T) {
 	}
 }
 
+// LLD §10.2: /api/v1/internal/* is identity-checked, not header-trusted.
+// The defaults ship the Istio AuthorizationPolicy with named caller
+// principals and a NetworkPolicy caller allow-list (never the whole
+// namespace), and the templates refuse to render production without them.
+func TestHelm_InternalRoutesRequireMeshIdentity(t *testing.T) {
+	v := loadValues(t)
+	if !v.Mesh.AuthorizationPolicy.Enabled || len(v.Mesh.AuthorizationPolicy.InternalCallerPrincipals) == 0 || v.Mesh.AcknowledgeNoMesh {
+		t.Errorf("mesh defaults = %+v: the AuthorizationPolicy with caller principals must be on", v.Mesh)
+	}
+	for _, p := range v.Mesh.AuthorizationPolicy.InternalCallerPrincipals {
+		if !strings.HasPrefix(p, "cluster.local/ns/") || strings.Contains(p, "*") {
+			t.Errorf("principal %q must be an exact SPIFFE id", p)
+		}
+	}
+	if !v.NetworkPolicy.Enabled || len(v.NetworkPolicy.InternalCallers) == 0 || v.NetworkPolicy.AllowNoInternalCallers {
+		t.Errorf("networkPolicy defaults = %+v: an explicit internal caller list is required", v.NetworkPolicy)
+	}
+	np := string(repoFile(t, "deploy/helm/templates/networkpolicy.yaml"))
+	if regexp.MustCompile(`(?m)^\s*- podSelector: \{\}`).MatchString(np) {
+		t.Error("networkpolicy.yaml admits every pod in the namespace (podSelector: {})")
+	}
+	mesh := string(repoFile(t, "deploy/helm/templates/mesh.yaml"))
+	for _, want := range []string{
+		`paths: ["/api/v1/internal/*"]`, `paths: ["/api/v1/audit/*"]`, `notPrincipals: ["*"]`,
+		"APP_ENV=prod requires mesh.authorizationPolicy.enabled", "requires mesh.authorizationPolicy.internalCallerPrincipals",
+	} {
+		if !strings.Contains(mesh, want) {
+			t.Errorf("mesh.yaml missing %q", want)
+		}
+	}
+	if !strings.Contains(np, "networkPolicy.internalCallers must list") {
+		t.Error("networkpolicy.yaml must refuse an empty internal caller list")
+	}
+	if !strings.Contains(string(repoFile(t, "deploy/helm/templates/cronjobs.yaml")), `sidecar.istio.io/inject: "false"`) {
+		t.Error("CronJob pods must opt out of sidecar injection (a sidecar keeps the Job from completing)")
+	}
+}
+
 // LLD §13 rev 0.19: pod labels published for callers' NetworkPolicy selectors.
 func TestHelm_PodLabels(t *testing.T) {
 	helpers := string(repoFile(t, "deploy/helm/templates/_helpers.tpl"))
@@ -135,8 +185,9 @@ func TestHelm_PodLabels(t *testing.T) {
 func TestIAMPolicy_LeastPrivilege(t *testing.T) {
 	var policy struct {
 		Statement []struct {
-			Effect string   `json:"Effect"`
-			Action []string `json:"Action"`
+			Effect   string   `json:"Effect"`
+			Action   []string `json:"Action"`
+			Resource []string `json:"Resource"`
 		} `json:"Statement"`
 	}
 	if err := json.Unmarshal(repoFile(t, "deploy/iam/policy.json"), &policy); err != nil {
@@ -145,7 +196,16 @@ func TestIAMPolicy_LeastPrivilege(t *testing.T) {
 	var denied []string
 	for _, s := range policy.Statement {
 		for _, a := range s.Action {
-			if s.Effect == "Allow" && (strings.HasPrefix(a, "sns:") || a == "sqs:SendMessage" || a == "s3:DeleteObject" || strings.HasSuffix(a, ":*")) {
+			if s.Effect == "Allow" && a == "sqs:SendMessage" {
+				// D-22: poison messages go to the source queue's own DLQ only.
+				for _, r := range s.Resource {
+					if !strings.HasSuffix(r, "-audit-q-dlq") {
+						t.Errorf("sqs:SendMessage allowed on %s — only the audit DLQs (D-22)", r)
+					}
+				}
+				continue
+			}
+			if s.Effect == "Allow" && (strings.HasPrefix(a, "sns:") || a == "s3:DeleteObject" || strings.HasSuffix(a, ":*")) {
 				t.Errorf("forbidden Allow %s", a)
 			}
 			if s.Effect == "Allow" && strings.HasPrefix(a, "glue:") && !strings.HasPrefix(a, "glue:Get") {

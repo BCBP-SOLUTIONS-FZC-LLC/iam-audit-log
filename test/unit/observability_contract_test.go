@@ -21,14 +21,14 @@ import (
 )
 
 // registeredMetrics returns every collector name constructed in
-// registerMetrics() (business.go is the sole registration file, §11): the
-// prometheus.New* Name: literals and the registry names passed to
-// gincommon.NewShared*Vec.
+// buildCollectors() (business.go is the sole registration file, §11): the
+// names passed to gincommon.New* / NewShared*Vec, and the Name: literal of
+// the one prometheus.NewGaugeFunc.
 func registeredMetrics(t *testing.T) map[string]bool {
 	t.Helper()
 	src := string(repoFile(t, "internal/adapter/outbound/metrics/business.go"))
 	out := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?:Name:\s*|NewShared\w+Vec\([^,]+,\s*)"([a-z0-9_]+)"`).FindAllStringSubmatch(src, -1) {
+	for _, m := range regexp.MustCompile(`(?:Name:\s*|gincommon\.New\w+\([^,]+,\s*)"([a-z0-9_]+)"`).FindAllStringSubmatch(src, -1) {
 		out[m[1]] = true
 	}
 	if len(out) == 0 {
@@ -336,5 +336,64 @@ func TestLogHygiene_NoPayloadFields(t *testing.T) {
 	sort.Strings(violations)
 	for _, v := range violations {
 		t.Error(v)
+	}
+}
+
+// Every alert carries a runbook_url Alertmanager can open: an absolute link
+// into this repository's main branch whose file exists and whose anchor is a
+// real heading there (GitHub heading slugs).
+func TestAlerts_RunbookURLsResolve(t *testing.T) {
+	const base = "https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/"
+	slug := func(h string) string {
+		s := strings.ToLower(strings.TrimSpace(h))
+		s = regexp.MustCompile(`[^\w\- ]`).ReplaceAllString(s, "")
+		return strings.ReplaceAll(s, " ", "-")
+	}
+	anchors := map[string]map[string]bool{}
+	headings := func(path string) map[string]bool {
+		if a, ok := anchors[path]; ok {
+			return a
+		}
+		a := map[string]bool{}
+		for _, line := range strings.Split(string(repoFile(t, path)), "\n") {
+			if m := regexp.MustCompile(`^#{1,6} (.+)$`).FindStringSubmatch(line); m != nil {
+				a[slug(m[1])] = true
+			}
+		}
+		anchors[path] = a
+		return a
+	}
+	type rules struct {
+		Groups []struct {
+			Rules []struct {
+				Alert       string            `yaml:"alert"`
+				Annotations map[string]string `yaml:"annotations"`
+			} `yaml:"rules"`
+		} `yaml:"groups"`
+	}
+	n := 0
+	for _, f := range []string{"deploy/monitoring/app-alerts.yml", "deploy/monitoring/slo-rules.yml"} {
+		var r rules
+		repoYAML(t, f, &r)
+		for _, g := range r.Groups {
+			for _, rule := range g.Rules {
+				if rule.Alert == "" {
+					continue
+				}
+				n++
+				u := rule.Annotations["runbook_url"]
+				path, anchor, ok := strings.Cut(strings.TrimPrefix(u, base), "#")
+				if !strings.HasPrefix(u, base) || !ok {
+					t.Errorf("%s: runbook_url %q is not an absolute %s…#anchor link", rule.Alert, u, base)
+					continue
+				}
+				if !headings(path)[anchor] {
+					t.Errorf("%s: runbook_url anchor #%s is not a heading in %s", rule.Alert, anchor, path)
+				}
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no alerts parsed")
 	}
 }

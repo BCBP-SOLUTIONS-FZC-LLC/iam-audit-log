@@ -28,7 +28,7 @@ metrics:
   - { name: platform_dlq_depth,                  tier: platform, type: gauge,     labels: [queue],                           status: proposed }
 
   # ── Tier 2: iam_* (IAM Domain Registry; identical meaning in every IAM service) ──
-  - { name: iam_rls_violations_total,            tier: domain,   type: counter,   labels: [violation_type],                  status: canonical }
+  - { name: iam_rls_violations_total,            tier: domain,   type: counter,   labels: [violation_type],                  status: proposed }
 
   # ── Tier 3: iam_audit_log_* (service-owned, LLD §11) ──
   - { name: iam_audit_log_events_ingested_total,        tier: service, type: counter,   labels: [source_service, ingest_mode, entry_type], status: current }

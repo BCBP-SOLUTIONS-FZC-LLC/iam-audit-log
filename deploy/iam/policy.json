@@ -32,6 +32,12 @@
       "Resource": ["arn:aws:sqs:ap-south-1:ACCOUNT_ID:*-audit-q-dlq"]
     },
     {
+      "Sid": "ForwardPoisonToOwnDLQ",
+      "Effect": "Allow",
+      "Action": ["sqs:SendMessage", "sqs:GetQueueUrl"],
+      "Resource": ["arn:aws:sqs:ap-south-1:ACCOUNT_ID:*-audit-q-dlq"]
+    },
+    {
       "Sid": "GlueSchemaRegistryReadOnly",
       "Effect": "Allow",
       "Action": ["glue:GetSchemaVersion", "glue:GetSchemaByDefinition"],

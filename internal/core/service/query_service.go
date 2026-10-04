@@ -17,6 +17,10 @@ type QueryConfig struct {
 	DefaultWindowDays int   // AUDIT_DEFAULT_QUERY_WINDOW_DAYS
 	SyncMaxRows       int64 // ARCHIVE_SYNC_MAX_ROWS (D-10)
 	SyncMaxBytes      int64 // ARCHIVE_SYNC_MAX_BYTES (D-10)
+	// ArchiveReadConcurrency (ARCHIVE_READ_CONCURRENCY) caps the synchronous
+	// archived reads in flight; each holds up to the sync bounds in memory.
+	// <= 0 means 2.
+	ArchiveReadConcurrency int
 	// Windows is the CAT-I2 live plan → days map (AL-D15); nil until the
 	// Phase 5 poller is wired, in which case the stored row value is used.
 	Windows port.PlanWindows
@@ -27,10 +31,11 @@ type QueryConfig struct {
 // QueryService serves AL-1/AL-2: the plan-window clamp on top of RLS
 // (AL-INV-8), hot RDS reads, and bounded archived reads (D-10, D-12).
 type QueryService struct {
-	reader  port.AuditReader
-	archive port.ArchiveReader
-	cfg     QueryConfig
-	log     port.Logger
+	reader       port.AuditReader
+	archive      port.ArchiveReader
+	cfg          QueryConfig
+	log          port.Logger
+	archiveSlots chan struct{}
 }
 
 // NewQueryService wires the service.
@@ -38,7 +43,11 @@ func NewQueryService(reader port.AuditReader, archive port.ArchiveReader, cfg Qu
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &QueryService{reader: reader, archive: archive, cfg: cfg, log: log}
+	if cfg.ArchiveReadConcurrency <= 0 {
+		cfg.ArchiveReadConcurrency = 2
+	}
+	return &QueryService{reader: reader, archive: archive, cfg: cfg, log: log,
+		archiveSlots: make(chan struct{}, cfg.ArchiveReadConcurrency)}
 }
 
 // QueryRequest is one AL-1 call.
@@ -199,6 +208,15 @@ func (s *QueryService) exceedsSyncBounds(objects []domain.ArchiveObject) bool {
 // max_occurred_at, so reading stops once no remaining object can hold a
 // row newer than the oldest one kept.
 func (s *QueryService) readArchived(ctx context.Context, objects []domain.ArchiveObject, f domain.QueryFilter, w domain.Window, after *domain.Cursor, want int) ([]domain.AuditEntry, error) {
+	// A read can hold up to the sync bounds (ARCHIVE_SYNC_MAX_ROWS/BYTES) in
+	// memory, so only ArchiveReadConcurrency run at once per replica; the rest
+	// wait, bounded by the request deadline.
+	select {
+	case s.archiveSlots <- struct{}{}:
+		defer func() { <-s.archiveSlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	var out []domain.AuditEntry
 	for _, o := range objects {
 		if after != nil && o.MinOccurredAt.After(after.OccurredAt) {

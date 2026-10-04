@@ -90,6 +90,11 @@ erDiagram
         text name PK "rls_violation_log"
         bigint last_id "exactly-once metric feed"
     }
+    reconciler_job_lease {
+        text job PK "reconcile · redaction-retry · ..."
+        text holder "pod/uuid of the run"
+        timestamptz expires_at "RECONCILER_TIMEOUT + 5m"
+    }
 
     audit_events ||..o{ audit_event_archive_state : "monthly partition archived as"
     audit_event_archive_state ||..o{ audit_archive_objects : "per-tenant objects"

@@ -572,3 +572,29 @@ func TestInternalQuery_ArchivedBounds_D14(t *testing.T) {
 		t.Errorf("within bounds: res=%+v err=%v", res, err)
 	}
 }
+
+// Archived reads hold up to the sync bounds in memory, so only
+// ArchiveReadConcurrency run at once; a read that cannot get a slot waits
+// and gives up with its request deadline.
+func TestQuery_ArchivedReadsAreBounded(t *testing.T) {
+	svc := newQuery(&fakeReader{}, &fakeArchive{}, QueryConfig{ArchiveReadConcurrency: 1})
+	objs := []domain.ArchiveObject{object("k", 1, qClock().Add(-time.Hour), qClock())}
+	w := domain.Window{From: qClock().Add(-24 * time.Hour), To: qClock()}
+
+	svc.archiveSlots <- struct{}{} // the one slot is busy
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := svc.readArchived(ctx, objs, domain.QueryFilter{}, w, nil, 10); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("busy slot: err = %v, want the request deadline", err)
+	}
+	<-svc.archiveSlots
+	if _, err := svc.readArchived(context.Background(), objs, domain.QueryFilter{}, w, nil, 10); err != nil {
+		t.Fatalf("free slot: %v", err)
+	}
+	if len(svc.archiveSlots) != 0 {
+		t.Error("the slot must be released after the read")
+	}
+	if cap(NewQueryService(&fakeReader{}, nil, QueryConfig{}, nil).archiveSlots) != 2 {
+		t.Error("default concurrency must be 2")
+	}
+}

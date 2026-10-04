@@ -7,7 +7,7 @@ graph LR
         logging["Logging (Zap)\n· http_request log, IDs only"]
     end
 
-    subgraph seam["telemetry adapter — the only OTel/promhttp seam (gap 43)"]
+    subgraph seam["telemetry adapter — wrappers over gincommon's tracing/metrics API (gap 43)"]
         tracer["NewTracer — pgcommon db.query spans\n+ reconciler root span"]
         traceid["TraceID — trace_id on *Context log lines"]
         mh["MetricsHandler — /metrics on METRICS_PORT\n(exactly gincommon's registry)"]
@@ -15,10 +15,10 @@ graph LR
     end
 
     subgraph tiers["Metrics — three tiers (metric-registry.yaml, registry.go)"]
-        t1["Tier 1 platform_* (Canonical)\nmessages_received{queue,event_type} · processed{event_type}\nfailed / retry{event_type,reason} · dlq_messages{queue,reason}\nduplicate_messages{event_type} · dependency_request_seconds{dependency,operation,outcome}\nevent_propagation_seconds{event_type} · queue_depth / dlq_depth{queue}"]
+        t1["Tier 1 platform_* (registry; service-built 5)\nmessages_received{queue,event_type} · processed{event_type}\nfailed / retry{event_type,reason} · dlq_messages{queue,reason}\nduplicate_messages{event_type} · dependency_request_seconds{dependency,operation,outcome}\nevent_propagation_seconds{event_type} · queue_depth / dlq_depth{queue}"]
         t2["Tier 2 iam_*\niam_rls_violations_total{violation_type}"]
-        t3["Tier 3 iam_audit_log_*\ningest · direct-write · query/export · catalog poller\nredaction · archival · ops gauges (D-21)\n+ 3 deprecated names in parallel (compat period)"]
-        inj["central injection: domain=iam, service=audit-log,\nenvironment, version (business.go)"]
+        t3["Tier 3 iam_audit_log_*\ningest · direct-write · query/export · catalog poller\nredaction · archival · ops gauges (D-21)\nbuilt with gincommon validating constructors"]
+        inj["central injection by gincommon: domain=iam,\nservice=iam-audit-log, environment (both roots)"]
     end
 
     subgraph bg["cmd/server background (always scraped)"]
@@ -35,7 +35,7 @@ graph LR
     end
 
     subgraph ci["CI conformance"]
-        c1["metrics_registry_test · metric-lint.yaml\ncheck-metric-naming.sh · metrics-registry-lint.sh\nobservability_contract_test (no deprecated refs)"]
+        c1["metrics_registry_test · metric-lint.yaml\ncheck-metric-naming.sh · metrics-registry-lint.sh\nobservability_contract_test (known refs, runbook_url anchors)\nmetricslint.sh (scrape · refs · inventory drift)"]
     end
 
     metricsmw --> mh

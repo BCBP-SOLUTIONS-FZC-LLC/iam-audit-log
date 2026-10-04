@@ -222,6 +222,19 @@ Pinned (from sibling `go.mod`, matches LLD §3.1): Go `1.26.6`, `platform-events
   Eligibility is identical to `domain.ArchiveEligible`. Reconciler-only counters (`archive_partitions_total`, `retention_pruned_total`, `redaction_blocked_archive_total`) stay internal, and the CronJob-failure alert covers them.
 - **D-3 (gap 3):** Keep the library consumer. Add a Critical alert on `platform_messages_failed_total{reason="malformed"} > 0`
   and a runbook entry, and file a platform-events fix so malformed messages are left for the DLQ. This is a known gap against AL-EVT-4.
+  **Superseded by D-22.**
+- **D-22 (gap 3/42, 2026-10-04, user: "fix all" on the production-readiness review): poison messages are forwarded to the queue's own DLQ.** platform-events v2 ships the upstream fix D-3 asked for: `events.WithDLQForwarding(events.NewSQSDLQPublisher(...))`. A body that is not an envelope, or one past the threshold whose codec decode fails, is forwarded with its raw body and attributes to the source queue's RedrivePolicy DLQ, and deleted only once the forward succeeds. AL-EVT-4 ("no silent drop") now holds for malformed messages too.
+  - **AL-INV-10 is unchanged in intent:** the DLQ publisher moves a poison message to `<queue>-dlq`; it never publishes an event to a topic. It is wired once, in `cmd/server/main.go`, and `check-forbidden-events-bypass.sh` rejects it anywhere else.
+  - **IAM:** `sqs:SendMessage` + `sqs:GetQueueUrl` on `*-audit-q-dlq` only (`ForwardPoisonToOwnDLQ`, checked by `TestIAMPolicy_LeastPrivilege`).
+  - **Unchanged:** the threshold path. The dead-letter handler still returns an error, so the SQS redrive moves over-threshold messages and the service counts them (`reason="max_receive_count"`). Forwards are counted by the library (`reason="malformed"` / `"decode_error"`), so each message is counted once.
+  - **Gap 42 is closed** by the same library version: a malformed body is logged as size and SHA-256 only.
+- **D-23 (2026-10-04, user: "fix all"): production-readiness hardening.**
+  - **Internal-route identity (LLD §10.2):** an Istio `AuthorizationPolicy` by caller principal, plus a NetworkPolicy caller allow-list, replaces "any pod in the namespace + a header". `APP_ENV=prod` requires it (escape hatch: `mesh.acknowledgeNoMesh`). The defaults name Catalog Admin, Realm Provisioner and Org & Membership; confirm their service accounts at release.
+  - **Timeouts:** server 30s statement / 5s lock; reconciler 25m / 10s. The LLD is silent; values chosen from the query shapes (paged exports, a one-statement month scan).
+  - **`ARCHIVE_READ_CONCURRENCY`** (2): new env var (LLD §12 row added in rev 0.28).
+  - **`000011_reconciler_lease`:** a lease row instead of an advisory lock, because PgBouncer transaction mode drops session locks. A skipped run exits 0 with a warning.
+  - **Background loops:** recover-and-restart.
+  - **Alert `runbook_url`s:** absolute links into `main`.
 
 Blocking (need a decision before the phase noted; 1–3 resolved above):
 
@@ -299,6 +312,12 @@ Found during Phase 8:
   - **Traces:** gincommon installs the TracerProvider and OTLP pipeline (`InitTracingFromEnv`, `ObservabilityMiddlewares`, `Shutdown`). Spans (pgcommon `db.query`, the reconciler root span) and the log `trace_id` are drawn from that provider through `telemetry.Tracer` / `telemetry.TraceID`.
   - **Limit of the library:** gincommon v1.3.0 exposes no span API, no `/metrics` handler and no context-level trace-id helper. `internal/adapter/outbound/telemetry` is therefore the single, documented seam that touches the OpenTelemetry and promhttp APIs, always against gincommon's provider and registry.
   - **Enforced** by `.github/scripts/check-observability-confinement.sh` (in `make invariant-lint`). It forbids, outside the telemetry adapter: OTel/promhttp imports, direct Prometheus registration, `log`/`log/slog`/zap, `fmt.Print*`, and stderr/stdout beyond one logger-init write per root. Verified against a planted violation. **Proposed upstream:** add `gincommon.MetricsHandler()`, `gincommon.StartSpan()` and a context `TraceID()` to platform-gincommon, then retire the seam.
+  - **Seam retired (2026-10-03).** gincommon v1.4.0 shipped exactly that API (`MetricsHandler`, `NewTracer`/`NewSpanTracer`, `SpanTraceID`, `InitTracingWithConfig`). On v1.6.0 the telemetry adapter only wraps it, nothing in the repository imports OpenTelemetry or promhttp, and the confinement script no longer exempts the adapter. Tier-3 collectors use gincommon's validating constructors, and `iam_rls_violations_total` is built from its registry entry (gincommon v1.5.0, status proposed). LLD §3 / §11 updated in rev 0.28.
+  - **Library env alignment (2026-10-04, user: "all required env passed to the shared libs like org-membership").** The Helm chart and `.env-example` now pass every variable the three libraries read on this service's code paths:
+    - gincommon tracing: `OTEL_EXPORTER_OTLP_INSECURE`, `OTEL_TRACES_SAMPLER_RATIO`, `OTEL_PROPAGATOR_BAGGAGE`, `OTEL_TRACES_IGNORE_REMOTE_PARENT_SAMPLED`;
+    - gincommon logger: `LOG_LEVEL`, `LOG_SAMPLING`;
+    - platform-events `LoadSQS`: `SQS_HANDLER_TIMEOUT` 20s, `SQS_DRAIN_TIMEOUT` 15s, with the fleet now stopping its queues concurrently.
+    Removed as never read: `OTEL_SERVICE_NAME` (the name is passed to `InitTracingWithConfig`), `APP_NAME`, and `PG_SSLMODE` (every pool gets an explicit DSN). `SQS_QUEUE_DEPTH_INTERVAL` stays unset (`OpsMonitor` owns the depth gauges). The reconciler no longer logs pgcommon's misleading "PG_USER/PG_DBNAME required" warning. `PG_STATEMENT_TIMEOUT` / `PG_LOCK_TIMEOUT` are left at the role default: the LLD is silent and the export/archival queries are long (open question). LLD §12 updated in rev 0.28.
 44. **All database connections, configuration and operations go through platform-pgcommon (2026-09-27, user).** An audit found production code already compliant:
   - pools only via `pgcommon.NewPool`, from `pgcommon.ConfigFromEnv`, which owns every `PG_*` setting; health via `Pool.Health`;
   - transactions only via `pgcommon.RunInTx` / `RunInTxWithRetryOpts` (`withPool`, `TxRunner`), with RLS GUCs bound by pgcommon;

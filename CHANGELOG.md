@@ -4,6 +4,74 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — tests for previously uncovered behavior (2026-10-04)
+- `TestReconcilerRepositories_RefusedAsAuditApp` (postgres): rule 5 / AL-INV-1.
+  - Every archival, prune, redaction-retry and drop step run as `audit_app` is refused with 42501, and the error surfaces.
+  - What `audit_app` may read stays fail-closed (no rows without a tenant GUC).
+- `TestRun_JobLease` (cmd/reconciler): a run whose lease is held is skipped with exit 0 and never runs the job; a free run releases its lease; a database without `000011` fails the run instead of running unguarded.
+- `TestServer_BootsWithConsumerFleetAndDrains` (cmd/server): with queues configured, the fleet is built (Glue endpoint override, DLQ forwarding), the server stays live while SQS is unreachable, and SIGTERM drains to exit 0.
+- Unit tests:
+  - A truncated zlib body is rejected by the Glue codec.
+  - The bus `tenant.*` membership target, and the no-target delegation case.
+  - The `source_topic` mapping on AL-1/AL-2 responses.
+  - A nil `NextParts` map starts parts at 0.
+  - `partWriter.discard` is idempotent.
+- The floci fixture waits up to 240 s for `init-floci.sh` (it exceeded 120 s on a loaded Docker host).
+- The Postgres fixture waits for the published 5432 port as well as the ready log line, and retries a container whose DSN cannot be resolved. On a loaded Docker host, `TestConstraint_AnonymousActor_ALD11` failed with `postgres dsn: port "5432/tcp" not found` before any SQL ran.
+
+### Fixed — production-readiness review (2026-10-04)
+- **Security: `/api/v1/internal/*` is identity-checked by the mesh.** Before, it was only a header check (`x-tenant-roles: iam-system`) behind a NetworkPolicy that admitted every pod in the namespace. Any such pod could forge AL-5/AL-6 entries for any tenant, or read any tenant through AL-7.
+  - New `templates/mesh.yaml`: an Istio `AuthorizationPolicy` allows `/api/v1/internal/*` only from `mesh.authorizationPolicy.internalCallerPrincipals`, and `/api/v1/audit/*` only from the gateway. A `PeerAuthentication` is added too.
+  - The NetworkPolicy admits only `networkPolicy.internalCallers`, and the Catalog egress only Catalog Admin's pods.
+  - Server pods are labelled for sidecar injection; CronJob pods opt out.
+  - `APP_ENV=prod` refuses to render without the policy unless `mesh.acknowledgeNoMesh=true`. An empty caller list fails too.
+  - Checked by `TestHelm_InternalRoutesRequireMeshIdentity`.
+- **Malformed and undecodable messages go to the DLQ** (decision D-22, supersedes D-3). `events.WithDLQForwarding` with platform-events' SQS DLQ publisher, wired once in `cmd/server`. IAM: `sqs:SendMessage`/`GetQueueUrl` on the audit DLQs only. The alert, RB-10 and runbooks are updated. `TestWire_MalformedEnvelopeForwardedToDLQ_D22` replaces the test that pinned the delete.
+- **Database timeouts:**
+  - Helm server: `PG_STATEMENT_TIMEOUT=30s`, `PG_LOCK_TIMEOUT=5s`.
+  - Helm reconciler: `25m` / `10s`. The month scan fits under `RECONCILER_TIMEOUT`, and a partition lock gives up rather than queue ingest behind it.
+- **Archived reads are bounded:** `ARCHIVE_READ_CONCURRENCY` (default 2, 1–32) synchronous archived reads per replica. Each can hold up to the sync bounds in memory against the 512Mi limit. The rest wait within their request deadline.
+- **One reconciler run per job:** migration `000011_reconciler_lease`. A run claims a lease row (released at the end, or expiring after the run deadline), so a manually created Job no longer overlaps a scheduled one. Covered by `TestJobLease_OneRunPerJob`.
+- **Background loops survive a panic:** the catalog poller, export worker and ops monitor run under `supervise`, which recovers, logs the stack and restarts the loop after 5 s.
+- **Alert runbook links:** every alert has an absolute `runbook_url` whose anchor is a real heading. Four alerts had none, and the relative `docs/runbook.md#rb-N` anchors matched no GitHub heading. Checked by `TestAlerts_RunbookURLsResolve`.
+- **Tests:**
+  - `TEST_POSTGRES_TIMEOUT` (1500s). The postgres package needs about 6–7 min under `-race`, and the old 300 s limit timed it out on every run.
+  - The child-process tests forward `-test.gocoverdir`, so their coverage counts again.
+- **Release checklist:** the KMS key ARN (the alias placeholder grants nothing), the DLQ send permission, and the Istio prerequisites.
+
+### Changed — platform-library environment aligned with iam-org-membership (2026-10-04)
+- **Helm `env` and `.env-example` now pass every variable the libraries read on this service's paths:**
+  - gincommon tracing: `OTEL_EXPORTER_OTLP_INSECURE` (`false`), `OTEL_TRACES_SAMPLER_RATIO` (`0.1`), `OTEL_PROPAGATOR_BAGGAGE` (`false`), `OTEL_TRACES_IGNORE_REMOTE_PARENT_SAMPLED` (`false`);
+  - gincommon logger: `LOG_LEVEL` (`info`) and `LOG_SAMPLING` (`false`);
+  - platform-events `config.LoadSQS`: `SQS_HANDLER_TIMEOUT` (`20s`, below the 30 s visibility timeout) and `SQS_DRAIN_TIMEOUT` (`15s`). Before, the drain used the library's 30 s default per queue.
+- **Removed, never read:**
+  - `OTEL_SERVICE_NAME` (Helm `serverEnv` and `reconcilerEnv`): both binaries pass the service name to `InitTracingWithConfig`, and the trace names are unchanged;
+  - `APP_NAME` (`.env-example`, the Makefile export);
+  - `PG_SSLMODE` (`.env-example`, tests): every pool gets an explicit DSN, which carries sslmode.
+- **`Fleet.Stop` stops the 11 consumers concurrently.** Sequentially, the later queues kept receiving while the earlier ones drained, and a shutdown could take up to 11 drain timeouts against the 45 s grace period. Covered by `TestFleet_StopsConsumersConcurrently`.
+- **Reconciler startup:** `ReconcilerPoolConfig` drops pgcommon's "PG_USER/PG_DBNAME required … connections will fail" warning. `cmd/reconciler` has no `DATABASE_URL` (rule 5), so the warning fired on every run although the pool uses `RECONCILER_DATABASE_URL`. Pool-tuning warnings are kept.
+
+### Added — docs/observability and metricslint in CI (2026-10-04)
+- **`docs/observability/`**, mirroring iam-org-membership:
+  - `README.md`: the standard as implemented here (identity, tiers, who counts what, proposed metrics in live rules, adding a metric, CI checks, SLOs, HPA).
+  - `metric-registry.md`: the inventory of every emitted metric, **generated** from the pinned gincommon registry and a real scrape.
+  - `migration.md`: renamed and removed names across gap 46, the library migration and gincommon v1.6.0.
+  - `runbooks.md`: per-alert triage for all 30 alerts, linking the full RB procedures in `docs/runbook.md`.
+- **`make metrics-lint` / `make metrics-inventory`** (`.github/scripts/metricslint.sh`, `metrics-inventory.py`), in `make ci` and Validate / Quality. They run platform-gincommon's `metricslint check` on the full scrape, `metricslint refs` on `deploy/` and the operator Markdown, and the inventory drift check.
+  - `refs` walks directories for rule and dashboard extensions only, so the Markdown files are named explicitly.
+- **Fixed stale operator docs:** `docs/runbook.md`, `deploy/monitoring/README.md`, `README.md` and `.claude/` still described `service="audit-log"`, the removed deprecated gauges and the pre-v1.4.0 label sets.
+- **`business.go`:** collectors are built in `buildCollectors` with `must(...)`, and one recover point (`build`) turns a constructor error into `Register`'s error. This replaces one `if err != nil` per collector, and is tested once (`TestBuild_MustAbortsWithError`).
+
+### Changed — platform-gincommon v1.6.0 and full gincommon API adoption (2026-10-03)
+- **Shared libraries at their latest release:** `platform-gincommon` v1.4.0 → **v1.6.0**. `platform-events/v2` v2.0.0 and `platform-pgcommon/v2` v2.0.0 were already the latest.
+- **Tier 2 from the registry:** gincommon v1.5.0 adds `iam_rls_violations_total{violation_type}` to the central Platform Observability Registry (status `proposed`). The collector is now built with `gincommon.NewSharedCounterVec`, as in iam-org-membership, instead of `prometheus.NewCounterVec`. The ledger (`registry.go`, `metric-registry.yaml`) says `proposed`, and `IAMAuditLogCrossTenantAccess` / `IAMAuditLogMissingGUC` carry `metric_status: proposed`. `TestRegistryLedger_MatchesPlatformRegistry` now also checks the Tier-2 ledger. The scrape test no longer accepts a registry finding for it.
+- **Tier 3 through gincommon's validating constructors:** every `iam_audit_log_*` collector is built with `gincommon.NewCounterVec` / `NewCounter` / `NewGauge` / `NewHistogramVec`. These check the prefix, suffixes and prohibited labels, and inject the identity const labels. The one exception is the `iam_audit_log_catalog_plans_stale_seconds` GaugeFunc, which gincommon has no constructor for. Series names, labels and buckets are unchanged. `check-metric-naming.sh` checks the new shape.
+- **No direct OpenTelemetry/promhttp imports left:** `outbound/telemetry` wraps gincommon's own `NewSpanTracer`, `SpanTraceID` and `MetricsHandler`, so `/metrics` now continues past a failing collector instead of blanking the scrape. `check-observability-confinement.sh` forbids OTel and promhttp imports everywhere, the telemetry adapter included (gap 43's seam is retired).
+- **Reconciler metrics identity:** the reconciler's metrics now carry `service="iam-audit-log"` (`MetricsServiceName`), like iam-org-membership's reconciler, so its `iam_audit_log_*` collectors pass gincommon's prefix check. Its trace `service.name` stays `iam-audit-log-reconciler`. Its metrics are not scraped (D-21), so no rule or dashboard changes.
+- **pgcommon v2 error helpers:** `wrapConnErr` classifies with `pgcommon.IsPoolClosed`, `IsOperatorIntervention`, `IsQueryCanceled` and `IsSystemError`, replacing the local SQLSTATE-57/58 string match and the `puddle.ErrClosedPool` check. This fixes a regression from the v2 migration: pgcommon v2 returns its own closed-pool error, which mapped to 500 instead of 503 `dependency_unavailable` (`TestPostgresAdapter_Integration`, `TestDatabaseOutage503`).
+- **Tests, one metrics identity per process:** the two `APP_ENV=prod` startup tests (`cmd/server`, `cmd/reconciler`) run in a re-executed child process (`fixtures.InOwnProcess`), because gincommon rejects a second metrics identity in one process. They had panicked since the v1.4.0 migration.
+- **Tracing init:** both roots use `gincommon.InitTracingWithConfig` with the metrics identity (service, version, `domain=iam`, `APP_ENV`) and the gincommon logger, replacing `InitTracingFromEnv`. `OTEL_EXPORTER_OTLP_ENDPOINT=none` or `OTEL_TRACES_EXPORTER=none` turns export off (v1.6.0).
+
 ### Fixed — trace service name and dependency CVEs (2026-09-28)
 - **Helm: `OTEL_SERVICE_NAME` is now set per composition root** (`serverEnv` `iam-audit-log`, `reconcilerEnv` `iam-audit-log-reconciler`, matching each root's `cfg.ServiceName`). Without it, gincommon's `InitTracingFromEnv` fell back to `APP_NAME`, which the chart never set, and then to `"platform-gincommon"`. Every span would have carried the library's name as its `service.name`.
 - **Dependencies (govulncheck):** `google.golang.org/grpc` v1.83.0 → v1.83.2 fixes GO-2026-6348, which the service calls: an HTTP/2 DATA-frame memory exhaustion reached through the gincommon OTel exporter. The same bump fixes GO-2026-6443, which it does not call. `golang.org/x/crypto` v0.54.0 → v0.56.0 fixes GO-2026-6355, -6354 and -6303, none of them called. GO-2026-5932 (x/crypto) has no fix yet and is not called (c62cf3e).

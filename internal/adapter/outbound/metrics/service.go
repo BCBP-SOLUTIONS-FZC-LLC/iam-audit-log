@@ -11,7 +11,7 @@ type Ingest struct{}
 func (Ingest) Ingested(e coredomain.AuditEntry) {
 	EventsIngested.WithLabelValues(label(e.SourceService), string(e.IngestMode), e.EntryType).Inc()
 	if !e.RecordedAt.IsZero() && !e.OccurredAt.IsZero() {
-		IngestLag.Observe(max(e.RecordedAt.Sub(e.OccurredAt), 0).Seconds())
+		IngestLag.WithLabelValues().Observe(max(e.RecordedAt.Sub(e.OccurredAt), 0).Seconds())
 	}
 }
 

@@ -28,6 +28,6 @@ flowchart LR
     C -. "handler error → redelivery" .-> Q
     C -. "receive 4" .-> OBS
     Q -. "receive 5+ : SQS redrive" .-> DLQ
-    C -. "malformed envelope: library deletes (D-3, RB-10)" .-> X["events_consumed_total{status=malformed}"]
+    C -. "malformed envelope: forwarded to its DLQ (D-22, RB-10)" .-> DLQ
 
     NOPUB["No publisher, no outbox, no raw SNS/SQS transport (AL-INV-10)\ncheck-forbidden-events-bypass.sh · check-outbox-access.sh · asyncapi receive-only"]

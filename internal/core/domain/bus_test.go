@@ -112,6 +112,8 @@ func TestBuildBusEntry_Targets_D8(t *testing.T) {
 		{TopicMembership, "DepartmentMembershipGranted", `{"user_id":"` + uid + `"}`, "user", uid},
 		{TopicMembership, "TenderAssigneeOverridden", `{"tender_id":"t-9","user_id":"` + uid + `"}`, "tender", "t-9"},
 		{TopicMembership, "TenantSeatOverageStarted", `{}`, "tenant", tA},
+		// A tenant.* membership event names its tenant when the payload carries one.
+		{TopicMembership, "TenantStateChanged", `{"tenant_id":"t-other"}`, "tenant", "t-other"},
 		{TopicTenant, "TenantCreated", `{"tenant_id":"` + tA + `","plan":"pro"}`, "tenant", tA},
 		{TopicBilling, "TenantPlanChanged", `{}`, "tenant", tA},
 		{TopicUsage, "TenantQuotaWarning", `{}`, "tenant", tA},
@@ -135,6 +137,11 @@ func TestBuildBusEntry_Targets_D8(t *testing.T) {
 	noTarget, _, _ := BuildBusEntry(ev(TopicAuth, "LoginFailure", IAMSystemActorID, `{}`), 8192, t0)
 	if noTarget.Target != nil {
 		t.Errorf("no resolvable user → no target: %+v", noTarget.Target)
+	}
+	// A delegation event without its id, and with no subject, has no target.
+	noDelegation, _, _ := BuildBusEntry(ev(TopicDelegation, "DelegationStarted", "iam-system", `{}`), 8192, t0)
+	if noDelegation.Target != nil {
+		t.Errorf("delegation without delegation_id or subject → no target: %+v", noDelegation.Target)
 	}
 	withSubject := ev("some.topic", "X", "iam-system", `{}`)
 	withSubject.Subject = "instances/1"

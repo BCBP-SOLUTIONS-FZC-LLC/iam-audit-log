@@ -10,9 +10,9 @@ Swagger: `docs/swagger` (`make swag`). Router: `internal/adapter/inbound/http/ro
 | AL-2 | `GET /api/v1/audit/events/:id` | same | Hot read first, then an archive fallback limited to objects whose id range holds the id (gap 32). Outside the window → 404 `audit_entry_not_found`. |
 | AL-3 | `POST /api/v1/audit/exports` | same | 202 `{export_id, status, status_url}`. The filter is stored clamped. Per-tenant limit → 429 `rate_limited` + `Retry-After`. No dedup (gap 31). |
 | AL-4 | `GET /api/v1/audit/exports/:id` | same | When ready, returns a fresh short-lived `download_url` (`EXPORT_DOWNLOAD_URL_TTL`) valid until `expires_at` (7 d, D-11). A lapsed export shows `expired`. |
-| AL-5 | `POST /api/v1/internal/audit-entries` | mesh `iam-system` role (`RequireSystemRole`), else 403 `forbidden_peer` | `Idempotency-Key` is required and becomes `source_event_id`. 201 created, 200 replay. 422 for `unknown_entry_type`, `metadata_too_large`, `invalid_actor`. Only direct-write entry types are accepted (D-6). |
+| AL-5 | `POST /api/v1/internal/audit-entries` | caller SPIFFE principal checked by the Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`, D-23), then the `iam-system` role (`RequireSystemRole`), else 403 `forbidden_peer` | `Idempotency-Key` is required and becomes `source_event_id`. 201 created, 200 replay. 422 for `unknown_entry_type`, `metadata_too_large`, `invalid_actor`. Only direct-write entry types are accepted (D-6). |
 | AL-6 | `POST /api/v1/internal/audit-entries:batch` | same + per-tenant limiter (D-5) | Each entry carries its own `idempotency_key`; always **207** with per-index results (D-4); 422 `batch_too_large`. |
-| AL-7 | `GET /api/v1/internal/audit/events?tenant_id=` | mesh `iam-system` | Explicit tenant (RLS-bound), no plan clamp. An archived range over the bounds → 422 `range_too_large` (D-14). |
+| AL-7 | `GET /api/v1/internal/audit/events?tenant_id=` | same as AL-5 | Explicit tenant (RLS-bound), no plan clamp. An archived range over the bounds → 422 `range_too_large` (D-14). |
 
 Also `/healthz`, `/readyz` (Postgres plus consumers), `/asyncapi[.yaml]`, and `/metrics` on the metrics port.
 
@@ -42,5 +42,6 @@ None (AL-D5). The only in-process state is the CAT-I2 plan map, a stale-if-error
 - **Consumer:** the platform-events `NewSQSConsumer`, configured by `config.LoadSQS`. The Glue codec validates against the producer's registered schema version (AL-D12). Decode failure → redelivery → DLQ.
 - **Taxonomy:** `internal/core/domain/taxonomy.go`. An unknown type is persisted as `<domain>.unknown` with `security_3y` (AL-EVT-4). The workflow wire aliases are D-7; actor/target derivation is D-8; oversized payloads get a truncation marker (D-9).
 - **Dedup:** handlers are idempotent on `events.Envelope.ID`, the platform-events contract. The key goes into the `processed_events` ledger, backed by the `(source_event_id, occurred_at)` unique constraint.
-- **Malformed envelopes:** the library deletes a malformed envelope rather than DLQing it (D-3, gap 42 upstream). It is alerted via `platform_messages_failed_total{reason="malformed"}`.
+- **Malformed envelopes (D-22):** `events.WithDLQForwarding` forwards a non-envelope body, or an undecodable one past the threshold, to the queue's own DLQ (raw body kept; `DLQReason` = `malformed message body: …`). The library logs only the body's size and SHA-256. Still alerted via `platform_messages_failed_total{reason="malformed"}`, and `IAMAuditLogDLQNotEmpty` follows.
+- **Timeouts:** `SQS_HANDLER_TIMEOUT` (20s) per delivery; `SQS_DRAIN_TIMEOUT` (15s) for the whole SIGTERM drain, since the fleet stops its consumers concurrently.
 - **Redaction trigger:** `UserDeleted` on `user-audit-q` also creates a redaction task (see [request-flows.md](request-flows.md)). `TenantOffboarded` does not (D-16).

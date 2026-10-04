@@ -56,7 +56,6 @@ func productionEnv(roles fixtures.Roles, appPort, metricsPort string) []string {
 		"MIGRATION_DATABASE_URL=" + roles.SuperDSN,
 		"APP_PORT=" + appPort,
 		"METRICS_PORT=" + metricsPort,
-		"PG_SSLMODE=disable",
 	}
 	for _, q := range config.InboundQueues() {
 		env = append(env, q.EnvVar+"=http://sqs.local/000000000000/"+q.Name)
@@ -163,7 +162,7 @@ func TestReconcilerBinary_ReconcileJobAsAuditReconciler(t *testing.T) {
 
 	cmd := exec.Command(bin, "--job=reconcile")
 	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"), "APP_ENV=prod", "PG_SSLMODE=disable",
+		"PATH=" + os.Getenv("PATH"), "APP_ENV=prod",
 		"RECONCILER_DATABASE_URL=" + roles.ReconcilerDSN,
 	}
 	out, err := cmd.CombinedOutput()

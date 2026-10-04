@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/cmd/reconciler/jobs"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
@@ -87,7 +88,14 @@ func run() int {
 		log.Error("invalid configuration", "error", err.Error())
 		return 1
 	}
-	shutdownTracing := gincommon.InitTracingFromEnv()
+	shutdownTracing, err := gincommon.InitTracingWithConfig(gincommon.TracingConfig{
+		ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion,
+		Domain: config.ObservabilityDomain, Environment: cfg.AppEnv, Logger: rawLog,
+	})
+	if err != nil {
+		log.Error("init tracing", "error", err.Error())
+		return 1
+	}
 	defer shutdownTracing()
 	defer func() {
 		if err := gincommon.Shutdown(rawLog); err != nil {
@@ -100,8 +108,11 @@ func run() int {
 	// The reconciler uses no platform-events API, so only pgcommon's
 	// metrics are initialized here (with gincommon's identity labels), before
 	// the pool is created so its connection gauges register.
+	// The metrics identity is the service's own (iam-audit-log), so the
+	// shared iam_audit_log_* collectors validate; traces keep the
+	// "-reconciler" service.name set by InitTracingWithConfig above.
 	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{
-		Logger: rawLog, ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion,
+		Logger: rawLog, ServiceName: cfg.MetricsServiceName, BuildVersion: cfg.BuildVersion,
 		Domain: config.ObservabilityDomain, Environment: cfg.AppEnv, // APP_ENV, validated by LoadReconciler
 	})
 	if err := metrics.Register(); err != nil {
@@ -161,6 +172,27 @@ func run() int {
 	}
 	archives := pgadapter.NewArchiveRepository(pool)
 
+	// One run per job at a time, manual Jobs included (migration 000011). A
+	// lease left by a crashed run expires after the run deadline.
+	lease := pgadapter.NewJobLease(pool)
+	holder := leaseHolder()
+	acquired, err := lease.Claim(ctx, jobName, holder, cfg.Timeout+5*time.Minute)
+	if err != nil {
+		log.Error("claim job lease", "job", jobName, "error", err.Error())
+		return 1
+	}
+	if !acquired {
+		log.Warn("another run of this job holds the lease — skipped", "job", jobName)
+		return 0
+	}
+	defer func() {
+		relCtx, cancelRel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelRel()
+		if err := lease.Release(relCtx, jobName, holder); err != nil {
+			log.Warn("release job lease (expires on its own)", "job", jobName, "error", err.Error())
+		}
+	}()
+
 	log.Info("reconciler starting", "job", jobName)
 	res, err := fn(ctx, &jobs.Context{
 		Pool:                   pool,
@@ -191,6 +223,13 @@ func run() int {
 	log.Info("reconciler complete", "job", jobName,
 		"attempted", res.Attempted, "succeeded", res.Succeeded, "failed", res.Failed, "skipped", res.Skipped)
 	return 0
+}
+
+// leaseHolder identifies this run: the pod name (the Job's pod) plus a
+// random suffix, so a restarted container in the same pod is distinct.
+func leaseHolder() string {
+	host, _ := os.Hostname() //nolint:errcheck // "" is still a valid prefix
+	return host + "/" + uuid.NewString()
 }
 
 // buildArchiveStore wires the S3 archive writer (LLD §15.4): SSE-KMS with

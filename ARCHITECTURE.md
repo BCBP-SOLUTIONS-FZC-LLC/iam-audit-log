@@ -19,8 +19,8 @@ The service is organised in concentric Clean Architecture layers. Inner layers h
 ```mermaid
 graph TD
     subgraph cmd["Composition Roots  —  cmd/"]
-        main["server/main.go\ngincommon logger first, then config.LoadServer\nmigrations via platform-pgcommon/pkg/migrate (audit_migrator DSN)\npgcommon.NewPool (AppPoolConfig: GUCProvider, PGBouncerMode forced true)\nstartup role check (audit_app, NOBYPASSRLS)\nbackground goroutines: PlanPoller (CAT-I2) · export worker · OpsMonitor (D-21)\nconsumer fleet: 11 × events.NewSQSConsumer (config.LoadSQS)\nrouter + /metrics listener (telemetry.MetricsHandler)"]
-        reconciler["reconciler/main.go\nsingle binary, --job=<name> dispatch (audit_reconciler, BYPASSRLS)\nreconcile · redaction-retry · redaction-sweep · processed-events-prune"]
+        main["server/main.go\ngincommon logger first, then config.LoadServer\nmigrations via platform-pgcommon/pkg/migrate (audit_migrator DSN)\npgcommon.NewPool (AppPoolConfig: GUCProvider, PGBouncerMode forced true)\nstartup role check (audit_app, NOBYPASSRLS)\nbackground loops under supervise (panic → logged restart):\nPlanPoller (CAT-I2) · export worker · OpsMonitor (D-21)\nconsumer fleet: 11 × events.NewSQSConsumer (config.LoadSQS)\n+ WithDLQForwarding (D-22) · concurrent Stop\nrouter + /metrics listener (telemetry.MetricsHandler)"]
+        reconciler["reconciler/main.go\nsingle binary, --job=<name> dispatch (audit_reconciler, BYPASSRLS)\nreconcile · redaction-retry · redaction-sweep · processed-events-prune\none run per job: reconciler_job_lease (000011)"]
         jobs["reconciler/jobs/\nReconcile · RedactionRetry · RedactionSweep · ProcessedEventsPrune\nContext = dependency bag (ports only)"]
     end
 
@@ -30,12 +30,12 @@ graph TD
     end
 
     subgraph adapters_out["Outbound Adapters  —  internal/adapter/outbound/"]
-        postgres["postgres/\nAuditRepository (Append · AppendWithRedaction · ApplyRedaction)\nQueryRepository · ExportRepository · PlanWindowRepository\nArchiveRepository · RedactionRepository · PartitionRepository · OpsRepository\nTxRunner / withPool (pgcommon.RunInTx*) · wrapConnErr\nmigrations/ 000001..000010"]
+        postgres["postgres/\nAuditRepository (Append · AppendWithRedaction · ApplyRedaction)\nQueryRepository · ExportRepository · PlanWindowRepository\nArchiveRepository · RedactionRepository · PartitionRepository · OpsRepository\nTxRunner / withPool (pgcommon.RunInTx*) · wrapConnErr\nJobLease (000011)\nmigrations/ 000001..000011"]
         s3["s3/\nStore — ReadArchive · PutExport · PresignExport\nPutArchive · ArchiveChecksum (SSE-KMS, Object Lock verify)"]
         glue["glue/\ndecode-only Codec (18-byte header, zlib, bomb-bounded)\nRegistryResolver (glue:GetSchemaVersion) · schema-validated\nEncode refuses (AL-INV-10)"]
         catalog["catalog/\nClient — GET /api/v1/internal/plans (CAT-I2)\niam-system headers · 1 MiB cap · ErrCatalogTimeout"]
-        metrics["metrics/\nbusiness.go — 32 collectors, three tiers\nregistry.go — PlatformRegistry · DomainRegistry (Canonical)\nadapters: Consumer · Ingest · Query · Ops · Archive · Redaction · CatalogPoll\nDependency + Instrumented S3 decorators"]
-        telemetry["telemetry/\nthe one OTel / promhttp seam (gap 43)\nNewTracer · TraceID · MetricsHandler · HTTPErrorLog · QuietGin"]
+        metrics["metrics/\nbusiness.go — buildCollectors: NewShared*Vec (Tier 1/2)\n+ gincommon NewCounterVec/NewGauge/NewHistogramVec (Tier 3)\nregistry.go — PlatformRegistry · LibraryRegistry · DomainRegistry\nadapters: Consumer · Ingest · Query · Ops · Archive · Redaction · CatalogPoll\nDependency + Instrumented S3 decorators"]
+        telemetry["telemetry/\nthin wrappers over gincommon (gap 43)\nNewTracer · TraceID · MetricsHandler · HTTPErrorLog · QuietGin"]
     end
 
     subgraph core["Core  —  internal/core/"]
@@ -96,7 +96,7 @@ graph TD
 - **DB-role confinement:** each root binds only its own role (rule 5);
 - the transaction-local GUC rule.
 
-`check-observability-confinement.sh` adds the logging, metrics and tracing rule (gap 43): only `internal/adapter/outbound/telemetry` may import OpenTelemetry or `promhttp`.
+`check-observability-confinement.sh` adds the logging, metrics and tracing rule (gap 43): nothing imports OpenTelemetry or `promhttp`; spans, trace ids, tracing init and `/metrics` come from gincommon's API (v1.4.0+).
 
 ---
 
@@ -555,6 +555,11 @@ erDiagram
         text name PK "rls_violation_log"
         bigint last_id "exactly-once metric feed"
     }
+    reconciler_job_lease {
+        text job PK "reconcile · redaction-retry · ..."
+        text holder "pod/uuid of the run"
+        timestamptz expires_at "RECONCILER_TIMEOUT + 5m"
+    }
 
     audit_events ||..o{ audit_event_archive_state : "monthly partition archived as"
     audit_event_archive_state ||..o{ audit_archive_objects : "per-tenant objects"
@@ -564,7 +569,7 @@ erDiagram
     rls_violation_log ||..|| ops_export_watermark : "counted up to last_id"
 ```
 
-Migrations are `000001`–`000010` under `internal/adapter/outbound/postgres/migrations/`, run at `cmd/server` startup on `MIGRATION_DATABASE_URL`:
+Migrations are `000001`–`000011` under `internal/adapter/outbound/postgres/migrations/`, run at `cmd/server` startup on `MIGRATION_DATABASE_URL`:
 
 | Migration | Adds |
 |---|---|
@@ -578,6 +583,7 @@ Migrations are `000001`–`000010` under `internal/adapter/outbound/postgres/mig
 | `000008` | reconciler: `sealed`, the drop and re-open gates, invalidation |
 | `000009` | `audit_ops_stats()` |
 | `000010` | `audit_rls_violation_counts()` + watermark |
+| `000011` | `reconciler_job_lease`: one reconciler run per job at a time, manual Jobs included |
 
 ---
 
@@ -618,7 +624,7 @@ flowchart LR
     C -. "handler error → redelivery" .-> Q
     C -. "receive 4" .-> OBS
     Q -. "receive 5+ : SQS redrive" .-> DLQ
-    C -. "malformed envelope: library deletes (D-3, RB-10)" .-> X["platform_messages_failed_total{reason="malformed"}"]
+    C -. "malformed envelope: forwarded to its DLQ (D-22, RB-10)" .-> DLQ
 
     NOPUB["No publisher, no outbox, no raw SNS/SQS transport (AL-INV-10)\ncheck-forbidden-events-bypass.sh · check-outbox-access.sh · asyncapi receive-only"]
 ```
@@ -628,7 +634,8 @@ flowchart LR
 - **Dedup.** It follows the library's contract: handlers are idempotent on `Envelope.ID` (`processed_events`, AL-INV-4).
 - **Codec.** A local, decode-only Glue codec validates every payload against the producer's registered schema version (AL-D12). An unresolvable version or a violation is a decode failure, so the message is redelivered and reaches the DLQ.
 - **Unknown types.** An unrecognized type is persisted as `<domain>.unknown` (AL-EVT-4).
-- **Known gap (D-3, gap 42).** platform-events v1.4.0 *deletes* a malformed envelope, and logs its body, rather than leaving it for the DLQ. It's alarmed via `platform_messages_failed_total{reason="malformed"}` (RB-10) and raised upstream.
+- **Malformed envelopes (D-22, supersedes D-3).** platform-events v2 forwards a body that is not a valid envelope, or one past the threshold whose decode fails, to the queue's own DLQ (`events.WithDLQForwarding`, wired once in `cmd/server`), and deletes the source copy only once the forward succeeds. It logs only the body's size and SHA-256 (gap 42 closed). `platform_messages_failed_total{reason="malformed"}` still alerts (RB-10), and `IAMAuditLogDLQNotEmpty` follows. `TestWire_MalformedEnvelopeForwardedToDLQ_D22` pins it on floci.
+- **Shutdown.** `Fleet.Stop` stops all 11 consumers concurrently, so the SIGTERM drain is one `SQS_DRAIN_TIMEOUT` (15 s), not one per queue; `SQS_HANDLER_TIMEOUT` (20 s) caps a delivery below the visibility timeout.
 
 ---
 
@@ -648,7 +655,7 @@ graph LR
         logging["Logging (Zap)\n· http_request log, IDs only"]
     end
 
-    subgraph seam["telemetry adapter — the only OTel/promhttp seam (gap 43)"]
+    subgraph seam["telemetry adapter — wrappers over gincommon's tracing/metrics API (gap 43)"]
         tracer["NewTracer — pgcommon db.query spans\n+ reconciler root span"]
         traceid["TraceID — trace_id on *Context log lines"]
         mh["MetricsHandler — /metrics on METRICS_PORT\n(exactly gincommon's registry)"]
@@ -656,10 +663,10 @@ graph LR
     end
 
     subgraph tiers["Metrics — three tiers (metric-registry.yaml, registry.go)"]
-        t1["Tier 1 platform_* (Canonical)\nmessages_received{queue,event_type} · processed{event_type}\nfailed / retry{event_type,reason} · dlq_messages{queue,reason}\nduplicate_messages{event_type} · dependency_request_seconds{dependency,operation,outcome}\nevent_propagation_seconds{event_type} · queue_depth / dlq_depth{queue}"]
-        t2["Tier 2 iam_*\niam_rls_violations_total{violation_type}"]
-        t3["Tier 3 iam_audit_log_*\ningest · direct-write · query/export · catalog poller\nredaction · archival · ops gauges (D-21)\n+ 3 deprecated names in parallel (compat period)"]
-        inj["central injection: domain=iam, service=audit-log,\nenvironment, version (business.go)"]
+        t1["Tier 1 platform_* (registry; service-built 5)\nmessages_received{queue,event_type} · processed{event_type}\nfailed / retry{event_type,reason} · dlq_messages{queue,reason}\nduplicate_messages{event_type} · dependency_request_seconds{dependency,operation,outcome}\nevent_propagation_seconds{event_type} · queue_depth / dlq_depth{queue}"]
+        t2["Tier 2 iam_* (registry, proposed)\niam_rls_violations_total{violation_type}"]
+        t3["Tier 3 iam_audit_log_*\ningest · direct-write · query/export · catalog poller\nredaction · archival · ops gauges (D-21)\nbuilt with gincommon validating constructors"]
+        inj["central injection by gincommon: domain=iam,\nservice=iam-audit-log, environment (both roots)"]
     end
 
     subgraph bg["cmd/server background (always scraped)"]
@@ -676,7 +683,7 @@ graph LR
     end
 
     subgraph ci["CI conformance"]
-        c1["metrics_registry_test · metric-lint.yaml\ncheck-metric-naming.sh · metrics-registry-lint.sh\nobservability_contract_test (no deprecated refs)"]
+        c1["metrics_registry_test · metric-lint.yaml\ncheck-metric-naming.sh · metrics-registry-lint.sh\nobservability_contract_test (known refs, runbook_url anchors)\nmetricslint.sh (scrape · refs · inventory drift)"]
     end
 
     metricsmw --> mh
@@ -699,8 +706,8 @@ graph LR
     c1 -.-> tiers
 ```
 
-- **Tiers.** Tier 1 is exactly the ten Canonical `platform_*` names and label sets in `metrics/registry.go` (the same ledger iam-event-consumer carries); no platform name is invented. Tier 2 is `iam_rls_violations_total`, fed exactly once fleet-wide through `audit_rls_violation_counts()`. Tier 3 is `iam_audit_log_*`. `domain=iam`, `service=audit-log` and `environment` are injected centrally.
-- **Inventory and compatibility.** `deploy/monitoring/metric-registry.yaml` holds the inventory, label vocabulary, cardinality and deprecations. Three renamed gauges emit their old names in parallel until the sunset, and no rule, SLO, dashboard or HPA may reference a deprecated name.
+- **Tiers.** Tier 1 `platform_*` comes from the libraries; the service builds the five it records into from the central registry (`gincommon.NewShared*Vec`, `metrics/registry.go` `PlatformRegistry`), and platform-events adopts them. Tier 2 is `iam_rls_violations_total`, built from its registry entry (status proposed) and fed exactly once fleet-wide through `audit_rls_violation_counts()`. Tier 3 is the 18 `iam_audit_log_*` collectors, built with gincommon's validating constructors in `buildCollectors`. gincommon injects `domain=iam`, `service=iam-audit-log` and `environment` on every series, the reconciler's included. The generated inventory is [`docs/observability/metric-registry.md`](docs/observability/metric-registry.md).
+- **Inventory and compatibility.** `deploy/monitoring/metric-registry.yaml` holds the service inventory, label vocabulary and cardinality; `make metrics-lint` runs platform-gincommon's `metricslint` on a real scrape and checks `docs/observability/metric-registry.md` for drift. The pre-standard names were removed outright (nothing was deployed; [`docs/observability/migration.md`](docs/observability/migration.md)), and no rule, SLO, dashboard or HPA may reference a removed or unregistered name. Rules on proposed metrics carry `metric_status: proposed`, and every alert's `runbook_url` is an absolute link to a real heading.
 - **D-21 gauges.** `cmd/server` is always scraped, so it publishes the gauges alerting needs: archive stalled and lag, DEFAULT rows, stuck redactions, and queue and DLQ depth. The reconciler CronJob has no scrape endpoint; its own counters stay internal, and a blocked or stalled run exits non-zero (RB-9).
 - **Logs.** IDs only, never `metadata` or payload (`TestLogHygiene_NoPayloadFields`). Schema-validation errors carry paths and keywords, never values.
 
@@ -870,13 +877,16 @@ The `Dockerfile` has two stages: a `golang:1.26.6-bookworm` builder (SHA-pinned;
 - one `Deployment` (3 replicas, PDB);
 - the 4 `CronJob`s, all `concurrencyPolicy: Forbid`: `reconcile` `0 2 * * *`, `processed-events-prune` `0 3 * * *`, `redaction-sweep` `30 3 * * *`, `redaction-retry` `*/15 * * * *`;
 - the `ServiceMonitor`, the `PrometheusRule` (generated from `deploy/monitoring/*.yml` by `scripts/gen-prometheusrule.py`) and the HPA (off by default; CPU/memory, optional RPS and `platform_queue_depth` targets through `deploy/monitoring/prometheus-adapter-rule.yaml`);
-- the NetworkPolicy, and Ingress/HTTPRoute for `/api/v1/audit` only.
+- the NetworkPolicy (`/api/v1/internal/*` only from `networkPolicy.internalCallers`, Catalog egress only to Catalog Admin, istiod when meshed), and Ingress/HTTPRoute for `/api/v1/audit` only;
+- the Istio `AuthorizationPolicy` + `PeerAuthentication` (`templates/mesh.yaml`, D-23): `/api/v1/internal/*` only from the caller SPIFFE principals, `/api/v1/audit/*` only from the gateway. Server pods are labelled for sidecar injection; CronJob pods opt out. `APP_ENV=prod` refuses to render without the policy unless `mesh.acknowledgeNoMesh`.
+
+Per-root database timeouts: server `PG_STATEMENT_TIMEOUT=30s` / `PG_LOCK_TIMEOUT=5s`, reconciler `25m` / `10s`. `ARCHIVE_READ_CONCURRENCY=2` bounds in-memory archived reads against the 512 Mi limit.
 
 There is one Secret per composition root: the server secret never carries the reconciler DSN, and vice versa (`TestHelm_PerRootSecretsNeverShareRoleDSNs`).
 
 ### Migration safety
 
-`cmd/server` runs `000001`…`000010` at startup through `platform-pgcommon/pkg/migrate` on `MIGRATION_DATABASE_URL`. That DSN is direct, not via PgBouncer, because the runner's advisory lock is session-scoped. The migration table is pgcommon's default `pgcommon_migrations` (gap 13). **Release prerequisite (gap 34):** Terraform must grant `audit_migrator` membership in `audit_reconciler`, or `000007`'s `ALTER FUNCTION apply_redaction … OWNER TO audit_reconciler` fails at startup; see `docs/implementation/RELEASE_CHECKLIST.md`. The service has never been released (no tags), which is why label-set changes on unchanged metric names were applied directly (gap 46).
+`cmd/server` runs `000001`…`000011` at startup through `platform-pgcommon/pkg/migrate` on `MIGRATION_DATABASE_URL`. That DSN is direct, not via PgBouncer, because the runner's advisory lock is session-scoped. The migration table is pgcommon's default `pgcommon_migrations` (gap 13). **Release prerequisite (gap 34):** Terraform must grant `audit_migrator` membership in `audit_reconciler`, or `000007`'s `ALTER FUNCTION apply_redaction … OWNER TO audit_reconciler` fails at startup; see `docs/implementation/RELEASE_CHECKLIST.md`. The service has never been released (no tags), which is why label-set changes on unchanged metric names were applied directly (gap 46).
 
 ---
 
@@ -890,15 +900,17 @@ There is one Secret per composition root: the server secret never carries the re
 - **Postgres** (`test/postgres/`, testcontainers PG15, full migrations; tag `integration`):
   - RLS Cases 1–4 and `TestGUC_*`;
   - grants, roles, constraints and partitions;
-  - the ingest, query, export, redaction, archive and ops repositories, including `TestReconciler_*`, `TestRedaction_*`, `TestExport_ClaimOldestAcrossTenants_D2` and the `audit_rls_violation_counts` exactly-once test.
+  - the ingest, query, export, redaction, archive and ops repositories, including `TestReconciler_*`, `TestRedaction_*`, `TestExport_ClaimOldestAcrossTenants_D2` and the `audit_rls_violation_counts` exactly-once test;
+  - `TestReconcilerRepositories_RefusedAsAuditApp` (rule 5 / AL-INV-1: 42501 for every reconciler step as `audit_app`, fail-closed reads) and `TestJobLease_OneRunPerJob` (migration `000011`);
+  - `cmd/server` and `cmd/reconciler` start-up tests: fleet boot and SIGTERM drain, the job lease held / free / missing. `APP_ENV=prod` cases run in a child process (`fixtures.InOwnProcess`, one metrics identity per process), whose coverage is merged through `-test.gocoverdir`.
 - **Integration** (`test/integration/`, floci SQS/SNS/Glue/S3 plus PG15, the real consumer fleet). The package shares **one** floci per run, so a test must purge or filter its own queues. Covers:
   - bus dedup, unknown types, D-7 aliases, the plan projection, the Glue-validated payload and a schema violation → DLQ;
   - `TestRedaction_BusUserDeletedEndToEnd` and the late-event D-18 test;
   - `TestReconciler_ArchiveVerifyDrop_HappyPath`, blocked, S3-failure, late-arrival and re-open tests;
-  - the DLQ-depth monitor, and `TestReconciler_FlociObjectLockSupport`, which pins floci's Object Lock behavior (gap 16).
+  - the DLQ-depth monitor, `TestWire_MalformedEnvelopeForwardedToDLQ_D22`, and `TestReconciler_FlociObjectLockSupport`, which pins floci's Object Lock behavior (gap 16).
 - **E2E** (`test/e2e/`, tag `e2e`, `make test-e2e`). The real `NewRouter` and the built binaries: AL-1..AL-7, exports to a presigned object, the archived AL-2 lookup, the CAT-I2 poller against a fake Catalog, process and security tests, and producer contract replays.
 
-`make test-ci` runs unit, postgres and integration in parallel and merges coverage. `.github/scripts/coverage-gate.sh` enforces **95%** (`COVERAGE_THRESHOLD`), and merged coverage is ~96.5%. The full suite takes more than 10 minutes locally, so run it in the background.
+`make test-ci` runs unit, postgres and integration in parallel and merges coverage. `.github/scripts/coverage-gate.sh` enforces **95%** (`COVERAGE_THRESHOLD`), and merged coverage is 96.5% (2026-10-04). The postgres package needs about 6–7 minutes under `-race` (`TEST_POSTGRES_TIMEOUT`, 1500 s). The floci and Postgres fixtures tolerate a loaded Docker host. Run one `make test-ci` per working tree at a time: concurrent runs share `.coverage/*.out` and corrupt the merged profile. The full suite takes more than 10 minutes locally, so run it in the background.
 
 ---
 
@@ -940,8 +952,8 @@ STRIDE analysis of `iam-audit-log`. Every row is grounded in a real mechanism in
 
 | STRIDE | Threat | Component | Mitigation |
 |--------|--------|-----------|------------|
-| **Spoofing** | A caller forges a direct-write entry for another tenant, or impersonates a mesh peer | `/api/v1/internal/*` | Mesh-only (the gateway never routes `/internal`), `RequireSystemRole` → `403 forbidden_peer`. The row is bound to the **body** tenant under `WITH CHECK`, and an idempotency key reused across tenants gets `400` without revealing the other tenant's row |
-| **Spoofing** | A forged identity header impersonates a tenant admin | IdentityBridge | Envoy strips client identity headers at the trust boundary. The service validates the header shape and role (`RequireAuditReader`) but does not re-authenticate |
+| **Spoofing** | A caller forges a direct-write entry for another tenant, or impersonates a mesh peer | `/api/v1/internal/*` | Istio `AuthorizationPolicy` allows the prefix only from the listed caller principals (mTLS identity), and the NetworkPolicy only from the listed caller pods; the gateway never routes `/internal`. `RequireSystemRole` → `403 forbidden_peer` is defense in depth. The row is bound to the **body** tenant under `WITH CHECK`, and an idempotency key reused across tenants gets `400` without revealing the other tenant's row |
+| **Spoofing** | A forged identity header impersonates a tenant admin | IdentityBridge | Envoy strips client identity headers at the trust boundary. The `AuthorizationPolicy` allows `/api/v1/audit/*` only from the gateway (its principal, or a source with no mesh principal), so an in-mesh workload cannot reach it with forged headers. The service validates the header shape and role (`RequireAuditReader`) but does not re-authenticate |
 | **Tampering** | An audit row is altered or deleted | `audit_events` | `audit_app` INSERT+SELECT only (AL-INV-1). The `forbid_audit_mutation` trigger rejects UPDATE/DELETE from every role but `audit_reconciler`, whose UPDATE is column-level (`metadata`, `actor_display`) and reached only through `apply_redaction()` / `sweep_redactions()` |
 | **Tampering** | An archived object is replaced or deleted | S3 archive | SSE-KMS, Object Lock COMPLIANCE retain-until ≥ tier, read-back checksum and lock verification before seal, sealed objects never rewritten (D-20). The IAM policy denies delete and governance bypass |
 | **Repudiation** | An action with no auditable actor or provenance | Ingest | NOT NULL provenance (AL-INV-5), the D-8 actor derivation with `_actor_unattributed` markers, and `trace_id` linking to the producer's request |
@@ -982,7 +994,9 @@ The frozen LLD was silent or self-contradictory on several internals-only detail
 8. **The RLS metric was never fed.** `iam_rls_violations_total` was registered but nothing wrote to it, so the Critical alert could not fire. It is now fed exactly once fleet-wide through a watermark (gap 46).
 9. **A Phase 3 wire-test assertion was wrong.** "≥ 4 handler deliveries" only passed because leftover messages on the shared floci queue inflated the count; the library hands receive 4 to the dead-letter handler. The test now purges its queues and asserts the real contract.
 10. **Platform-library confinement (gaps 43–45).** A telemetry seam for gincommon's missing span, `/metrics` and trace-id APIs; a pgcommon-only database layer; and platform-events-owned consumption and configuration, with dedup on `Envelope.ID`.
-11. **The Enterprise Platform Observability Standard (gap 46).** Ratified Tier-1 names and labels, `service="audit-log"`, a registry and label vocabulary, deprecations emitted in parallel, and a CI conformance gate.
+11. **The Enterprise Platform Observability Standard (gap 46).** Ratified Tier-1 names and labels, `service="audit-log"`, a registry and label vocabulary, deprecations emitted in parallel, and a CI conformance gate. Since the gincommon v1.4.0 migration the label is `service="iam-audit-log"`, injected by gincommon, and the deprecated twins are removed ([`docs/observability/migration.md`](docs/observability/migration.md)).
+12. **Shared-library alignment (gincommon v1.6.0).** `iam_rls_violations_total` from its registry entry, Tier 3 through gincommon's validating constructors, the telemetry seam retired (no OpenTelemetry or promhttp import), `InitTracingWithConfig` in both roots, and one metrics identity per process (the reconciler reports `service="iam-audit-log"`). pgcommon v2's closed-pool error was not mapped to `503`; `wrapConnErr` now uses `pgcommon.IsPoolClosed` / `IsOperatorIntervention` / `IsSystemError`.
+13. **Production-readiness hardening (D-22, D-23).** Poison messages go to the DLQ instead of being deleted; `/api/v1/internal/*` is identity-checked by the mesh (it had been header-trusted behind a namespace-wide NetworkPolicy); database timeouts; bounded archived reads; one reconciler run per job (`000011`); panic-recovering background loops; concurrent fleet shutdown; resolvable alert `runbook_url`s.
 
 ---
 
@@ -1036,7 +1050,8 @@ graph LR
 | [`.claude/operations.md`](.claude/operations.md) | Configuration, CronJobs, metrics and alerts, local dev, troubleshooting |
 | [`docs/architecture/README.md`](docs/architecture/README.md) | Standalone Mermaid diagram index (the 14 `.mmd` files embedded above) |
 | [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | Full LLD (rev 0.26): §16 open questions, §17 error taxonomy, §22 decision register, §25 name inventory |
-| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → enforcement → test map, decisions D-1..D-21, gaps 1–46 |
+| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → enforcement → test map, decisions D-1..D-23, gaps 1–46 |
+| [`docs/observability/`](docs/observability/README.md) | Observability standard as implemented, generated metric inventory, migration, per-alert runbooks |
 | [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites outside this repo (Terraform role grant, bucket, namespace, CronJob alerting) |
 | [`docs/runbook.md`](docs/runbook.md) | RB-1..RB-10 operational runbooks |
 | [`deploy/monitoring/`](deploy/monitoring/) | Metric registry + lint config, alerts, recording rules, SLOs, dashboard, prometheus-adapter rule |

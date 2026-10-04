@@ -166,3 +166,15 @@ func TestDecodeJSON_BodyTooLarge(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "size limit")
 }
+
+// A bus-sourced row (AL-1/AL-2) carries its source_topic; a direct-write row
+// leaves it null rather than "".
+func TestToEntryResponse_SourceTopic(t *testing.T) {
+	bus := toEntryResponse(domain.AuditEntry{ID: "e-1", SourceTopic: "iam.user.events", IngestMode: domain.IngestBus})
+	require.NotNil(t, bus.SourceTopic)
+	assert.Equal(t, "iam.user.events", *bus.SourceTopic)
+	assert.JSONEq(t, `{}`, string(bus.Metadata), "empty metadata renders as {}")
+
+	direct := toEntryResponse(domain.AuditEntry{ID: "e-2", IngestMode: domain.IngestDirectWrite})
+	assert.Nil(t, direct.SourceTopic)
+}

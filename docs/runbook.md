@@ -14,17 +14,15 @@ Alert, recording and SLO rules live in `deploy/helm/templates/prometheusrule.yam
 The Critical archival, redaction and DLQ gauges are published by `cmd/server` from
 DB/SQS state (D-21), so they fire even though the reconciler CronJob is not scraped.
 
-Metric names follow the Enterprise Platform Observability Standard (LLD §11 rev
-0.26; inventory `deploy/monitoring/metric-registry.yaml`). Tier-1 `platform_*`
-series carry `{domain="iam", service="audit-log"}`, and `iam_*` series carry
-`{service="audit-log"}`. Three old names are still emitted but deprecated; use
-their replacements in queries:
-
-| Deprecated | Use |
-|---|---|
-| `iam_audit_log_dlq_messages_total{queue="<q>-dlq"}` | `platform_dlq_depth{queue="<q>"}` |
-| `iam_audit_log_default_partition_rows_total` | `iam_audit_log_default_partition_rows` |
-| `iam_audit_log_archive_stalled` | `iam_audit_log_archive_stalled_partitions` |
+Metric names follow the Enterprise Platform Observability Standard (LLD §11;
+[`observability/README.md`](observability/README.md), inventory
+[`observability/metric-registry.md`](observability/metric-registry.md)). Every
+series carries `{domain="iam", service="iam-audit-log", environment}`, injected
+centrally by platform-gincommon. The pre-standard names, including the three
+Tier 3 gauges renamed in gap 46, are no longer emitted; their replacements are in
+[`observability/migration.md`](observability/migration.md). The per-alert triage
+index is [`observability/runbooks.md`](observability/runbooks.md); the procedures
+below are the full steps it links to.
 
 Dashboard: `deploy/monitoring/dashboard-audit-log.json` (Grafana uid `iam-audit-log`).
 
@@ -42,14 +40,14 @@ PSQL="psql $ADMIN_READONLY_DATABASE_URL"
 
 ## RB-1 — DLQ has messages
 
-**Alerts:** `IAMAuditLogDLQNotEmpty` (`platform_dlq_depth{queue} > 0`, plus the CloudWatch alarm at 0) and `IAMAuditLogDeadLettered` (`increase(platform_dlq_messages_total{queue,reason}[15m]) > 0`). Leading indicators: `IAMAuditLogMessageFailures` (the failure ratio > 5%), `IAMAuditLogRetrySpike` (`platform_retry_total` by reason), `IAMAuditLogQueueBacklog` (`platform_queue_depth` > 1000), and the ingest-lag and propagation SLO burn alerts.
+**Alerts:** `IAMAuditLogDLQNotEmpty` (`platform_dlq_depth{queue} > 0`, plus the CloudWatch alarm at 0) and `IAMAuditLogDeadLettered` (`increase(platform_dlq_messages_total[15m]) > 0` by `operation`, `event_type`, `reason`; no `queue` label, the dead-letter log line names it). Leading indicators: `IAMAuditLogMessageFailures` (the failure ratio > 5%), `IAMAuditLogRetrySpike` (`platform_retry_total` by reason), `IAMAuditLogQueueBacklog` (`platform_queue_depth` > 1000), and the ingest-lag and propagation SLO burn alerts.
 **Severity:** a compliance incident. Every message is a potentially lost audit record (AL-EVT-4).
 
 **Triage**
 0. Find the cause class from the metrics first:
    ```promql
-   service:platform_messages_failed:rate5m{service="audit-log"}      # by reason: dependency_unavailable = Postgres, invalid_event = producer shape
-   max by (queue) (platform_queue_depth{service="audit-log"})         # backlog per queue
+   service:platform_messages_failed:rate5m{service="iam-audit-log"}  # by reason: handler_error = ingest path (often Postgres), decode_error = Glue schema, malformed = not an envelope
+   max by (queue) (platform_queue_depth{service="iam-audit-log"})     # backlog per queue
    ```
 1. Read the messages without deleting them. Pass `--visibility-timeout 0` so they
    stay available:
@@ -228,8 +226,8 @@ Every job is idempotent and safe to re-run. Use `kubectl create job --from=cronj
 ## RB-10 — Malformed envelopes
 
 **Alert:** `IAMAuditLogMalformedEnvelopes` (`platform_messages_failed_total{reason="malformed"}` increase).
-**Known gap (D-3):** platform-events v1.4.0 **deletes** a message whose body is not a valid envelope. It is not retried and not DLQ'd, so the message is gone once this fires.
-1. Find the logs: `kubectl -n $NS logs deploy/$REL | grep "failed to unmarshal message body"`. They carry the queue and message id. (The library also logs the raw body, BUILD_PLAN gap 42, so handle these logs as sensitive.)
+Since decision D-22 (platform-events v2 `WithDLQForwarding`), a body that is not a valid envelope is **forwarded to its queue's DLQ** with `DLQReason=malformed message body: <parse error>` and the original body and attributes, instead of being deleted (D-3). `IAMAuditLogDLQNotEmpty` follows for that queue. platform-events v2 logs only the body's size and SHA-256, not the body (gap 42 closed).
+1. Read the DLQ copy without deleting it (RB-1, step 1). `OriginalQueue` and `ConsumerName` name the source; the body is the producer's raw bytes.
 2. Identify the producer from the queue (`<topic>` → `*-audit-q`), and fix its envelope serialisation.
-3. Ask the producer to re-emit the affected events from its outbox. With the same envelope id, a re-emit is deduplicated if the event somehow did land.
-4. Track the upstream platform-events fix (leave malformed messages for the DLQ).
+3. A malformed body can never be ingested as-is, so do **not** redrive it. Ask the producer to re-emit the affected events from its outbox (with the same envelope id a re-emit is deduplicated), then remove the DLQ copy only once the re-emitted event is confirmed in `audit_events`.
+4. If the forward itself failed (`platform_messages_failed_total{reason="dead_letter_error"}`, an IAM or DLQ problem), the message stays on the source queue and SQS's own redrive moves it after `maxReceiveCount`; nothing is lost.

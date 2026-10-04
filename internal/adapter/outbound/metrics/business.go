@@ -10,10 +10,13 @@
 //     The message-consumption lifecycle (received / processed / failed /
 //     retry / propagation) is recorded by platform-events' consumer itself;
 //     this package registers only the platform_* metrics the service records.
-//   - Tier 2 — iam_* : concepts shared across IAM services (RLS violations).
+//   - Tier 2 — iam_* : concepts shared across IAM services (RLS violations),
+//     built from the registry's IAM domain entry the same way.
 //   - Tier 3 — iam_audit_log_* : behavior unique to this service (ingest,
-//     archival, redaction, CAT-I2 poller — LLD §11 table). The CAT-I2 pair
-//     landed in Phase 5; the rest land in Phase 8.
+//     archival, redaction, CAT-I2 poller — LLD §11 table), built with
+//     gincommon.NewCounterVec / NewCounter / NewGauge / NewHistogramVec,
+//     which validate the name, suffix and labels. The one exception is the
+//     CatalogPlansStale GaugeFunc, which gincommon has no constructor for.
 //
 // Every collector carries gincommon's {domain, service, environment} const
 // labels (gincommon.MetricsConstLabels), injected centrally, never by call
@@ -103,7 +106,7 @@ var (
 	// UnknownEvents counts rows persisted as <domain>.unknown {source_service}.
 	UnknownEvents *prometheus.CounterVec
 	// IngestLag observes recorded_at − occurred_at.
-	IngestLag prometheus.Histogram
+	IngestLag *prometheus.HistogramVec
 	// DirectWriteCalls counts AL-5/AL-6 entry outcomes {source_service,result}.
 	DirectWriteCalls *prometheus.CounterVec
 
@@ -148,6 +151,38 @@ var (
 	registerErr  error
 )
 
+// buildError carries a constructor error from must to build.
+type buildError struct{ err error }
+
+// must returns c, or aborts the enclosing build with err.
+func must[C any](c C, err error) C {
+	mustOK(err)
+	return c
+}
+
+// mustOK aborts the enclosing build with err when it is non-nil.
+func mustOK(err error) {
+	if err != nil {
+		panic(buildError{err})
+	}
+}
+
+// build runs f and returns the first error must / mustOK aborted it with.
+// Any other panic propagates.
+func build(f func()) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			be, ok := r.(buildError)
+			if !ok {
+				panic(r)
+			}
+			err = fmt.Errorf("metrics: register: %w", be.err)
+		}
+	}()
+	f()
+	return nil
+}
+
 // Register wires the collectors onto gincommon's registerer. Call once at
 // startup AFTER gincommon.ObservabilityMiddlewares (it supplies the
 // {domain, service, environment} const labels) and BEFORE events.InitMetrics,
@@ -164,135 +199,92 @@ func registerMetrics() error {
 	if len(sLabels) == 0 {
 		return fmt.Errorf("metrics: gincommon.ObservabilityMiddlewares must run before Register")
 	}
+	return build(func() { buildCollectors(sLabels) })
+}
 
+// buildCollectors constructs and registers every collector. A constructor
+// error (a name, suffix or label the standard rejects, or a registration
+// conflict) aborts it through must; build turns that into Register's error.
+func buildCollectors(sLabels prometheus.Labels) {
 	// ── Tier 1 — platform_* (registry-built) ─────────────────────────────
-	var err error
-	if DLQMessages, err = gincommon.NewSharedCounterVec(nil, "platform_dlq_messages_total"); err != nil {
-		return err
-	}
-	if DuplicateMessages, err = gincommon.NewSharedCounterVec(nil, "platform_duplicate_messages_total"); err != nil {
-		return err
-	}
-	if DependencyRequestSeconds, err = gincommon.NewSharedHistogramVec(nil, "platform_dependency_request_seconds"); err != nil {
-		return err
-	}
-	if QueueDepth, err = gincommon.NewSharedGaugeVec(nil, "platform_queue_depth"); err != nil {
-		return err
-	}
-	if DLQDepth, err = gincommon.NewSharedGaugeVec(nil, "platform_dlq_depth"); err != nil {
-		return err
-	}
+	DLQMessages = must(gincommon.NewSharedCounterVec(nil, "platform_dlq_messages_total"))
+	DuplicateMessages = must(gincommon.NewSharedCounterVec(nil, "platform_duplicate_messages_total"))
+	DependencyRequestSeconds = must(gincommon.NewSharedHistogramVec(nil, "platform_dependency_request_seconds"))
+	QueueDepth = must(gincommon.NewSharedGaugeVec(nil, "platform_queue_depth"))
+	DLQDepth = must(gincommon.NewSharedGaugeVec(nil, "platform_dlq_depth"))
 
 	// ── Tier 2 — iam_* ───────────────────────────────────────────────────
-	RLSViolations = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_rls_violations_total",
-		Help:        "RLS policy violations recorded in rls_violation_log, by violation_type (cross_tenant_access|missing_or_invalid_guc).",
-		ConstLabels: sLabels,
-	}, []string{"violation_type"})
+	// Registry entry since platform-gincommon v1.5.0 (status proposed): name,
+	// help and the violation_type vocabulary are the registry's, identical in
+	// every IAM service that emits it.
+	RLSViolations = must(gincommon.NewSharedCounterVec(nil, "iam_rls_violations_total"))
 
 	// ── Tier 3 — iam_audit_log_* ─────────────────────────────────────────
-	CatalogPlansPolls = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_catalog_plans_poll_total",
-		Help:        "CAT-I2 plan-map poll outcomes, by result (success|error|timeout; AL-D15).",
-		ConstLabels: sLabels,
-	}, []string{"result"})
-
-	EventsIngested = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_events_ingested_total",
-		Help:        "Audit rows persisted, by source_service, ingest_mode and entry_type.",
-		ConstLabels: sLabels,
-	}, []string{"source_service", "ingest_mode", "entry_type"})
-
-	DuplicateEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_duplicate_events_total",
-		Help:        "Dedup hits (redeliveries / idempotent replays), by consumer (AL-INV-4).",
-		ConstLabels: sLabels,
-	}, []string{"consumer"})
-
-	UnknownEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_unknown_event_total",
-		Help:        "Unrecognized event types persisted as <domain>.unknown, by source_service (AL-EVT-4). Warning: extend the taxonomy.",
-		ConstLabels: sLabels,
-	}, []string{"source_service"})
-
-	IngestLag = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:        "iam_audit_log_ingest_lag_seconds",
-		Help:        "recorded_at − occurred_at of newly persisted rows (HLD §3.4 SLO p99 < 50 ms async).",
-		Buckets:     []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 30, 60, 300, 3600, 86400},
-		ConstLabels: sLabels,
-	})
-
-	DirectWriteCalls = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_directwrite_requests_total",
-		Help:        "AL-5/AL-6 entry outcomes, by source_service and result (created|duplicate|rejected|error). RB-6.",
-		ConstLabels: sLabels,
-	}, []string{"source_service", "result"})
-
-	QueryWindowClamped = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_query_window_clamped_total",
-		Help:        "Queries whose explicit range was cut to the plan window, by plan_code (product signal, AL-INV-8).",
-		ConstLabels: sLabels,
-	}, []string{"plan_code"})
-
-	QueryArchivedReads = prometheus.NewCounter(prometheus.CounterOpts{
-		Name:        "iam_audit_log_query_archived_reads_total",
-		Help:        "Reads served (partly) from the S3 archive.",
-		ConstLabels: sLabels,
-	})
-
-	ExportJobs = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_export_jobs_total",
-		Help:        "Export job lifecycle, by status (pending|ready|failed|expired).",
-		ConstLabels: sLabels,
-	}, []string{"status"})
-
-	DefaultPartitionRows = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:        "iam_audit_log_default_partition_rows",
-		Help:        "Rows in audit_events_default. Critical at > 0 (RB-3).",
-		ConstLabels: sLabels,
-	})
-
-	ArchiveLag = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:        "iam_audit_log_archive_lag_seconds",
-		Help:        "Seconds past archival eligibility of the oldest still-attached partition (0 when none; RB-2).",
-		ConstLabels: sLabels,
-	})
-
-	PendingRedactions = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:        "iam_audit_log_redaction_pending_tasks",
-		Help:        "Redaction tasks pending longer than OPS_REDACTION_PENDING_AGE. Critical at > 0 (RB-7).",
-		ConstLabels: sLabels,
-	})
-
-	RedactionTasks = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_redaction_tasks_total",
-		Help:        "GDPR redaction task outcomes, by status (applied|not_applicable|missed|pending=apply failed). missed = archived rows retained (AL-Q15), routine; pending needs action (RB-7).",
-		ConstLabels: sLabels,
-	}, []string{"status"})
-
-	ArchivePartitions = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_archive_partitions_total",
-		Help:        "Per-tier archival outcomes, by tier and result (verified|failed).",
-		ConstLabels: sLabels,
-	}, []string{"tier", "result"})
-
-	RedactionBlockedArchive = prometheus.NewCounter(prometheus.CounterOpts{
-		Name:        "iam_audit_log_redaction_blocked_archive_total",
-		Help:        "Archival refused because a pending redaction task touches the partition (AL-INV-12). Critical; near zero.",
-		ConstLabels: sLabels,
-	})
-
-	RetentionPruned = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name:        "iam_audit_log_retention_pruned_total",
-		Help:        "Partition drops reconciled, by tier (§8.6).",
-		ConstLabels: sLabels,
-	}, []string{"tier"})
-
-	ArchiveStalled = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name:        "iam_audit_log_archive_stalled_partitions",
-		Help:        "Eligible partitions still attached past OPS_ARCHIVE_STALL_GRACE (AL-INV-9 held). Critical when > 0.",
-		ConstLabels: sLabels,
-	})
+	// gincommon's constructors validate the iam_audit_log_ prefix, the
+	// _total/_seconds suffixes and prohibited labels, inject the identity
+	// const labels and register on gincommon.MetricsRegisterer().
+	CatalogPlansPolls = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_catalog_plans_poll_total",
+		"CAT-I2 plan-map poll outcomes, by result (success|error|timeout; AL-D15).",
+		"result"))
+	EventsIngested = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_events_ingested_total",
+		"Audit rows persisted, by source_service, ingest_mode and entry_type.",
+		"source_service", "ingest_mode", "entry_type"))
+	DuplicateEvents = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_duplicate_events_total",
+		"Dedup hits (redeliveries / idempotent replays), by consumer (AL-INV-4).",
+		"consumer"))
+	UnknownEvents = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_unknown_event_total",
+		"Unrecognized event types persisted as <domain>.unknown, by source_service (AL-EVT-4). Warning: extend the taxonomy.",
+		"source_service"))
+	IngestLag = must(gincommon.NewHistogramVec(nil,
+		"iam_audit_log_ingest_lag_seconds",
+		"recorded_at − occurred_at of newly persisted rows (HLD §3.4 SLO p99 < 50 ms async).",
+		[]float64{0.01, 0.05, 0.1, 0.5, 1, 5, 30, 60, 300, 3600, 86400}))
+	DirectWriteCalls = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_directwrite_requests_total",
+		"AL-5/AL-6 entry outcomes, by source_service and result (created|duplicate|rejected|error). RB-6.",
+		"source_service", "result"))
+	QueryWindowClamped = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_query_window_clamped_total",
+		"Queries whose explicit range was cut to the plan window, by plan_code (product signal, AL-INV-8).",
+		"plan_code"))
+	QueryArchivedReads = must(gincommon.NewCounter(nil,
+		"iam_audit_log_query_archived_reads_total",
+		"Reads served (partly) from the S3 archive."))
+	ExportJobs = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_export_jobs_total",
+		"Export job lifecycle, by status (pending|ready|failed|expired).",
+		"status"))
+	DefaultPartitionRows = must(gincommon.NewGauge(nil,
+		"iam_audit_log_default_partition_rows",
+		"Rows in audit_events_default. Critical at > 0 (RB-3)."))
+	ArchiveLag = must(gincommon.NewGauge(nil,
+		"iam_audit_log_archive_lag_seconds",
+		"Seconds past archival eligibility of the oldest still-attached partition (0 when none; RB-2)."))
+	PendingRedactions = must(gincommon.NewGauge(nil,
+		"iam_audit_log_redaction_pending_tasks",
+		"Redaction tasks pending longer than OPS_REDACTION_PENDING_AGE. Critical at > 0 (RB-7)."))
+	RedactionTasks = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_redaction_tasks_total",
+		"GDPR redaction task outcomes, by status (applied|not_applicable|missed|pending=apply failed). missed = archived rows retained (AL-Q15), routine; pending needs action (RB-7).",
+		"status"))
+	ArchivePartitions = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_archive_partitions_total",
+		"Per-tier archival outcomes, by tier and result (verified|failed).",
+		"tier", "result"))
+	RedactionBlockedArchive = must(gincommon.NewCounter(nil,
+		"iam_audit_log_redaction_blocked_archive_total",
+		"Archival refused because a pending redaction task touches the partition (AL-INV-12). Critical; near zero."))
+	RetentionPruned = must(gincommon.NewCounterVec(nil,
+		"iam_audit_log_retention_pruned_total",
+		"Partition drops reconciled, by tier (§8.6).",
+		"tier"))
+	ArchiveStalled = must(gincommon.NewGauge(nil,
+		"iam_audit_log_archive_stalled_partitions",
+		"Eligible partitions still attached past OPS_ARCHIVE_STALL_GRACE (AL-INV-9 held). Critical when > 0."))
 
 	catalogLastSuccess.Store(time.Now().UnixNano())
 	CatalogPlansStale = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
@@ -301,18 +293,8 @@ func registerMetrics() error {
 		ConstLabels: sLabels,
 	}, func() float64 { return time.Since(time.Unix(0, catalogLastSuccess.Load())).Seconds() })
 
-	reg := gincommon.MetricsRegisterer()
-	for _, c := range []prometheus.Collector{
-		RLSViolations,
-		CatalogPlansPolls, CatalogPlansStale, RedactionTasks,
-		ArchivePartitions, RedactionBlockedArchive, RetentionPruned, ArchiveStalled,
-		EventsIngested, DuplicateEvents, UnknownEvents, IngestLag, DirectWriteCalls,
-		QueryWindowClamped, QueryArchivedReads, ExportJobs,
-		DefaultPartitionRows, ArchiveLag, PendingRedactions,
-	} {
-		if err := reg.Register(c); err != nil {
-			return fmt.Errorf("metrics: register: %w", err)
-		}
-	}
-	return nil
+	// gincommon has no GaugeFunc constructor: this one collector is built
+	// with sLabels (the same identity const labels) and registered on
+	// gincommon's registerer directly.
+	mustOK(gincommon.MetricsRegisterer().Register(CatalogPlansStale))
 }

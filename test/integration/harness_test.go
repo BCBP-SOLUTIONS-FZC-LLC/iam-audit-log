@@ -9,7 +9,7 @@
 // Phase 0 covers the transport contract the fleet relies on: the
 // provisioned topology matches LLD §7.1, raw SNS delivery reaches the
 // platform-events consumer intact, un-acked messages redrive to the DLQ at
-// maxReceiveCount=5, and the known malformed-envelope gap (decision D-3).
+// maxReceiveCount=5, and malformed envelopes forwarded to the DLQ (decision D-22).
 package integration_test
 
 import (

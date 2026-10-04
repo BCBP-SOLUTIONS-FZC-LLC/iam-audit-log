@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -193,5 +194,52 @@ func TestDeadLetter_EventTypeBounding(t *testing.T) {
 		if m.lastType != want {
 			t.Errorf("%q: event_type=%q, want %q", typ, m.lastType, want)
 		}
+	}
+}
+
+// barrierConsumer's Stop returns only once every consumer in the fleet is
+// stopping, so a sequential Fleet.Stop would deadlock (and time out).
+type barrierConsumer struct {
+	arrive *sync.WaitGroup
+	all    chan struct{}
+}
+
+func (b *barrierConsumer) Start(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+func (b *barrierConsumer) Stop() error {
+	b.arrive.Done()
+	<-b.all
+	return nil
+}
+
+// Every consumer is stopped concurrently: total shutdown is one drain
+// timeout, not one per queue.
+func TestFleet_StopsConsumersConcurrently(t *testing.T) {
+	const n = 11
+	var arrive sync.WaitGroup
+	arrive.Add(n)
+	all := make(chan struct{})
+	go func() { arrive.Wait(); close(all) }()
+	queues := make([]Queue, n)
+	for i := range queues {
+		queues[i] = Queue{Name: fmt.Sprintf("q%d", i), URL: "u"}
+	}
+	f, err := NewFleet(queues, func(string, events.Handler, ...events.ConsumerOption) (events.Consumer, error) {
+		return &barrierConsumer{arrive: &arrive, all: all}, nil
+	}, nil, nil, func(Queue) events.Handler { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.Start(ctx, nil)
+	done := make(chan error, 1)
+	go func() { cancel(); done <- f.Stop() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop is sequential: the consumers never all reached Stop")
 	}
 }
