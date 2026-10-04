@@ -4,6 +4,14 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — e2e runs as its own CI job (2026-10-04)
+- **`validate-test.yml` has two parallel jobs, `test` and `e2e`, as in iam-authz-enrichment.**
+  - Before, e2e was a step after `make test-ci` inside the 40-minute `test` job.
+  - Now the `e2e` job checks out, runs `make build`, then `make test-e2e` with `E2E_BINARY_DIR` pointing at `bin/`, so the process tests run the exact binaries the image ships.
+  - A process or network failure shows up under its own job.
+  - `needs: validate-test` in `ci.yml` and `release.yml` waits for both jobs, so e2e still gates trivy, smoke, push and release.
+- `test/e2e` `buildBinary` uses `E2E_BINARY_DIR` when it is set, and fails with a clear message if the binary is missing; locally it still compiles `./cmd/<name>`.
+
 ### Added — tests for previously uncovered behavior (2026-10-04)
 - `TestReconcilerRepositories_RefusedAsAuditApp` (postgres): rule 5 / AL-INV-1.
   - Every archival, prune, redaction-retry and drop step run as `audit_app` is refused with 42501, and the error surfaces.

@@ -364,7 +364,7 @@ In dev, `.env-example` points all three DSNs at the local `postgres` superuser. 
 | `make test-unit` | Unit and black-box contract tests, no Docker |
 | `make test-postgres` | Postgres, RLS, grants, partitions and repositories (testcontainers). Parallelism is capped at `TEST_POSTGRES_PARALLEL` (default 4). |
 | `make test-integration` | SQS, SNS, S3 and Glue on floci, with the real consumer fleet and reconciler (`TEST_INTEGRATION_PARALLEL`, default 2) |
-| `make test-e2e` | The real router over HTTP plus the real binaries as processes |
+| `make test-e2e` | The real router over HTTP plus the real binaries as processes. The process tests build the binaries themselves unless `E2E_BINARY_DIR` points at prebuilt ones (`make build && E2E_BINARY_DIR=$PWD/bin make test-e2e`, as CI does) |
 | `make test-smoke` | CI's image gate (`.github/scripts/smoke-tests.sh`: 200 MB limit + startup-gate check); needs `IMAGE_TAG` and `BINARY`, plus `ENTRYPOINT=/iam-audit-log-reconciler` for the reconciler leg |
 | `make race` | All three suites with `-race` and no coverage merge |
 | `make run` / `make run-reconciler JOB=<name>` | Run a composition root locally (sources `.env`) |
@@ -745,13 +745,14 @@ Secrets are split per root: `DATABASE_URL` and `MIGRATION_DATABASE_URL` for the 
 Five workflow files:
 
 - **`ci.yml`**: the orchestrator. It runs `validate-test.yml` and `validate-quality.yml` in parallel with `build-image`, which does Hadolint → Buildx cached build → Trivy CVE scan (plus SARIF and a CycloneDX SBOM) → smoke tests for both binaries (200 MB size limit plus a startup check). It also posts a PR summary. On push to `main` it pushes to GHCR.
-- **`validate-test.yml`** (reusable):
-  1. `make test-ci` (unit, postgres/RLS and integration, with `-race` and merged coverage)
-  2. coverage gate (**95%**)
-  3. `make test-e2e`
-  4. `arch-lint.sh`
-  5. Swagger staleness check
-  6. event-schema sync check (AsyncAPI → JSON)
+- **`validate-test.yml`** (reusable), two jobs in parallel. A caller's `needs: validate-test` waits for both, so a failing e2e still blocks trivy, smoke, push and release.
+  - **`test`** (40 min):
+    1. `make test-ci` (unit, postgres/RLS and integration, with `-race` and merged coverage)
+    2. coverage gate (**95%**)
+    3. `arch-lint.sh`
+    4. Swagger staleness check
+    5. event-schema sync check (AsyncAPI → JSON)
+  - **`e2e`** (30 min, its own job as in iam-authz-enrichment): `make build`, then `make test-e2e` with `E2E_BINARY_DIR=bin`, so the process tests run the binaries the image ships. Each test brings its own testcontainers Postgres and, where needed, floci.
 - **`validate-quality.yml`** (reusable):
   1. `go mod verify`
   2. reject HTML-escaped operators in workflows

@@ -57,7 +57,7 @@ make run-reconciler JOB=<name>  # reconcile | redaction-retry | redaction-sweep 
 make test-unit                  # no Docker
 make test-postgres              # testcontainers PG15: RLS, grants, partitions, repositories
 make test-integration           # floci SQS/Glue/S3 + PG: consumer fleet, reconciler
-make test-e2e                   # HTTP e2e, real binaries
+make test-e2e                   # HTTP e2e, real binaries (E2E_BINARY_DIR=$PWD/bin reuses make build output, as CI's e2e job does)
 make test-ci                    # unit + postgres + integration, -race, merged coverage (gate 95%)
 make lint / arch-lint / invariant-lint / fmt-check / vet
 make swag / swag-check          # docs/swagger

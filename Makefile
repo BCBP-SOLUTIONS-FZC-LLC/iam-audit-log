@@ -297,6 +297,11 @@ test-integration:
 	$(GO) test $(TEST_INT_PKGS) -tags=integration -count=1 -timeout 600s -parallel $(TEST_INTEGRATION_PARALLEL) -v
 
 .PHONY: test-e2e
+# test-e2e: the real router and the real binaries against testcontainers
+# Postgres + floci. The process tests build cmd/server and cmd/reconciler
+# themselves unless E2E_BINARY_DIR points at prebuilt ones (CI's e2e job runs
+# `make build` and sets E2E_BINARY_DIR=$$PWD/bin), e.g.
+#   make build && E2E_BINARY_DIR=$$PWD/bin make test-e2e
 test-e2e:
 	$(GO) test $(TEST_E2E_PKGS) -tags=e2e -count=1 -timeout 600s -v
 

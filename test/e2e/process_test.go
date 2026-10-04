@@ -24,9 +24,20 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/fixtures"
 )
 
-// buildBinary compiles ./cmd/<name> from the repo root into a temp dir.
+// buildBinary returns the iam-audit-log-<name> binary to run. With
+// E2E_BINARY_DIR set (CI's e2e job runs `make build` first, like
+// iam-authz-enrichment's E2E_BINARY_PATH) it uses the prebuilt binary, so the
+// test runs exactly what the image ships; otherwise it compiles ./cmd/<name>
+// from the repo root into a temp dir.
 func buildBinary(t *testing.T, name string) string {
 	t.Helper()
+	if dir := os.Getenv("E2E_BINARY_DIR"); dir != "" {
+		bin := filepath.Join(dir, "iam-audit-log-"+name)
+		info, err := os.Stat(bin)
+		require.NoError(t, err, "E2E_BINARY_DIR is set but %s is missing: run make build", bin)
+		require.False(t, info.IsDir(), bin)
+		return bin
+	}
 	root, err := filepath.Abs("../..")
 	require.NoError(t, err)
 	out := filepath.Join(t.TempDir(), "iam-audit-log-"+name)

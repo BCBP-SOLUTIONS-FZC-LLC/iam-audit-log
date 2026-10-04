@@ -908,7 +908,7 @@ There is one Secret per composition root: the server secret never carries the re
   - `TestRedaction_BusUserDeletedEndToEnd` and the late-event D-18 test;
   - `TestReconciler_ArchiveVerifyDrop_HappyPath`, blocked, S3-failure, late-arrival and re-open tests;
   - the DLQ-depth monitor, `TestWire_MalformedEnvelopeForwardedToDLQ_D22`, and `TestReconciler_FlociObjectLockSupport`, which pins floci's Object Lock behavior (gap 16).
-- **E2E** (`test/e2e/`, tag `e2e`, `make test-e2e`). The real `NewRouter` and the built binaries: AL-1..AL-7, exports to a presigned object, the archived AL-2 lookup, the CAT-I2 poller against a fake Catalog, process and security tests, and producer contract replays.
+- **E2E** (`test/e2e/`, tag `e2e`, `make test-e2e`; its own parallel `e2e` job in `validate-test.yml`, which runs `make build` and points `E2E_BINARY_DIR` at `bin/`). The real `NewRouter` and the built binaries: AL-1..AL-7, exports to a presigned object, the archived AL-2 lookup, the CAT-I2 poller against a fake Catalog, process and security tests, and producer contract replays.
 
 `make test-ci` runs unit, postgres and integration in parallel and merges coverage. `.github/scripts/coverage-gate.sh` enforces **95%** (`COVERAGE_THRESHOLD`), and merged coverage is 96.5% (2026-10-04). The postgres package needs about 6–7 minutes under `-race` (`TEST_POSTGRES_TIMEOUT`, 1500 s). The floci and Postgres fixtures tolerate a loaded Docker host. Run one `make test-ci` per working tree at a time: concurrent runs share `.coverage/*.out` and corrupt the merged profile. The full suite takes more than 10 minutes locally, so run it in the background.
 

@@ -1,7 +1,14 @@
 # Reusable workflow — test gate.
-# Race detector (unit · postgres · integration) + coverage + e2e (real HTTP
-# router) + arch lint + Swagger staleness + consumed-event schema sync.
-# Called by ci.yml and release.yml. Gates trivy and smoke.
+# Two jobs, run in parallel:
+#   test — race detector (unit · postgres · integration) + coverage gate +
+#          arch lint + Swagger staleness + consumed-event schema sync;
+#   e2e  — the real compiled binaries and the real HTTP router against
+#          testcontainers Postgres + floci (LLD §14 e2e row).
+# e2e is its own job (as in iam-authz-enrichment), not a step after `test`,
+# so a server-process or network failure is attributable in the Actions UI
+# and the two suites don't serialize behind one 40-minute budget.
+# Called by ci.yml and release.yml; a caller's `needs: validate-test` waits
+# for both jobs, so e2e still gates trivy, smoke, push and release.
 name: Validate / Test
 
 "on":
@@ -33,8 +40,7 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     # Postgres/RLS/partition suites each spin their own testcontainers
-    # Postgres; e2e runs sequentially after (see iam-org-membership's
-    # sizing rationale for the same layout).
+    # Postgres (see iam-org-membership's sizing rationale for the layout).
     timeout-minutes: 40
     outputs:
       pct: ${{ steps.gate.outputs.pct }}
@@ -99,16 +105,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      # Mandatory blocking gate: real end-to-end tests (LLD §14 e2e row) —
-      # producer direct-write → query, bus event → query, export → signed URL
-      # → object contents. No coverage/-race here (mirrors `make test-e2e`);
-      # unit/postgres/integration above carry the coverage gate and race
-      # detector.
-      - name: Tests — e2e (real HTTP router)
-        env:
-          TESTCONTAINERS_RYUK_DISABLED: 'true'
-        run: make test-e2e
-
       # Enforces Clean Architecture dependency rules defined in .go-arch-lint.yml.
       # Prevents adapter code from being imported by core/domain or core/service.
       - name: Cache go-arch-lint binary
@@ -158,3 +154,55 @@ jobs:
             --asyncapi   api/asyncapi.yaml \
             --schema-dir internal/eventschema \
             --check
+
+  # Mandatory blocking gate: real end-to-end tests (LLD §14 e2e row).
+  # Producer direct-write → query, bus event → query, export → signed URL →
+  # object contents, the archived AL-2 lookup, the CAT-I2 poller, and the
+  # real cmd/server and cmd/reconciler binaries (start-up gates, role checks,
+  # SIGTERM drain) — the one tier that starts the compiled binaries, so it
+  # catches composition-root wiring the other tiers structurally cannot.
+  # Each test brings its own testcontainers Postgres (and floci where it
+  # needs SQS/S3/Glue), so no service containers are declared. No coverage
+  # or -race here (mirrors `make test-e2e`); the `test` job carries both.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            go.mod
+
+      - name: Configure private module access
+        run: |
+          git config --global credential.helper store
+          echo "https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+
+      - name: Download modules
+        env:
+          GOPRIVATE: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+          GONOSUMDB: github.com/BCBP-SOLUTIONS-FZC-LLC/*
+        run: go mod download
+
+      # The binaries the process tests run, built once with the same
+      # ldflags as the image (bin/iam-audit-log-server, -reconciler).
+      - name: Build binaries
+        run: make build
+
+      - name: Tests — e2e (real binaries + real HTTP router)
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'true'
+          E2E_BINARY_DIR: ${{ github.workspace }}/bin
+        run: make test-e2e
