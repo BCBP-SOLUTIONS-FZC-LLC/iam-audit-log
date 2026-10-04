@@ -1011,7 +1011,7 @@
     },
     {
       "type": "timeseries",
-      "title": "RLS violations by type (sampled 1%)",
+      "title": "RLS violations by type (sampled 1%) (Proposed)",
       "id": 36,
       "datasource": {
         "type": "prometheus",

@@ -214,13 +214,19 @@ metrics-inventory:
 #   check-forbidden-events-bypass.sh    AL-INV-10 + platform-events-only (gap 45)
 #   check-asyncapi-receive-only.sh      zero send operations (AL-INV-10)
 #   check-metric-naming.sh              metric naming + registry (gap 46)
+#   metrics-registry-lint.sh            every live use of a Proposed metric is marked
+#   check-outbox-access.sh              no outbox table access (AL-INV-10)
 #   check-observability-confinement.sh  platform-gincommon-only (gap 43)
+# Together with arch-lint, metrics-lint and swag-check this runs every
+# .github/scripts gate CI's validate-quality.yml / validate-test.yml run.
 .PHONY: invariant-lint
 invariant-lint:
 	bash .github/scripts/check-grants.sh
 	bash .github/scripts/check-forbidden-events-bypass.sh
 	bash .github/scripts/check-asyncapi-receive-only.sh
 	bash .github/scripts/check-metric-naming.sh
+	bash .github/scripts/metrics-registry-lint.sh
+	bash .github/scripts/check-outbox-access.sh
 	bash .github/scripts/check-observability-confinement.sh
 
 # -----------------------------

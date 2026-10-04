@@ -10,6 +10,8 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
   - Now the `e2e` job checks out, runs `make build`, then `make test-e2e` with `E2E_BINARY_DIR` pointing at `bin/`, so the process tests run the exact binaries the image ships.
   - A process or network failure shows up under its own job.
   - `needs: validate-test` in `ci.yml` and `release.yml` waits for both jobs, so e2e still gates trivy, smoke, push and release.
+- **Fixed (CI):** the dashboard panel "RLS violations by type" queries `iam_rls_violations_total`, which is *proposed* since it is built from its registry entry, so it is now marked `(Proposed)` (`metrics-registry-lint.sh`).
+  - `make invariant-lint` now also runs `metrics-registry-lint.sh` and `check-outbox-access.sh`, so `make ci` locally runs every `.github/scripts` gate CI runs.
 - `test/e2e` `buildBinary` uses `E2E_BINARY_DIR` when it is set, and fails with a clear message if the binary is missing; locally it still compiles `./cmd/<name>`.
 
 ### Added — tests for previously uncovered behavior (2026-10-04)
