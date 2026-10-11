@@ -15,6 +15,8 @@ Database `audit` on the shared RDS PostgreSQL. Migrations live in `internal/adap
 | 000007 | `subject_ids` (GIN), `redacted_subjects` (RLS), `redaction_marker()`, `apply_redaction(task)` (reconciler-owned definer), `sweep_redactions(window)`, column UPDATE `(metadata, actor_display)` for the reconciler |
 | 000008 | `audit_archive_objects.sealed`; `invalidate_security_archive()`; `apply_redaction` / `sweep` made seal-aware and invalidating; the `audit_drop_partition(name)` and `audit_reopen_partition(name)` definers |
 | 000009 | The `audit_ops_stats(hot_days, trailing, grace, pending_age)` definer, returning aggregates only |
+| 000010 | `ops_export_watermark` + the `audit_rls_violation_counts()` definer (feeds `iam_rls_violations_total` exactly once fleet-wide) |
+| 000011 | `reconciler_job_lease (job PK, holder, expires_at)`, DML for `audit_reconciler` only: one reconciler run per job, manual Jobs included |
 
 ## Tables
 
@@ -29,6 +31,8 @@ Database `audit` on the shared RDS PostgreSQL. Migrations live in `internal/adap
 | `audit_event_archive_state` | exempt (reconciler-only) | Per (partition, tier): `pending → archiving → archived → verified → dropped`; access tier `expired` |
 | `audit_archive_objects` | FORCE | Per S3 object: tier/tenant/month/part, counts, time and id ranges, `sha256`, `subject_ids`, `sealed` |
 | `rls_violation_log` | — | Sampled RLS violations → `iam_rls_violations_total` |
+| `ops_export_watermark` | — | Last counted `rls_violation_log` id (migrator-owned, read through the definer) |
+| `reconciler_job_lease` | — | One row per running job; a crashed run's lease expires after `RECONCILER_TIMEOUT + 5m` |
 
 ## Grants (summary)
 
@@ -45,4 +49,6 @@ Database `audit` on the shared RDS PostgreSQL. Migrations live in `internal/adap
 - **Unique violations** name the partition's index, not `uq_audit_events_source_id`. Map them on SQLSTATE 23505 (gap 27).
 - **INSERT-only tables:** `audit_app` can't use `ON CONFLICT (col)` or `RETURNING` on `audit_redaction_tasks`, because both need SELECT. Use a target-less `ON CONFLICT DO NOTHING`.
 - **Partition access:** the reconciler reads partitions through the parent, bounded to the month. A grant on the parent doesn't cover naming a partition directly (gap 39).
+- **Reconciler-only tables:** `TestReconcilerRepositories_RefusedAsAuditApp` pins that every archival, prune, redaction-retry and drop step is refused (42501) as `audit_app`.
+- **Timeouts:** Helm sets `PG_STATEMENT_TIMEOUT` / `PG_LOCK_TIMEOUT` per root (server 30s / 5s, reconciler 25m / 10s). The archival scan is one statement per month-tier.
 - **Routing on `sealed`:** archived reads, AL-2 and redaction's `missed` check use `sealed`, not partition existence (D-20 refines D-12).

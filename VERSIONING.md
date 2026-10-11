@@ -180,7 +180,7 @@ When cutting a tagged release:
    - **`deploy-gate`** (requires `KUBECONFIG_B64`; **not skippable**, runs under `production-data-migrations`):
      - a live `helm upgrade --install --wait --atomic` with the per-root existing Secrets;
      - deployed-digest verification against what was pushed, then `kubectl rollout status`;
-     - a Prometheus-backed error-rate check (`http_requests_total{status_class="5xx"}`, this service's own platform-gincommon HTTP metric) that auto-rolls back via `helm rollback` on failure.
+     - a Prometheus-backed error-rate check (`platform_http_requests_total{status_class="5xx"}`, this service's own platform-gincommon HTTP metric) that auto-rolls back via `helm rollback` on failure.
      The error-rate check is skipped (not failed) if `PROMETHEUS_URL` isn't set, but the job as a whole still requires `KUBECONFIG_B64`.
    - **`publish`:** creates the GitHub Release with the CHANGELOG section as notes, plus the binaries, checksums, SBOM and provenance. Runs only if `build`, `docker` **and** `deploy-gate` all succeeded.
 
@@ -205,7 +205,7 @@ Both match `release.yml`'s `v*` tag trigger and produce a signed, scanned image,
 
 | iam-audit-log | Go (`go.mod`) | Shared platform libraries | Local AWS emulator |
 |---|---|---|---|
-| Unreleased (`main`) | `1.26.6` | `platform-gincommon` v1.3.0, `platform-events` v1.4.0, `platform-pgcommon` v1.3.0 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
+| Unreleased (`main`) | `1.26.6` | `platform-gincommon` v1.6.0, `platform-events/v2` v2.0.0, `platform-pgcommon/v2` v2.0.0 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
 
 None of those libraries is re-exported. A consumer of this *service* never needs them as a direct dependency of *this* module: producers and callers depend on the HTTP/event contract, not on any Go package here. Every log, metric and trace goes through platform-gincommon; every database connection, configuration and operation through platform-pgcommon; and every event consumption, SQS setting and dedup through platform-events (BUILD_PLAN gaps 43–45, CI-enforced). A bump of any of the three is therefore a change to review for contract impact, even though it is usually a PATCH. Runtime infrastructure (PostgreSQL 15 on RDS, S3 with Object Lock, SQS/SNS, Glue Schema Registry) is platform-provided and invisible to this matrix.
 

@@ -2,7 +2,7 @@
 
 Guidance for Claude Code working in **`iam-audit-log`**: the Tender Management SaaS platform's compliance system of record. It is a Go service in the IAM subsystem, module `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`.
 
-- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.26).
+- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.28).
 - **Build trace, decisions and gaps:** `docs/implementation/BUILD_PLAN.md`.
 - Where the LLD and a BUILD_PLAN decision (D-n) disagree, the decision is the implemented behavior, and the LLD note it needs is recorded in BUILD_PLAN §C.
 
@@ -17,7 +17,7 @@ A single append-only, tenant-scoped store answering *who did what, to what, when
 - **Archives** months past the hot window to S3 (SSE-KMS, Object Lock COMPLIANCE, per-tenant objects). It drops a partition only when it is provably archived, and it applies GDPR redaction to `security_3y` rows.
 - **Publishes nothing** (AL-INV-10): no SNS publisher, no outbox.
 
-**Status:** build phases 0–8 are complete and committed. Later work, including the platform-library confinement of gaps 43–45, may be uncommitted on the current branch. See `git log` / `git status` rather than assuming.
+**Status:** build phases 0–8, the platform-library confinement (gaps 43–45) and the observability standard (gap 46) are complete. Since then (LLD rev 0.28): platform-gincommon v1.6.0 adoption, `docs/observability/` + `make metrics-lint`, env/Helm alignment with the libraries, and the production-readiness hardening (D-22 DLQ forwarding, D-23 mesh identity, DB timeouts, bounded archived reads, the reconciler job lease, panic-recovering loops). Merged coverage 96.5%. Some of this may be uncommitted; check `git log` / `git status` rather than assuming. Remaining deploy prerequisites are in `docs/implementation/RELEASE_CHECKLIST.md`.
 
 ## Binding rules
 
@@ -31,7 +31,7 @@ Invariants (LLD §2.4; the test map is BUILD_PLAN §B):
 - **AL-INV-7** — redaction never touches `compliance_7y`.
 - **AL-INV-8** — the plan window is a service-layer clamp and never shortens storage.
 - **AL-INV-9** — a partition is dropped only when every retained tier is verified (`audit_drop_partition()`).
-- **AL-INV-10** — no publisher or outbox.
+- **AL-INV-10** — no publisher or outbox. The one SQS writer is platform-events' DLQ publisher, wired once in `cmd/server/main.go` for `WithDLQForwarding` (D-22); it moves poison messages to their queue's own DLQ and never publishes an event.
 - **AL-INV-11** — a caller-supplied tier is ignored.
 - **AL-INV-12** — redact on consume, and refuse to archive a partition with a pending redaction.
 
@@ -39,11 +39,13 @@ Platform-library confinement (each rule is a CI gate in `make ci`):
 
 | Concern | Only through | Enforced by |
 |---|---|---|
-| Logs, metrics, traces | platform-gincommon. `internal/adapter/outbound/telemetry` is the one OTel/promhttp seam, always against gincommon's provider and registry (gap 43). | `.github/scripts/check-observability-confinement.sh` |
+| Logs, metrics, traces | platform-gincommon v1.6.0. Nothing imports OTel or promhttp; `internal/adapter/outbound/telemetry` only wraps gincommon's `NewSpanTracer` / `SpanTraceID` / `MetricsHandler` (gap 43). Metrics: Tier 1/2 via `NewShared*Vec`, Tier 3 via `gincommon.NewCounterVec`/`NewGauge`/`NewHistogramVec`. | `.github/scripts/check-observability-confinement.sh` |
 | DB connection, config, operations | platform-pgcommon: `NewPool`, `ConfigFromEnv`, `RunInTx*`, `Is*`, `pkg/migrate` (gap 44) | `arch-lint.sh` database invariant |
 | Events, SQS config, dedup | platform-events: `NewSQSConsumer`, `config.LoadSQS`; dedup keyed on `Envelope.ID` (gap 45) | `check-forbidden-events-bypass.sh` |
 
-Other gates: `.go-arch-lint.yml` (the core is vendor-free), `check-grants.sh`, `check-asyncapi-receive-only.sh`, `check-metric-naming.sh`, and the contract tests in `test/unit`.
+Other gates: `.go-arch-lint.yml` (the core is vendor-free), `check-grants.sh`, `check-asyncapi-receive-only.sh`, `check-metric-naming.sh`, `metrics-registry-lint.sh`, `metricslint.sh` (`make metrics-lint`), and the contract tests in `test/unit` (Helm: per-root secrets, the mesh `AuthorizationPolicy` + NetworkPolicy caller allow-list; IAM least privilege; alert `runbook_url` anchors).
+
+Internal-route identity (D-23): `/api/v1/internal/*` trusts the `iam-system` role header only because the chart's Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`) admits only the listed caller principals. Never widen `networkPolicy.internalCallers` to the whole namespace or drop the policy; `APP_ENV=prod` refuses to render without it.
 
 ## Common commands
 
@@ -55,14 +57,16 @@ make run-reconciler JOB=<name>  # reconcile | redaction-retry | redaction-sweep 
 make test-unit                  # no Docker
 make test-postgres              # testcontainers PG15: RLS, grants, partitions, repositories
 make test-integration           # floci SQS/Glue/S3 + PG: consumer fleet, reconciler
-make test-e2e                   # HTTP e2e, real binaries
+make test-e2e                   # HTTP e2e, real binaries (E2E_BINARY_DIR=$PWD/bin reuses make build output, as CI's e2e job does)
 make test-ci                    # unit + postgres + integration, -race, merged coverage (gate 95%)
 make lint / arch-lint / invariant-lint / fmt-check / vet
 make swag / swag-check          # docs/swagger
-make ci                         # tidy fmt-check vet lint arch-lint invariant-lint test-ci build
+make metrics-lint               # gincommon metricslint (scrape, refs) + inventory drift
+make metrics-inventory          # regenerate docs/observability/metric-registry.md
+make ci                         # tidy fmt-check vet lint arch-lint invariant-lint metrics-lint test-ci build
 ```
 
-`make test-ci` plus `make test-e2e` together take more than 10 minutes, so run them in the background.
+`make test-ci` plus `make test-e2e` together take more than 10 minutes, so run them in the background. Run only one `make test-ci` per working tree at a time: concurrent runs write the same `.coverage/*.out` files and corrupt the merged profile (use a second worktree instead).
 
 ## Layout
 
@@ -73,8 +77,8 @@ internal/adapter/inbound/{http,consumer}
 internal/adapter/outbound/{postgres,s3,glue,catalog,metrics,telemetry}
 internal/config                       env → typed config (library-owned PG_*/SQS_*/OTEL_* excluded)
 api/                                  asyncapi.yaml (receive-only) + embedded specs
-deploy/{helm,iam,monitoring}          chart, IRSA policy, PrometheusRule mirror
-docs/{lld,implementation,runbook.md,swagger}
+deploy/{helm,iam,monitoring}          chart (incl. mesh.yaml, NetworkPolicy), IRSA policy, PrometheusRule mirror
+docs/{lld,implementation,observability,runbook.md,swagger}
 test/{unit,postgres,integration,e2e,fixtures,dbseed}
 ```
 
@@ -86,23 +90,27 @@ test/{unit,postgres,integration,e2e,fixtures,dbseed}
 - **DB roles:** `cmd/server` uses only `audit_app` (plus the migrator DSN for startup migrations); `cmd/reconciler` uses only `audit_reconciler`.
 - **Definer functions:** anything a role can't do by grant goes through a narrow SECURITY DEFINER function, e.g. partition DDL, the export claim, redaction, the drop/re-open gate and ops stats. `app_tenant_id` / RLS helpers are separate.
 - **jsonb binding:** bind as `string`, never `[]byte` (PgBouncer mode, gap 28).
-- **Decisions:** D-1..D-21 live in BUILD_PLAN §C, and each has a date and "user" when the user chose it. Don't invent behavior; if the spec is silent, raise a gap and ask.
+- **Decisions:** D-1..D-23 live in BUILD_PLAN §C, and each has a date and "user" when the user chose it. Don't invent behavior; if the spec is silent, raise a gap and ask.
 
 ### How to add…
 
 - **An entry_type:** add a row in `domain/taxonomy.go` (tier included), the matching message in `api/asyncapi.yaml`, and an LLD §7.1 row. `test/unit/taxonomy_contract_test.go` parses the LLD.
 - **A metric** (Enterprise Platform Observability Standard, LLD §11):
   - Pick the tier by the decision tree. A new `platform_*` or `iam_*` name needs registry ratification first (standard rules 11–12), so default to Tier-3 `iam_audit_log_*`.
-  - Register it in `internal/adapter/outbound/metrics/business.go` (Tier-1 `pLabels`, Tier-2/3 `sLabels`; never set `service`/`domain`/`environment` at a call site). Bound every label value; never use tenant, user, request or event ids as labels.
+  - Register it in `buildCollectors` (`internal/adapter/outbound/metrics/business.go`) with `must(gincommon.NewCounterVec/NewCounter/NewGauge/NewHistogramVec(...))` (Tier 3) or `gincommon.NewShared*Vec` (registry names). gincommon injects `domain`/`service`/`environment`; never set them at a call site. Bound every label value; never use tenant, user, request or event ids as labels.
   - Add it to `deploy/monitoring/metric-registry.yaml` (shared names also to `registry.go`) and give it an LLD §11 row. `TestMetricRegistry_*` and `TestMetrics_LLDTier3Registered` check this.
-  - To rename, keep the old name as `status: deprecated` with `replaced_by`/`sunset`, emit both, and move every rule, SLO, dashboard and HPA reference in the same change; CI rejects references to deprecated names.
-- **An alert, recording rule or SLO:** edit `deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml`, then run `make prometheusrule` (`scripts/gen-prometheusrule.py`) to regenerate the Helm `PrometheusRule` (a test keeps them identical).
+  - Record a sample in `gatherAll` (`test/unit/metrics_registry_test.go`), then run `make metrics-inventory` and commit `docs/observability/metric-registry.md` (`make metrics-lint` fails when it is stale). An alert also gets an entry in `docs/observability/runbooks.md`.
+  - To rename, keep the old name as `status: deprecated` with `replaced_by`/`sunset`, emit both, and move every rule, SLO, dashboard and HPA reference in the same change; CI rejects references to deprecated names. (Nothing has been deployed yet, so the gap-46 twins were removed outright; record any rename in `docs/observability/migration.md`.)
+- **An alert, recording rule or SLO:** edit `deploy/monitoring/{app-alerts,recording-rules,slo-rules}.yml`, then run `make prometheusrule` (`scripts/gen-prometheusrule.py`) to regenerate the Helm `PrometheusRule` (a test keeps them identical). Every alert needs an absolute `runbook_url` (`https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/...#<heading-slug>`) that `TestAlerts_RunbookURLsResolve` can resolve, and an entry in `docs/observability/runbooks.md`.
 - **A migration:** use the next `NNNNNN_name.{up,down}.sql` under `internal/adapter/outbound/postgres/migrations/`. Bump the version in `test/postgres/migrations_test.go`, and put grants in guarded `DO $$ … $$` blocks.
-- **A reconciler job:** write the function in `cmd/reconciler/jobs`, register it in `Registry()`, and add a Helm `cronjobs` entry. Update the registry test and `test/unit/deploy_contract_test.go`.
+- **A reconciler job:** write the function in `cmd/reconciler/jobs`, register it in `Registry()`, and add a Helm `cronjobs` entry. Update the registry test and `test/unit/deploy_contract_test.go`. The run is serialized per job name by `reconciler_job_lease` automatically.
+- **An env var:** add it to `internal/config` (with validation), `.env-example`, the Helm `env` / `serverEnv` / `reconcilerEnv`, the README table and LLD §12. A variable a platform library reads goes in Helm only, never read by this repo.
 
 ## Testing notes
 
 - **Shared floci:** the integration package shares one floci per run (`test/integration/harness_test.go`). A test that asserts on a queue or DLQ must purge it first and filter to its own event ids.
 - **Postgres tests** seed as superuser through `test/dbseed`, which wraps `pgcommon`.
 - **Archived objects:** manifest seeds representing archived data need `sealed=true`.
-- **Coverage:** merged coverage is about 96.5% against a 95% gate.
+- **Coverage:** merged coverage is 96.5% against a 95% gate.
+- **One metrics identity per process:** gincommon rejects a second `domain`/`service`/`environment`. A test needing `APP_ENV=prod` wraps its body in `if !fixtures.InOwnProcess(t) { return }`; the child forwards `-test.gocoverdir` so its coverage counts.
+- **Slow / loaded hosts:** the postgres package takes 6–7 min under `-race` (`TEST_POSTGRES_TIMEOUT`, 1500 s). The floci fixture waits 240 s for `init-floci.sh`, and the Postgres fixture waits for the published port and retries; `init-floci.sh did not finish` or `port "5432/tcp" not found` means a saturated Docker host, not a code failure.

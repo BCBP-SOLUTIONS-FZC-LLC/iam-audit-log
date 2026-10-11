@@ -54,6 +54,7 @@ type fakeArchRepo struct {
 	streamErr  error
 	streamFail int // stream this many rows, then fail
 	nextParts  map[string]int
+	nilNext    bool // NextParts returns a nil map (no prior parts at all)
 	nextErr    error
 	archErr    error
 
@@ -141,6 +142,9 @@ func (f *fakeArchRepo) MarkArchiving(_ context.Context, _ string, tier domain.Re
 }
 
 func (f *fakeArchRepo) NextParts(context.Context, string, domain.RetentionTier) (map[string]int, error) {
+	if f.nilNext {
+		return nil, f.nextErr
+	}
 	out := map[string]int{}
 	for k, v := range f.nextParts {
 		out[k] = v
@@ -495,6 +499,35 @@ func TestArchive_NextPartsOffsetForReopenedMonth(t *testing.T) {
 	want := []string{"security_3y/aaaaaaaa/5", "security_3y/aaaaaaaa/6", "security_3y/bbbbbbbb/0", "compliance_7y/aaaaaaaa/5"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("parts = %v, want %v", got, want)
+	}
+}
+
+// A repository that reports no prior parts as a nil map (not an empty one)
+// still numbers the first parts from 0 instead of panicking on the map write.
+func TestArchive_NilNextPartsStartsAtZero(t *testing.T) {
+	fx := newArchFixture(t)
+	seedHappy(fx.repo)
+	fx.repo.nilNext = true
+	if _, err := fx.svc.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fx.repo.upserts) == 0 || fx.repo.upserts[0].Part != 0 {
+		t.Fatalf("upserts = %+v, want parts numbered from 0", fx.repo.upserts)
+	}
+}
+
+// discard is idempotent: upload's deferred discard and the stream loop's
+// cleanup may both run on the same part, and the temp file is removed once.
+func TestPartWriter_DiscardIsIdempotent(t *testing.T) {
+	w, err := newPartWriter(t.TempDir(), domain.TierSecurity3y, aTenantA, aMonth, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := w.file.Name()
+	w.discard()
+	w.discard()
+	if _, err := os.Stat(name); !os.IsNotExist(err) {
+		t.Fatalf("temp file still present: %v", err)
 	}
 }
 

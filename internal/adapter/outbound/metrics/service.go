@@ -11,7 +11,7 @@ type Ingest struct{}
 func (Ingest) Ingested(e coredomain.AuditEntry) {
 	EventsIngested.WithLabelValues(label(e.SourceService), string(e.IngestMode), e.EntryType).Inc()
 	if !e.RecordedAt.IsZero() && !e.OccurredAt.IsZero() {
-		IngestLag.Observe(max(e.RecordedAt.Sub(e.OccurredAt), 0).Seconds())
+		IngestLag.WithLabelValues().Observe(max(e.RecordedAt.Sub(e.OccurredAt), 0).Seconds())
 	}
 }
 
@@ -24,8 +24,10 @@ func (Ingest) Unknown(sourceService string) {
 }
 
 // DuplicateMessage counts a deduplicated bus redelivery
-// (platform_duplicate_messages_total{event_type}).
-func (Ingest) DuplicateMessage(eventType string) { DuplicateMessages.WithLabelValues(eventType).Inc() }
+// (platform_duplicate_messages_total{queue,event_type}).
+func (Ingest) DuplicateMessage(queue, eventType string) {
+	DuplicateMessages.WithLabelValues(queue, eventType).Inc()
+}
 
 // DirectWrite counts one AL-5/AL-6 entry outcome.
 func (Ingest) DirectWrite(sourceService, result string) {
@@ -49,13 +51,10 @@ func (Query) ExportJob(status string) { ExportJobs.WithLabelValues(status).Inc()
 // Ops implements port.OpsMetrics (D-21).
 type Ops struct{}
 
-// SetOpsStats publishes the DB-derived gauges (and, during the
-// compatibility period, their deprecated names).
+// SetOpsStats publishes the DB-derived gauges.
 func (Ops) SetOpsStats(s coredomain.OpsStats) {
 	DefaultPartitionRows.Set(float64(s.DefaultPartitionRows))
-	LegacyDefaultPartitionRows.Set(float64(s.DefaultPartitionRows))
 	ArchiveStalled.Set(float64(s.StalledPartitions))
-	LegacyArchiveStalled.Set(float64(s.StalledPartitions))
 	ArchiveLag.Set(s.ArchiveLagSeconds)
 	PendingRedactions.Set(float64(s.PendingRedactions))
 }
@@ -65,11 +64,10 @@ func (Ops) SetQueueDepth(queue string, depth int64) {
 	QueueDepth.WithLabelValues(queue).Set(float64(depth))
 }
 
-// SetDLQDepth publishes platform_dlq_depth{queue} for an inbound queue's DLQ,
-// plus the deprecated iam_audit_log_dlq_messages_total{queue="<q>-dlq"}.
+// SetDLQDepth publishes platform_dlq_depth{queue} for an inbound queue's DLQ
+// (queue is the source queue, not <queue>-dlq).
 func (Ops) SetDLQDepth(queue string, depth int64) {
 	DLQDepth.WithLabelValues(queue).Set(float64(depth))
-	LegacyDLQMessagesGauge.WithLabelValues(queue + "-dlq").Set(float64(depth))
 }
 
 // AddRLSViolations feeds iam_rls_violations_total (Tier 2).

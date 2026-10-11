@@ -6,7 +6,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/events"
 )
 
 // BusIngester is the shared ingest path (implemented by
@@ -22,17 +22,18 @@ type BusIngester interface {
 // redriven to <queue>-dlq for operator replay (RB-1) — never dropped.
 func Handler(q Queue, ingest BusIngester) events.Handler {
 	return func(ctx context.Context, env events.Envelope[json.RawMessage]) error {
-		_, err := ingest.IngestBus(ctx, toBusEvent(q.Topic, env), q.Consumer)
+		_, err := ingest.IngestBus(ctx, toBusEvent(q, env), q.Consumer)
 		return err
 	}
 }
 
-func toBusEvent(topic string, env events.Envelope[json.RawMessage]) domain.BusEvent {
+func toBusEvent(q Queue, env events.Envelope[json.RawMessage]) domain.BusEvent {
 	return domain.BusEvent{
 		ID:        env.ID,
 		Type:      env.Type,
 		Source:    env.Source,
-		Topic:     topic,
+		Topic:     q.Topic,
+		Queue:     q.Name,
 		TenantID:  env.TenantID,
 		Subject:   env.Subject,
 		Actor:     env.Actor,

@@ -5,6 +5,12 @@ metadata:
   name: {{ include "iam-audit-log.fullname" . }}
   labels:
     {{- include "iam-audit-log.labels" . | nindent 4 }}
+  {{- if or .Values.autoscaling.targetRPSPerReplica .Values.autoscaling.targetQueueDepthPerReplica }}
+  annotations:
+    # Both custom/external metrics come from Proposed (not yet ratified)
+    # platform_* metrics (deploy/monitoring/prometheus-adapter-rule.yaml).
+    observability.platform/metric-status: proposed
+  {{- end }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -33,21 +39,22 @@ spec:
     # RPS-based scaling: opt-in, off by default (§14 has no queue-depth/RPS
     # scaling requirement for this service). PREREQUISITE: prometheus-adapter
     # must be installed and configured with the rule at
-    # deploy/monitoring/prometheus-adapter-rule.yaml. Without it this metric
-    # is silently absent from the custom metrics API and the HPA falls back
-    # to CPU/memory only.
+    # deploy/monitoring/prometheus-adapter-rule.yaml (it exposes gincommon's
+    # platform_http_requests_total as platform_http_requests_per_second).
+    # Without it this metric is silently absent from the custom metrics API
+    # and the HPA falls back to CPU/memory only.
     - type: Pods
       pods:
         metric:
-          name: http_requests_per_second
+          name: platform_http_requests_per_second
         target:
           type: AverageValue
           averageValue: {{ .Values.autoscaling.targetRPSPerReplica }}
     {{- end }}
     {{- if .Values.autoscaling.targetQueueDepthPerReplica }}
     # Queue-backlog scaling: opt-in, off by default. Scales on the total
-    # backlog of the 11 inbound audit queues (the Canonical
-    # platform_queue_depth, summed by prometheus-adapter as
+    # backlog of the 11 inbound audit queues (platform_queue_depth, Proposed,
+    # summed by prometheus-adapter as
     # platform_queue_depth_audit_log). PREREQUISITE: the external rule in
     # deploy/monitoring/prometheus-adapter-rule.yaml.
     - type: External

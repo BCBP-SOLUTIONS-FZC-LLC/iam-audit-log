@@ -27,9 +27,26 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+        {{- if or .Values.mesh.enabled .Values.mesh.authorizationPolicy.enabled .Values.mesh.peerAuthentication.enabled }}
+        # The chart requests injection itself, so a namespace that lost its
+        # injection label cannot produce proxy-less pods the mesh policies
+        # never cover.
+        {{- if .Values.mesh.revision }}
+        istio.io/rev: {{ .Values.mesh.revision | quote }}
+        {{- else }}
+        sidecar.istio.io/inject: "true"
+        {{- end }}
+        {{- end }}
       annotations:
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if or .Values.mesh.enabled .Values.mesh.authorizationPolicy.enabled .Values.mesh.peerAuthentication.enabled }}
+        # Envoy starts before the app (startup migrations, SQS, Glue never race
+        # an unready proxy) and drains for less than the pod's grace period.
+        proxy.istio.io/config: |
+          holdApplicationUntilProxyStarts: true
+          terminationDrainDuration: {{ .Values.mesh.terminationDrainDuration }}
         {{- end }}
         # Bump rotationEpoch after rotating an external secret; the checksum
         # recycles pods when a chart-managed Secret changes.

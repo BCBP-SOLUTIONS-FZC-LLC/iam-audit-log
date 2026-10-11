@@ -104,7 +104,10 @@ func NewFloci(ctx context.Context) (*Floci, func(), error) {
 		return nil, nil, fmt.Errorf("aws config: %w", err)
 	}
 	g := glue.NewFromConfig(cfg)
-	deadline := time.Now().Add(120 * time.Second)
+	// init-floci.sh provisions 11 topics, 22 queues, subscriptions, the bucket
+	// and the Glue registries; on a loaded Docker host that has taken longer
+	// than 120 s.
+	deadline := time.Now().Add(240 * time.Second)
 	for {
 		_, err := g.GetRegistry(ctx, &glue.GetRegistryInput{RegistryId: registryID("iam-serviceaccount-events")})
 		if err == nil {

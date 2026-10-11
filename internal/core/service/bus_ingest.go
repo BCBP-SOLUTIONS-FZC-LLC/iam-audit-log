@@ -77,7 +77,7 @@ func (s *IngestService) IngestBus(ctx context.Context, ev domain.BusEvent, consu
 			s.metrics.Unknown(stored.SourceService)
 		}
 		if !created {
-			s.metrics.DuplicateMessage(domain.EventTypeLabel(ev.Topic, ev.Type))
+			s.metrics.DuplicateMessage(ev.Queue, domain.EventTypeLabel(ev.Topic, ev.Type))
 		}
 	}
 	if s.log != nil {

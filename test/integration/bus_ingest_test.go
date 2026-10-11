@@ -23,9 +23,9 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/dbseed"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/fixtures"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/events"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
 // busStack is the real Phase 3 pipeline: platform-events consumer on floci

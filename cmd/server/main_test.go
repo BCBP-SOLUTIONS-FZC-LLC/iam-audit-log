@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 type warnRec struct{ msgs []string }
@@ -43,5 +45,39 @@ func TestNewUUIDv7(t *testing.T) {
 	}
 	if len(id) != 36 || id[14] != '7' {
 		t.Fatalf("%q is not a UUIDv7", id)
+	}
+}
+
+type panicLog struct{ msgs []map[string]any }
+
+func (l *panicLog) Error(_ string, f map[string]any) { l.msgs = append(l.msgs, f) }
+
+// A panicking background loop is recovered, logged with its stack and
+// restarted; a loop that returns because ctx ended is not restarted.
+func TestSupervise_RestartsAfterPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := &panicLog{}
+	runs := 0
+	supervise(ctx, log, "probe", time.Millisecond, func(ctx context.Context) {
+		runs++
+		if runs < 3 {
+			panic("boom")
+		}
+		cancel() // third run: a normal exit on shutdown
+	})
+	if runs != 3 {
+		t.Fatalf("runs = %d, want 3 (two panics restarted, then a normal exit)", runs)
+	}
+	if len(log.msgs) != 2 || log.msgs[0]["loop"] != "probe" || log.msgs[0]["panic"] != "boom" || log.msgs[0]["stack"] == "" {
+		t.Fatalf("logged = %v", log.msgs)
+	}
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	cancel2()
+	calls := 0
+	supervise(ctx2, log, "probe", time.Hour, func(context.Context) { calls++; panic("late") })
+	if calls != 1 {
+		t.Fatalf("a panic after shutdown must not restart, calls = %d", calls)
 	}
 }

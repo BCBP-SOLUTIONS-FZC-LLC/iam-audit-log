@@ -15,7 +15,7 @@ Standalone Mermaid source files. [`ARCHITECTURE.md`](../../ARCHITECTURE.md) embe
 | [`archive-state-machine.mmd`](mermaid/archive-state-machine.mmd) | `audit_event_archive_state` transitions incl. re-archive and re-open (D-19/D-20) | LLD §4.2, §8.5 |
 | [`redaction-flow.mmd`](mermaid/redaction-flow.mmd) | GDPR redaction: immediate / retry / D-18 ingest check / sweep / invalidation / missed | LLD §8.7, §15.5 |
 | [`cache-strategy.mmd`](mermaid/cache-strategy.mmd) | No request-path cache (AL-D5); the CAT-I2 plan-window map (stale-if-error); export presign | LLD §6, AL-D15 |
-| [`data-model.mmd`](mermaid/data-model.mmd) | ERD of every table (migrations 000001–000010) | LLD §4.2 |
+| [`data-model.mmd`](mermaid/data-model.mmd) | ERD of every table (migrations 000001–000011) | LLD §4.2 |
 | [`event-consumption-flow.mmd`](mermaid/event-consumption-flow.mmd) | SNS → 11 SQS queues → platform-events consumer → codec → handler → ledger; DLQ; no publisher | LLD §7 |
 | [`observability-stack.mmd`](mermaid/observability-stack.mmd) | gincommon chain, telemetry seam, three metric tiers, D-21 gauges, rules, CI conformance | LLD §11 |
 | [`rls-guc-flow.mmd`](mermaid/rls-guc-flow.mmd) | `app.tenant_id` transaction-local GUC injection, fail-closed RLS, definer functions | LLD §4.3 |

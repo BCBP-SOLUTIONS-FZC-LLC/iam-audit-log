@@ -53,7 +53,12 @@ resources:
 
 # Non-secret env shared by the server and every CronJob (LLD §12).
 env:
-  APP_ENV: "production"
+  # Platform environment vocabulary: local | dev | test | staging | prod (the
+  # `environment` metric label; "production" is rejected at startup).
+  APP_ENV: "prod"
+  # Enterprise Platform Observability Standard domain (`domain` label); the
+  # binaries also set it explicitly in gincommon.Config.
+  OBSERVABILITY_DOMAIN: "iam"
   SERVICE_NAME: "iam-audit-log"
   PG_BOUNCER_MODE: "true"
   PG_SLOW_QUERY_THRESHOLD: "200ms"
@@ -64,22 +69,43 @@ env:
   AUDIT_HOT_WINDOW_DAYS: "90"
   AUDIT_PRECREATE_MONTHS: "3"
   AUDIT_WRITABLE_TRAILING_MONTHS: "3"
+  # Tracing (platform-gincommon InitTracingWithConfig). The trace service.name
+  # is passed in code (cfg.ServiceName: SERVICE_NAME, "-reconciler" for the
+  # CronJobs), so OTEL_SERVICE_NAME / APP_NAME are not read. Set the endpoint
+  # to "none" to switch export off (gincommon >= v1.6.0).
   OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"
+  OTEL_EXPORTER_OTLP_INSECURE: "false"
+  OTEL_TRACES_SAMPLER_RATIO: "0.1"
+  # W3C baggage propagation; off so caller-supplied baggage is not forwarded.
+  OTEL_PROPAGATOR_BAGGAGE: "false"
+  # true re-samples a sampled remote parent at the ratio (edge services);
+  # this service is mesh-internal.
+  OTEL_TRACES_IGNORE_REMOTE_PARENT_SAMPLED: "false"
+  # Logging (platform-gincommon logger).
+  LOG_LEVEL: "info"          # debug | info | warn | error
+  LOG_SAMPLING: "false"      # zap sampling of repetitive entries
 
 # Server-only env.
 serverEnv:
   DB_APP_ROLE: "audit_app"
-  # Trace resource service.name. Unset, gincommon falls back to APP_NAME,
-  # then to "platform-gincommon"; matches cfg.ServiceName for this root.
-  OTEL_SERVICE_NAME: "iam-audit-log"
   APP_PORT: "8080"
   METRICS_PORT: "9090"
   PG_MAX_CONNS: "20"          # audit pool 20 conns via PgBouncer (HLD §7.1)
   PG_MIN_CONNS: "0"
+  # Every server statement is short: requests have a 30 s deadline and the
+  # export worker reads in bounded pages. A lock wait on this pool means
+  # contention (ingest only inserts), so fail fast instead of piling up.
+  PG_STATEMENT_TIMEOUT: "30s"
+  PG_LOCK_TIMEOUT: "5s"
   GLUE_REGISTRY_REGION: "ap-south-1"
   SQS_MAX_RECEIVE_COUNT: "5"
   SQS_VISIBILITY_TIMEOUT: "30s"
   SQS_CONCURRENCY: "4"                  # per-queue handler concurrency (read by platform-events config.LoadSQS, gap 45)
+  SQS_HANDLER_TIMEOUT: "20s"            # caps one delivery's decode + ingest, below SQS_VISIBILITY_TIMEOUT
+  SQS_DRAIN_TIMEOUT: "15s"              # in-flight handlers finish on SIGTERM, within terminationGracePeriodSeconds
+  # SQS_QUEUE_DEPTH_INTERVAL stays unset: OpsMonitor already sets
+  # platform_queue_depth / platform_dlq_depth every OPS_STATS_INTERVAL (D-21),
+  # and a second writer would race it.
   AUTH_AUDIT_QUEUE_URL: ""
   USER_AUDIT_QUEUE_URL: ""
   MEMBERSHIP_AUDIT_QUEUE_URL: ""
@@ -102,6 +128,7 @@ serverEnv:
   INGEST_BATCH_RATE_LIMIT_BURST: "20"
   ARCHIVE_SYNC_MAX_ROWS: "10000"        # archived AL-1 read → 202 export above this (D-10)
   ARCHIVE_SYNC_MAX_BYTES: "52428800"    # 50 MiB (D-10)
+  ARCHIVE_READ_CONCURRENCY: "2"         # sync archived reads in memory at once per pod (512Mi limit)
   EXPORT_DOWNLOAD_URL_TTL: "15m"        # fresh presigned URL per AL-4 poll (D-11)
   EXPORT_RATE_LIMIT_PER_MINUTE: "10"    # AL-3 per-tenant bucket (§10.5)
   EXPORT_RATE_LIMIT_BURST: "5"
@@ -115,8 +142,13 @@ serverEnv:
 # Reconciler-only env.
 reconcilerEnv:
   DB_RECONCILER_ROLE: "audit_reconciler"
-  OTEL_SERVICE_NAME: "iam-audit-log-reconciler"   # matches cfg.ServiceName ("-reconciler")
   PG_MAX_CONNS: "4"
+  # The archival scan reads a whole month-tier in one REPEATABLE READ
+  # statement (StreamTier); keep it under RECONCILER_TIMEOUT (30m).
+  PG_STATEMENT_TIMEOUT: "25m"
+  # Partition detach/re-open takes an exclusive lock on audit_events. Giving
+  # up after 10 s keeps ingest from queueing behind it; the next run retries.
+  PG_LOCK_TIMEOUT: "10s"
   PROCESSED_EVENTS_TTL_DAYS: "8"
   RECONCILER_TIMEOUT: "30m"
   REDACTION_RETRY_MIN_AGE: "5m"      # redaction-retry: re-apply tasks pending longer than this (RB-7)
@@ -200,8 +232,65 @@ networkPolicy:
       kubernetes.io/metadata.name: monitoring
     podSelector:
       app.kubernetes.io/name: prometheus
+  # Pods allowed to call /api/v1/internal/* (AL-5/AL-6/AL-7): the in-cluster
+  # direct-write producers of LLD §18.2 (Signup and operator tooling are added
+  # per environment via additionalIngressRules / additionalRules). Never the
+  # whole namespace: NetworkPolicy is the L4 half, templates/mesh.yaml checks
+  # the caller's mTLS identity. Rendering fails when empty unless
+  # allowNoInternalCallers is true.
+  internalCallers:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: iam-catalog-admin       # CAT-1/2/5 config.* (AL-5)
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: iam-realm-provisioner   # config.idp.changed (AL-5)
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: iam-org-membership      # invitation.* / tenant.* direct-write
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: group-mapping           # config.group_mapping.* (AL-6)
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: tender-acl              # config.tender_acl.* (AL-5/AL-6)
+  allowNoInternalCallers: false
+  # Egress for the CAT-I2 plans poll (port 8080): Catalog Admin's pods only.
+  catalogPodLabels:
+    app.kubernetes.io/name: iam-catalog-admin
   additionalIngressRules: []
   additionalEgressRules: []
+
+# Istio identity policy (templates/mesh.yaml). APP_ENV=prod fails to render
+# without authorizationPolicy.enabled unless acknowledgeNoMesh is set under a
+# tracked security exception.
+mesh:
+  # The pods run an Istio sidecar. Implied when either policy is enabled.
+  enabled: true
+  revision: ""                       # istio.io/rev for a revisioned control plane
+  # Below terminationGracePeriodSeconds (45s), above the app's own drain.
+  terminationDrainDuration: 40s
+  acknowledgeNoMesh: false
+  authorizationPolicy:
+    enabled: true
+    # SPIFFE ids (cluster.local/ns/<ns>/sa/<serviceaccount>) of the AL-5/AL-6/
+    # AL-7 callers; keep in step with networkPolicy.internalCallers.
+    internalCallerPrincipals:
+      - cluster.local/ns/iam/sa/iam-catalog-admin
+      - cluster.local/ns/iam/sa/iam-realm-provisioner
+      - cluster.local/ns/iam/sa/iam-org-membership
+      - cluster.local/ns/iam/sa/iam-group-mapping
+      - cluster.local/ns/iam/sa/iam-tender-acl
+    # The gateway's principal when Envoy Gateway is mesh-injected (then set
+    # peerAuthentication.apiPortMode: STRICT). Empty: /api/v1/audit/* is
+    # allowed only from sources with no mesh principal (the non-injected
+    # gateway), so no in-mesh workload can reach it with forged headers.
+    gatewayPrincipals: []
+    additionalRules: []
+  peerAuthentication:
+    enabled: true
+    mode: STRICT
+    apiPortMode: PERMISSIVE
 
 prometheusRule:
   enabled: true            # LLD §11 alert rules (deploy/monitoring/app-alerts.yml mirror)

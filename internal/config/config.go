@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +101,9 @@ type Server struct {
 	// estimated above either bound becomes an export (202).
 	ArchiveSyncMaxRows  int64
 	ArchiveSyncMaxBytes int64
+	// ArchiveReadConcurrency caps the synchronous archived reads (AL-1/AL-7)
+	// held in memory at once per replica; each can hold up to the sync bounds.
+	ArchiveReadConcurrency int
 
 	// Export API + worker (LLD §5.4 AL-3/AL-4; decisions D-2, D-11 — LLD
 	// §12 additions).
@@ -119,6 +123,12 @@ type Server struct {
 // Reconciler is cmd/reconciler's configuration (archival, partitions, prune).
 type Reconciler struct {
 	Common
+
+	// MetricsServiceName is the metrics identity's service: the service
+	// itself (SERVICE_NAME, default iam-audit-log), so the reconciler's
+	// iam_audit_log_* collectors pass gincommon's <domain>_<service>_ prefix
+	// check. ServiceName ("-reconciler") stays the trace service.name.
+	MetricsServiceName string
 
 	// ReconcilerDatabaseURL connects as DBReconcilerRole (audit_reconciler:
 	// BYPASSRLS, the sole DELETE / partition-DDL path — LLD §4.3, §10.4).
@@ -151,10 +161,21 @@ type Reconciler struct {
 // first, and configuration errors are logged through it (BUILD_PLAN gap 43).
 func AppEnv() string { return envOr("APP_ENV", "dev") }
 
+// ObservabilityDomain is the Enterprise Platform Observability Standard
+// domain of this service: the `domain` label on every metric (passed as
+// gincommon.Config.Domain; OBSERVABILITY_DOMAIN carries the same value in
+// the deployment manifests).
+const ObservabilityDomain = "iam"
+
+// Environments is the platform's APP_ENV vocabulary — the `environment`
+// metric label every platform library validates (no aliases: "production"
+// and "development" are rejected).
+var Environments = []string{"local", "dev", "test", "staging", "prod"}
+
 // IsDev reports whether appEnv permits local-dev placeholders.
 func IsDev(appEnv string) bool {
 	switch appEnv {
-	case "dev", "development", "local", "test":
+	case "dev", "local", "test":
 		return true
 	}
 	return false
@@ -198,14 +219,15 @@ func LoadServer(buildVersion string) (Server, error) {
 		IngestBatchRateLimitRPS:   envInt("INGEST_BATCH_RATE_LIMIT_RPS", 10),
 		IngestBatchRateLimitBurst: envInt("INGEST_BATCH_RATE_LIMIT_BURST", 20),
 
-		ArchiveSyncMaxRows:    int64(envInt("ARCHIVE_SYNC_MAX_ROWS", 10000)),
-		ArchiveSyncMaxBytes:   int64(envInt("ARCHIVE_SYNC_MAX_BYTES", 50<<20)),
-		ExportDownloadURLTTL:  envDuration("EXPORT_DOWNLOAD_URL_TTL", 15*time.Minute),
-		ExportRateLimitPerMin: envInt("EXPORT_RATE_LIMIT_PER_MINUTE", 10),
-		ExportRateLimitBurst:  envInt("EXPORT_RATE_LIMIT_BURST", 5),
-		ExportPollInterval:    envDuration("EXPORT_POLL_INTERVAL", 5*time.Second),
-		ExportJobLease:        envDuration("EXPORT_JOB_LEASE", 15*time.Minute),
-		ExportWorkDir:         os.Getenv("EXPORT_WORK_DIR"),
+		ArchiveSyncMaxRows:     int64(envInt("ARCHIVE_SYNC_MAX_ROWS", 10000)),
+		ArchiveSyncMaxBytes:    int64(envInt("ARCHIVE_SYNC_MAX_BYTES", 50<<20)),
+		ArchiveReadConcurrency: envInt("ARCHIVE_READ_CONCURRENCY", 2),
+		ExportDownloadURLTTL:   envDuration("EXPORT_DOWNLOAD_URL_TTL", 15*time.Minute),
+		ExportRateLimitPerMin:  envInt("EXPORT_RATE_LIMIT_PER_MINUTE", 10),
+		ExportRateLimitBurst:   envInt("EXPORT_RATE_LIMIT_BURST", 5),
+		ExportPollInterval:     envDuration("EXPORT_POLL_INTERVAL", 5*time.Second),
+		ExportJobLease:         envDuration("EXPORT_JOB_LEASE", 15*time.Minute),
+		ExportWorkDir:          os.Getenv("EXPORT_WORK_DIR"),
 
 		OpsStatsInterval:       envDuration("OPS_STATS_INTERVAL", time.Minute),
 		OpsStallGrace:          envDuration("OPS_ARCHIVE_STALL_GRACE", 48*time.Hour),
@@ -239,6 +261,9 @@ func LoadServer(buildVersion string) (Server, error) {
 	if c.ExportJobLease < time.Minute || c.ExportJobLease > 24*time.Hour {
 		problems = append(problems, "EXPORT_JOB_LEASE: must be between 1m and 24h (claim_export_job bound)")
 	}
+	if c.ArchiveReadConcurrency < 1 || c.ArchiveReadConcurrency > 32 {
+		problems = append(problems, "ARCHIVE_READ_CONCURRENCY: must be between 1 and 32")
+	}
 	if c.ExportDownloadURLTTL > 7*24*time.Hour {
 		problems = append(problems, "EXPORT_DOWNLOAD_URL_TTL: must not exceed 168h (SigV4 presign limit)")
 	}
@@ -271,7 +296,8 @@ func LoadReconciler(buildVersion, job string) (Reconciler, error) {
 		ArchiveWorkDir:            os.Getenv("ARCHIVE_WORK_DIR"),
 		ProcessedEventsPruneBatch: envInt("PROCESSED_EVENTS_PRUNE_BATCH", 10000),
 	}
-	c.ServiceName = envOr("SERVICE_NAME", "iam-audit-log") + "-reconciler"
+	c.MetricsServiceName = envOr("SERVICE_NAME", "iam-audit-log")
+	c.ServiceName = c.MetricsServiceName + "-reconciler"
 
 	var problems []string
 	if c.ReconcilerDatabaseURL == "" {
@@ -295,6 +321,9 @@ func LoadReconciler(buildVersion, job string) (Reconciler, error) {
 
 func validateCommon(c Common) []string {
 	var problems []string
+	if !slices.Contains(Environments, c.AppEnv) {
+		problems = append(problems, "APP_ENV: must be one of "+strings.Join(Environments, ", ")+" (the platform environment label; use prod, not production)")
+	}
 	switch c.ArchiveObjectLockMode {
 	case "COMPLIANCE", "GOVERNANCE":
 	default:

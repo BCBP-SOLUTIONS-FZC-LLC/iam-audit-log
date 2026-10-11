@@ -1,7 +1,7 @@
 graph TD
     subgraph cmd["Composition Roots  —  cmd/"]
-        main["server/main.go\ngincommon logger first, then config.LoadServer\nmigrations via platform-pgcommon/pkg/migrate (audit_migrator DSN)\npgcommon.NewPool (AppPoolConfig: GUCProvider, PGBouncerMode forced true)\nstartup role check (audit_app, NOBYPASSRLS)\nbackground goroutines: PlanPoller (CAT-I2) · export worker · OpsMonitor (D-21)\nconsumer fleet: 11 × events.NewSQSConsumer (config.LoadSQS)\nrouter + /metrics listener (telemetry.MetricsHandler)"]
-        reconciler["reconciler/main.go\nsingle binary, --job=<name> dispatch (audit_reconciler, BYPASSRLS)\nreconcile · redaction-retry · redaction-sweep · processed-events-prune"]
+        main["server/main.go\ngincommon logger first, then config.LoadServer\nmigrations via platform-pgcommon/pkg/migrate (audit_migrator DSN)\npgcommon.NewPool (AppPoolConfig: GUCProvider, PGBouncerMode forced true)\nstartup role check (audit_app, NOBYPASSRLS)\nbackground loops under supervise (panic → logged restart):\nPlanPoller (CAT-I2) · export worker · OpsMonitor (D-21)\nconsumer fleet: 11 × events.NewSQSConsumer (config.LoadSQS)\n+ WithDLQForwarding (D-22) · concurrent Stop\nrouter + /metrics listener (telemetry.MetricsHandler)"]
+        reconciler["reconciler/main.go\nsingle binary, --job=<name> dispatch (audit_reconciler, BYPASSRLS)\nreconcile · redaction-retry · redaction-sweep · processed-events-prune\none run per job: reconciler_job_lease (000011)"]
         jobs["reconciler/jobs/\nReconcile · RedactionRetry · RedactionSweep · ProcessedEventsPrune\nContext = dependency bag (ports only)"]
     end
 
@@ -11,11 +11,11 @@ graph TD
     end
 
     subgraph adapters_out["Outbound Adapters  —  internal/adapter/outbound/"]
-        postgres["postgres/\nAuditRepository (Append · AppendWithRedaction · ApplyRedaction)\nQueryRepository · ExportRepository · PlanWindowRepository\nArchiveRepository · RedactionRepository · PartitionRepository · OpsRepository\nTxRunner / withPool (pgcommon.RunInTx*) · wrapConnErr\nmigrations/ 000001..000010"]
+        postgres["postgres/\nAuditRepository (Append · AppendWithRedaction · ApplyRedaction)\nQueryRepository · ExportRepository · PlanWindowRepository\nArchiveRepository · RedactionRepository · PartitionRepository · OpsRepository\nTxRunner / withPool (pgcommon.RunInTx*) · wrapConnErr\nJobLease (000011)\nmigrations/ 000001..000011"]
         s3["s3/\nStore — ReadArchive · PutExport · PresignExport\nPutArchive · ArchiveChecksum (SSE-KMS, Object Lock verify)"]
         glue["glue/\ndecode-only Codec (18-byte header, zlib, bomb-bounded)\nRegistryResolver (glue:GetSchemaVersion) · schema-validated\nEncode refuses (AL-INV-10)"]
         catalog["catalog/\nClient — GET /api/v1/internal/plans (CAT-I2)\niam-system headers · 1 MiB cap · ErrCatalogTimeout"]
-        metrics["metrics/\nbusiness.go — 32 collectors, three tiers\nregistry.go — PlatformRegistry · DomainRegistry (Canonical)\nadapters: Consumer · Ingest · Query · Ops · Archive · Redaction · CatalogPoll\nDependency + Instrumented S3 decorators"]
+        metrics["metrics/\nbusiness.go — buildCollectors: NewShared*Vec (Tier 1/2)\n+ gincommon NewCounterVec/NewGauge/NewHistogramVec (Tier 3)\nregistry.go — PlatformRegistry · LibraryRegistry · DomainRegistry\nadapters: Consumer · Ingest · Query · Ops · Archive · Redaction · CatalogPoll\nDependency + Instrumented S3 decorators"]
         telemetry["telemetry/\nthe one OTel / promhttp seam (gap 43)\nNewTracer · TraceID · MetricsHandler · HTTPErrorLog · QuietGin"]
     end
 

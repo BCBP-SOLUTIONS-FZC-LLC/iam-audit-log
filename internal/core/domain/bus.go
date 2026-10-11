@@ -16,6 +16,7 @@ type BusEvent struct {
 	Type      string // producer's verbatim type (AL-INV-5)
 	Source    string // producing service
 	Topic     string // logical topic the queue subscribes to
+	Queue     string // inbound queue name (*-audit-q), a metric label only
 	TenantID  string
 	Subject   string
 	Actor     string

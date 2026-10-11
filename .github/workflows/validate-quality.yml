@@ -103,6 +103,12 @@ jobs:
       - name: Metrics registry ratification check
         run: bash .github/scripts/metrics-registry-lint.sh
 
+      # platform-gincommon's own linter on a real scrape (registry compliance,
+      # label vocabulary, cardinality), legacy/unregistered names in deploy/
+      # and the operator docs, and docs/observability/metric-registry.md drift.
+      - name: Observability standard lint (metricslint)
+        run: bash .github/scripts/metricslint.sh
+
       # AL-INV-10 / AL-EVT-1 / gap 45: this service publishes nothing — no
       # SNS publisher, no outbox, no publisher-side config helpers — and every
       # SQS consume, SQS_* setting and dedup key goes through platform-events

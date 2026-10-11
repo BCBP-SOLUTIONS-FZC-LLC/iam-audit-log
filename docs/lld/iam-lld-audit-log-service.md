@@ -9,8 +9,8 @@
 | Go module | `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log` (Go 1.26) |
 | Parent design | IAM High-Level Design v1.47 — file `iam-hld-tender-saas-v1.41.md`, header **Version 1.47**, "Approved for LLD" (see Revision 0.1 note on the version/filename discrepancy) |
 | Subsystem | Identity & Access Management |
-| Version | 0.26 (Draft — header version tracks the revision log; as-built through implementation Phase 8 and gaps 43–46) |
-| Date | September 2026 |
+| Version | 0.28 (Draft — header version tracks the revision log; as-built through implementation Phase 8, gaps 43–46 and decisions D-22/D-23) |
+| Date | October 2026 |
 | Status | Draft for review |
 | Base HLD | IAM HLD §5.7 (charter), §6.6 (plan-gated query window), §7.1–§7.2 (`audit` DB topology, RLS), §9.1/§9.1.1 (SNS/SQS topology), §9.4 (event catalogue + direct-audit-write note), §13.1–§13.3 (DR, retention, GDPR) |
 | Companion specs | `api/asyncapi.yaml` (inbound channel contract), `docs/swagger/` (query + ingest OpenAPI), `deploy/monitoring/` (alert rules), IAM Platform Observability Standard |
@@ -45,6 +45,8 @@
 | Revision | 0.24 (2026-09-27): **Observability as implemented (implementation Phase 8, decision D-21).** (1) **DB-derived gauges from `cmd/server`:** the Deployment is always scraped, so it publishes the alerting gauges every `OPS_STATS_INTERVAL`. They come from `audit_ops_stats()` (a SECURITY DEFINER function returning aggregate numbers only, no tenant data) and from SQS DLQ depth: `archive_stalled`, `archive_lag_seconds`, `default_partition_rows_total`, `dlq_messages_total{queue}`, and the new `iam_audit_log_redaction_pending_tasks`. The last is added to the Tier-3 table: RB-7 needs a level, not the `pending` outcome counter. The Critical archival, redaction and DLQ alerts therefore no longer depend on scraping the reconciler CronJob. Its own counters (`archive_partitions_total`, `retention_pruned_total`, `redaction_blocked_archive_total`) stay internal, and CronJob failure alerts cover them. (2) The rev 0.23 'until Phase 8' reconciler-visibility note is updated to match. (3) The full runbooks are in `docs/runbook.md` (RB-1..RB-10). |
 | Revision | 0.25 (2026-09-27): **As-built alignment after implementation phases 0–8 and the platform-library confinement (BUILD_PLAN gaps 43–45).** (1) **§3** now shows the implemented package layout (`cmd/reconciler/jobs`, `outbound/{catalog,metrics,telemetry}`, `internal/config`, the docs tree) and a confinement table: logs/metrics/traces only through platform-gincommon, with `outbound/telemetry` as the single OTel/promhttp seam (no span API, `/metrics` handler or context trace-id helper in gincommon v1.3.0); DB connection/configuration/operations only through platform-pgcommon; event consumption, SQS config, outbox and dedup only through platform-events. Each is CI-enforced. **§3.3.3** is corrected: consumers are built by `events.NewSQSConsumer` with `config.LoadSQS` / `SQSConsumerOptions`, and the dead-letter handler observes at `SQS_MAX_RECEIVE_COUNT − 1`. The local Glue decode-only codec replaces the non-existent `GlueCodec`/`ValidatingCodec`, and dedup follows the library contract (idempotent on `Envelope.ID` via `processed_events`) instead of the non-existent `skipDuplicate`/`ackUnknown`. `core/port` imports no vendor. (2) **§4**: migrations `000001`…`000009` as implemented; `redacted_subjects` (D-18); a database-function table (every SECURITY DEFINER / invoker function, owner and grantee); `audit_archive_objects.subject_ids` / `sealed` (D-17, D-20); the as-implemented grant matrix; the `audit_migrator` → `audit_reconciler` membership release prerequisite. (3) **§12**: every env var the code reads, with default and reader binary, plus the library-owned `PG_*` / `SQS_*` / `OTEL_*` and the four CronJob schedules. (4) **§11**: Tier-1 attribution corrected; one registry; the telemetry seam; log hygiene. (5) **§25**: new tables, functions, jobs, metrics and operational documents. (6) **§16**: new **AL-Q19** for the upstream library asks. |
 | Revision | 0.26 (2026-09-27): **Metrics aligned with the Enterprise Platform Observability Standard (implementation gap 46).** (1) §11 rewritten: the tier decision tree; central label injection with `service="audit-log"`; the full Canonical Tier-1 set (adds `platform_retry_total`, `platform_duplicate_messages_total`, `platform_event_propagation_seconds`, `platform_queue_depth`, `platform_dlq_depth`) with the ratified label sets (`queue`, `event_type`, `reason`, `dependency`, `operation`, `outcome`); `platform_dependency_request_seconds` relabelled from `{target_service,endpoint}` to `{dependency,operation,outcome}` and extended to S3. (2) Tier 2 `iam_rls_violations_total` is now actually fed (migration `000010`, `audit_rls_violation_counts()`, watermark, exactly-once fleet-wide). (3) Tier-3 gauge renames with a compatibility period: `iam_audit_log_default_partition_rows_total` → `iam_audit_log_default_partition_rows`, `iam_audit_log_archive_stalled` → `iam_audit_log_archive_stalled_partitions`, `iam_audit_log_dlq_messages_total` → the Canonical `platform_dlq_depth`. (4) Registry (`deploy/monitoring/metric-registry.yaml`, `metrics/registry.go`), lint config, label vocabulary and CI checks; recording rules, SLOs with burn-rate alerts, a Grafana dashboard and HPA references, all on non-deprecated names. |
+| Revision | 0.27 (2026-10-01): **Platform-library observability migration (no compatibility period).** platform-gincommon, platform-events and platform-pgcommon emit only `platform_*` names with the mandatory `{domain, service, environment}` identity. (1) Identity: `gincommon.Config.Domain = "iam"`, `Environment = APP_ENV` (vocabulary `local, dev, test, staging, prod`; `production` → `prod`), `OBSERVABILITY_DOMAIN=iam` in the manifests; the `service` label is now `iam-audit-log` on every series (was `audit-log` on the service's own). (2) `events.InitMetrics` / `pgmetrics.InitWithIdentity` replace the removed registerer-based init. (3) The service's Tier-1 collectors are built from the central registry (`gincommon.NewShared*Vec`) and registered before platform-events, which reuses them; the consumption lifecycle (received/processed/failed/retry/propagation) is now counted by platform-events only, with its label sets. (4) The deprecated Tier-3 gauge twins are removed. (5) Alerts, recording rules, SLOs, dashboard and HPA read the successors; rules on Proposed metrics carry `metric_status: proposed`. |
+| Revision | 0.28 (2026-10-04): **Shared-library alignment and production-readiness hardening (BUILD_PLAN D-22, D-23).** (1) **Libraries:** platform-gincommon v1.6.0 (platform-events/v2 and platform-pgcommon/v2 stay v2.0.0, the latest). `iam_rls_violations_total` is built from its central-registry entry (`gincommon.NewSharedCounterVec`, status *proposed*); Tier-3 collectors use gincommon's validating constructors; the telemetry seam no longer touches OpenTelemetry or promhttp, since gincommon now provides `NewSpanTracer`, `SpanTraceID`, `MetricsHandler` and `InitTracingWithConfig` (AL-Q19 (a) closed). The reconciler's metrics identity is `service="iam-audit-log"`; only its trace `service.name` keeps `-reconciler`. (2) **D-22 (closes D-3, gap 42; AL-Q19 (c)):** malformed or undecodable messages are forwarded to their queue's own DLQ (`events.WithDLQForwarding`); IAM gains `sqs:SendMessage`/`GetQueueUrl` on the audit DLQs only; AL-INV-10 unchanged in intent. (3) **D-23 (§10.2):** `/api/v1/internal/*` is identity-checked by an Istio `AuthorizationPolicy` (caller SPIFFE principals) plus a NetworkPolicy caller allow-list, instead of header trust; `APP_ENV=prod` refuses to render without it. Server pool `PG_STATEMENT_TIMEOUT=30s`/`PG_LOCK_TIMEOUT=5s`, reconciler `25m`/`10s`; `ARCHIVE_READ_CONCURRENCY` (2) bounds synchronous archived reads; migration `000011_reconciler_lease` (one reconciler run per job, manual Jobs included); background loops recover from a panic and restart; the consumer fleet stops its queues concurrently with `SQS_HANDLER_TIMEOUT=20s`/`SQS_DRAIN_TIMEOUT=15s`. (4) **Config:** `APP_NAME`, `OTEL_SERVICE_NAME` and `PG_SSLMODE` are no longer read (removed from Helm and `.env-example`); `LOG_LEVEL`, `LOG_SAMPLING` and the OTEL sampler/propagation settings are passed explicitly (§12). (5) **Observability docs:** `docs/observability/` (standard as implemented, generated metric inventory, migration, per-alert runbooks); `make metrics-lint` runs gincommon's `metricslint` in CI; every alert's `runbook_url` is an absolute link to a real heading. (6) **Tests:** merged coverage 96.5% (gate 95%); new role-confinement, job-lease, fleet-boot, DLQ-forwarding and mesh-chart contract tests (§14). |
 
 > **Revision 0.1 note — parent HLD version.** The staged parent file is named `iam-hld-tender-saas-v1.41.md` but its header declares **Version 1.47** ("Approved for LLD"), and its changelog's terminal substantive entries are **v1.44** (Event Consumer realm→tenant map; queue count) and **v1.43** (credential/MFA events promoted to bus events). This LLD grounds every claim in the **content as read (v1.47)** and cites HLD section numbers as they appear in that file. Where a reader's copy is labelled v1.44, the sections this LLD relies on (§5.7, §6.6, §9.1, §9.4, §13.3) are stable across 1.43→1.47. This discrepancy is recorded, not resolved here (see **AL-Q9**).
 
@@ -182,6 +184,7 @@ iam-audit-log/
 ├── cmd/
 │   ├── server/                            # API + consumer fleet + export worker + plans poller + ops monitor
 │   │   ├── main.go
+│   │   ├── supervise.go                   # panic-recovering restart loop for the background loops (rev 0.28)
 │   │   └── swagger_info.go                # swaggo @info metadata for the generated OpenAPI spec
 │   └── reconciler/                        # CronJob composition root: --job=reconcile|processed-events-prune|redaction-retry|redaction-sweep
 │       ├── main.go
@@ -197,12 +200,12 @@ iam-audit-log/
 │   │   │   └── consumer/                  # platform-events consumer fleet: one consumer per inbound queue → IngestBus
 │   │   └── outbound/
 │   │       ├── postgres/                  # the only raw SQL: repositories (audit, query, export, archive, redaction, plan window, partition, ops), db.go, migrate.go, role.go
-│   │       │   └── migrations/            # 000001…000010 (§4.4)
+│   │       │   └── migrations/            # 000001…000011 (§4.4)
 │   │       ├── s3/                        # archive + export object store (aws-sdk-go-v2): SSE-KMS, Object Lock, presign, read-back verify
 │   │       ├── glue/                      # Glue Schema Registry decode-only codec (events.Codec), sanitized validation errors
 │   │       ├── catalog/                   # CAT-I2 plans client (AL-D15)
 │   │       ├── metrics/                   # Tier-1/2/3 collectors, registered on gincommon.MetricsRegisterer() only
-│   │       └── telemetry/                 # the single OTel/promhttp seam onto gincommon's tracer provider and registry (rev 0.25)
+│   │       └── telemetry/                 # thin wrappers over gincommon's tracing and /metrics API (rev 0.28; no OTel/promhttp import)
 │   ├── config/                            # per-root config loaders (LoadServer / LoadReconciler) + validation
 │   └── eventschema/                       # per-source inbound JSON-schema package (doc)
 ├── pkg/
@@ -213,13 +216,14 @@ iam-audit-log/
 ├── docs/
 │   ├── swagger/                           # OpenAPI spec — GENERATED by `make swag` (swaggo), checked in
 │   ├── lld/iam-lld-audit-log-service.md   # this document
-│   ├── implementation/                    # BUILD_PLAN.md (decisions D-1..D-21, gaps), RELEASE_CHECKLIST.md
+│   ├── implementation/                    # BUILD_PLAN.md (decisions D-1..D-23, gaps), RELEASE_CHECKLIST.md
+│   ├── observability/                     # standard as implemented, generated metric-registry.md, migration.md, per-alert runbooks.md (rev 0.28)
 │   ├── runbook.md                         # RB-1..RB-10 (§24)
 │   └── architecture/                      # README.md
 ├── deploy/
-│   ├── helm/                              # Deployment, 4 CronJobs, PrometheusRule, ServiceMonitor, HPA, PDB, NetworkPolicy, per-root Secrets
-│   ├── iam/                               # IAM policy (S3 + KMS + SQS + Glue)
-│   └── monitoring/                        # app-alerts.yml (static mirror of the PrometheusRule) + README
+│   ├── helm/                              # Deployment, 4 CronJobs, PrometheusRule, ServiceMonitor, HPA, PDB, NetworkPolicy, Istio mesh policy, per-root Secrets
+│   ├── iam/                               # IAM policy (S3 + KMS + SQS consume + DLQ forward + Glue)
+│   └── monitoring/                        # metric-registry.yaml, alerts / recording / SLO rules (static mirror of the PrometheusRule), dashboard, HPA adapter rule
 ├── test/                                  # unit/, postgres/ (testcontainers), integration/ (floci SQS/S3/Glue), e2e/, fixtures/, dbseed/
 ├── scripts/                               # init-floci.sh (SQS queues + DLQs, SNS topics, S3 bucket with Object Lock, Glue registries), merge_coverage.py
 ├── .github/                               # workflows (ci, validate-*, release, changelog) + scripts (§3.2)
@@ -231,9 +235,9 @@ iam-audit-log/
 
 ```
 require (
-    github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon           v1.3.0
-    github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events              v1.4.0
-    github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon            v1.3.0
+    github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon           v1.6.0
+    github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2              v2.0.0
+    github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2            v2.0.0
     github.com/aws/aws-sdk-go-v2/service/s3                        v1.x.x  // archive + export object store
     github.com/aws/aws-sdk-go-v2/service/glue                      v1.x.x  // Glue Schema Registry client (decode)
     github.com/aws/aws-sdk-go-v2/service/sqs                       v1.x.x  // DLQ depth gauge only (GetQueueAttributes); consumption is platform-events'
@@ -241,7 +245,7 @@ require (
 )
 ```
 
-Module prefix `github.com/BCBP-SOLUTIONS-FZC-LLC/`, Go 1.26. `platform-gincommon` and `platform-events` pins match every sibling LLD verified against as of this revision (all ten agree on v1.3.0 / v1.4.0). **`platform-pgcommon` is pinned to v1.3.0 (revised from v1.2.1 in rev 0.1) — the platform is currently split**: Org & Membership, Realm Provisioner, Catalog, Group Mapping, and Tender ACL have all moved to v1.3.0 (it supplies `IsConnectionException`/`IsInsufficientResources`/`IsPgError`, used by Org & Membership's own error-mapper), while User Profile, Event Consumer, Token Service, and Delegation remain on v1.2.1. As a not-yet-built (greenfield) service, Audit Log targets the newer version rather than the version its rev-0.1 draft happened to be written against; this is noted, not treated as resolved, since it reflects a platform-wide inconsistency this document did not create and cannot settle unilaterally (§25 lists it for traceability).
+Module prefix `github.com/BCBP-SOLUTIONS-FZC-LLC/`, Go 1.26. **Rev 0.28:** all three platform libraries are at their latest release (gincommon v1.6.0, events/v2 v2.0.0, pgcommon/v2 v2.0.0), aligned with iam-org-membership's incorporation; the historical note below records the rev-0.1 state. **`platform-pgcommon` is pinned to v1.3.0 (revised from v1.2.1 in rev 0.1) — the platform is currently split**: Org & Membership, Realm Provisioner, Catalog, Group Mapping, and Tender ACL have all moved to v1.3.0 (it supplies `IsConnectionException`/`IsInsufficientResources`/`IsPgError`, used by Org & Membership's own error-mapper), while User Profile, Event Consumer, Token Service, and Delegation remain on v1.2.1. As a not-yet-built (greenfield) service, Audit Log targets the newer version rather than the version its rev-0.1 draft happened to be written against; this is noted, not treated as resolved, since it reflects a platform-wide inconsistency this document did not create and cannot settle unilaterally (§25 lists it for traceability).
 
 **Platform-library confinement (rev 0.25; BUILD_PLAN gaps 43–45).** Each cross-cutting concern goes through its platform library and nowhere else. The rule is enforced in CI (§3.2):
 
@@ -261,17 +265,19 @@ Module prefix `github.com/BCBP-SOLUTIONS-FZC-LLC/`, Go 1.26. `platform-gincommon
 - `adapter/*` implements ports; adapters never import each other. `cmd/*` (composition roots) are the only place adapters meet.
 - Transport confinement:
   - The SQS consumer is built only by platform-events. `cmd/server/main.go` is the only place an SQS client exists, and only for the DLQ depth gauge.
-  - Glue is confined to `outbound/glue` + `cmd/server`, S3 to `outbound/s3` + the composition roots, raw SQL to `outbound/postgres`, and OTel/promhttp to `outbound/telemetry`.
+  - Glue is confined to `outbound/glue` + `cmd/server`, S3 to `outbound/s3` + the composition roots, and raw SQL to `outbound/postgres`. Nothing imports OpenTelemetry or promhttp (rev 0.28).
+  - The one SQS writer is platform-events' DLQ publisher, wired once in `cmd/server/main.go` for `WithDLQForwarding` (D-22).
 - Enforced by `go-arch-lint` (`.go-arch-lint.yml`) plus the `make arch-lint` / `make invariant-lint` scripts:
 
 | Script | Asserts |
 |---|---|
 | `arch-lint.sh` | architecture guards; the **database invariant** (pgcommon only: no other driver, no `pgx.Connect`/`pgxpool.New*`/`ParseConfig`, no raw `Begin`/`Acquire`, no direct `pgconn.PgError` classification, no hand-built `pgcommon.Config{}` or `PG_*` reads); AWS SDK transport confinement; DB-role confinement per root |
 | `check-grants.sh` | `audit_app` holds exactly INSERT + SELECT on `audit_events` (AL-INV-1) |
-| `check-forbidden-events-bypass.sh` | no publisher / outbox / raw SNS (AL-INV-10). No raw SQS transport calls or hand-built envelopes. §4: consumers only via `events.NewSQSConsumer`; no `SQS_*` reads; no envelope decode outside the consumer; dedup keyed on `Envelope.ID` only, via the one `processed_events` writer |
+| `check-forbidden-events-bypass.sh` | no publisher / outbox / raw SNS (AL-INV-10); the DLQ publisher only in `cmd/server/main.go` (D-22). No raw SQS transport calls or hand-built envelopes. §4: consumers only via `events.NewSQSConsumer`; no `SQS_*` reads; no envelope decode outside the consumer; dedup keyed on `Envelope.ID` only, via the one `processed_events` writer |
 | `check-asyncapi-receive-only.sh` | the AsyncAPI contract has zero `send` operations |
-| `check-metric-naming.sh` | every collector's namespace, suffix and tier labels |
-| `check-observability-confinement.sh` | logs only via the gincommon logger, collectors only on `gincommon.MetricsRegisterer()`, OTel/promhttp only in `outbound/telemetry`, no `log`/`log/slog`/zap/`fmt.Print*`, stderr only for a logger-init failure |
+| `check-metric-naming.sh` | every collector's constructor per tier (`NewShared*Vec` for registry names, gincommon's validating constructors for `iam_audit_log_*`), namespace and suffix |
+| `metricslint.sh` (`make metrics-lint`) | platform-gincommon's `metricslint check` on a real scrape, `metricslint refs` on `deploy/` and the operator docs, and drift of the generated `docs/observability/metric-registry.md` (rev 0.28) |
+| `check-observability-confinement.sh` | logs only via the gincommon logger, collectors only on `gincommon.MetricsRegisterer()`, no OpenTelemetry or promhttp import anywhere (rev 0.28), no `log`/`log/slog`/zap/`fmt.Print*`, stderr only for a logger-init failure |
 
 ### 3.3 Shared library integration scope
 
@@ -292,16 +298,16 @@ flowchart LR
     GIN["platform-gincommon"]
     PGC["platform-pgcommon"]
     EVT["platform-events"]
-    MAIN -->|"logger.NewLogger, ObservabilityMiddlewares, InitTracingFromEnv, Shutdown"| GIN
-    RECON -->|"logger.NewLogger, InitTracingFromEnv, Shutdown"| GIN
+    MAIN -->|"logger.NewLogger, ObservabilityMiddlewares, InitTracingWithConfig, Shutdown"| GIN
+    RECON -->|"logger.NewLogger, InitTracingWithConfig, Shutdown"| GIN
     HTTP -->|"ProtectedMiddlewares, TimeoutMiddleware, RequestContext, headers"| GIN
-    MET -->|"MetricsRegisterer, MetricsConstLabels"| GIN
-    TEL -->|"MetricsRegisterer (gatherer), global TracerProvider"| GIN
+    MET -->|"NewShared*Vec, NewCounterVec/NewGauge/NewHistogramVec, MetricsRegisterer"| GIN
+    TEL -->|"NewSpanTracer, SpanTraceID, MetricsHandler"| GIN
     MAIN -->|"NewPool, migrate.Runner, pgmetrics"| PGC
     RECON -->|"NewPool, pgmetrics"| PGC
     PG -->|"ConfigFromEnv, RunInTx, RunInTxWithRetryOpts, WithGUCSet, Is*, Health"| PGC
     HTTP -->|"WithGUCSet (identity bridge)"| PGC
-    MAIN -->|"NewSQSConsumer, config.LoadSQS/SQSConsumerOptions/SQSConfigFromEnv, InitWithRegisterer"| EVT
+    MAIN -->|"NewSQSConsumer, config.LoadSQS/SQSConsumerOptions/SQSConfigFromEnv, InitMetrics, NewSQSDLQPublisher + WithDLQForwarding"| EVT
     CONS -->|"Envelope, Handler, WithConsumerCodec, WithDeadLetterHandler, WithMaxReceiveCount"| EVT
     GL -->|"implements events.Codec (decode only)"| EVT
 ```
@@ -313,21 +319,13 @@ flowchart LR
 | `logger.NewLogger(env)` | both `main.go` | The **only** log sink (Zap-backed `port.Logger`). It is built first, so configuration errors are logged through it; stderr is used only if it cannot be built. It is injected into the pool, middleware, consumer fleet, services and reconciler jobs |
 | `gincommon.Config{Logger, ServiceName, BuildVersion}` / `ObservabilityMiddlewares` | router | RED metrics, request-id, tracing, correlation headers, panic recovery, request logging |
 | `gincommon.ProtectedMiddlewares` / `TimeoutMiddleware(30s)` | router | Gateway-identity trust (`x-user-id` / `x-tenant-id` / `x-tenant-roles`; no JWT parsing, §5.1); per-request deadline |
-| `gincommon.InitTracingFromEnv` / `Shutdown` | both `main.go` | Installs the TracerProvider + OTLP pipeline (`OTEL_*`); flushes spans and logs on shutdown |
-| `gincommon.MetricsRegisterer()` / `MetricsConstLabels()` | `outbound/metrics`, libraries | The one registry: business collectors, `events.InitWithRegisterer`, `pgmetrics.InitWithRegisterer` |
+| `gincommon.InitTracingWithConfig` / `Shutdown` | both `main.go` | Installs the TracerProvider + OTLP pipeline with the metrics identity (service, version, `domain`, environment) and the gincommon logger (rev 0.28); `OTEL_EXPORTER_OTLP_ENDPOINT=none` turns export off; flushes spans and logs on shutdown |
+| `gincommon.MetricsRegisterer()` / `MetricsConstLabels()` | `outbound/metrics`, libraries | The one registry: business collectors, `events.InitMetrics`, `pgmetrics.InitWithIdentity` |
+| `gincommon.NewShared*Vec` / `NewCounterVec` / `NewCounter` / `NewGauge` / `NewHistogramVec` | `outbound/metrics` | Tier 1–2 built from the central registry; Tier 3 through the validating constructors (prefix, suffix, prohibited labels, identity const labels) (rev 0.28) |
+| `gincommon.NewSpanTracer` / `SpanTraceID` / `MetricsHandler` | `outbound/telemetry` | pgcommon `db.query` and reconciler spans; log `trace_id`; `/metrics` on `METRICS_PORT` (rev 0.28) |
 | `gincommon.ErrorResponse` shape | error mapper | Superset body (§17, BUILD_PLAN gap 19) |
 
-**The telemetry seam (rev 0.25, gap 43).** gincommon v1.3.0 exposes no span API, no `/metrics` handler, and no trace-id helper outside a `*gin.Context`. `internal/adapter/outbound/telemetry` is the single package allowed to touch the OpenTelemetry and promhttp APIs, always against gincommon's provider and registry:
-
-| Function | Purpose |
-|---|---|
-| `NewTracer` | spans from gincommon's provider: pgcommon `db.query`, the reconciler root span |
-| `TraceID` | the log `trace_id` |
-| `MetricsHandler` | serves exactly gincommon's registry on `METRICS_PORT` |
-| `HTTPErrorLog` | net/http's own errors into the gincommon logger |
-| `QuietGin` | gin release mode, no console writers |
-
-Proposed upstream (§16): `gincommon.StartSpan`, `gincommon.MetricsHandler`, and a context `TraceID`, which would let this seam be deleted.
+**The telemetry adapter (rev 0.28, gap 43 retired).** gincommon v1.4.0+ ships the span API, the `/metrics` handler and the context trace-id helper this service used to build itself. `internal/adapter/outbound/telemetry` now only wraps them (`NewTracer` → `gincommon.NewSpanTracer`, `TraceID` → `gincommon.SpanTraceID`, `MetricsHandler` → `gincommon.MetricsHandler`, which continues past a failing collector) and keeps `HTTPErrorLog` and `QuietGin`. Nothing in the repository imports OpenTelemetry or promhttp; `check-observability-confinement.sh` enforces it without an exemption.
 
 Exact middleware order: Timeout → Observability (PanicRecovery → RequestID → Tracing → CorrelationHeaders → Metrics → Logging) → ProtectedMiddlewares (RequireAuth → Context) → IdentityBridge (binds `app.tenant_id` via `pgcommon.WithGUCSet`) → `RequireAuditReader` (`/api/v1/audit/*`) | `RequireSystemRole` (`/api/v1/internal/*`).
 
@@ -341,7 +339,7 @@ Exact middleware order: Timeout → Observability (PanicRecovery → RequestID �
 | `GUCSetFromContext` / `WithGUCSet` | http identity bridge, repositories | Binds `app.tenant_id` **transaction-locally** (`set_config(…, true)`) on every checkout, reads included (O&M RLS-6) |
 | `pgcommon.Is*` / `ConstraintName` / `IsConnectionException` | error mapper, `wrapConnErr` | The only Postgres error classification (§17; 503 on connectivity classes) |
 | `platform-pgcommon/pkg/migrate.Runner` | `cmd/server` | Migrations at startup via `MIGRATION_DATABASE_URL` (direct, not PgBouncer); tracked in `pgcommon_migrations` (gap 13) |
-| `pgmetrics.InitWithRegisterer` | both `main.go` | Pool + query metrics on gincommon's registry |
+| `pgmetrics.InitWithIdentity` | both `main.go` | Pool + query metrics on gincommon's registry |
 
 The `audit_reconciler` role connects with a **separate pool** in `cmd/reconciler` that binds no `app.tenant_id` (`BYPASSRLS`). It is the *only* role with `DELETE` on `audit_events` or with the column-level `UPDATE (metadata, actor_display)` redaction uses; partition DDL still goes through the migrator-owned definer functions (§4.2, §4.3, §10.4). Enforced by the `arch-lint.sh` database invariant (rev 0.25, gap 44).
 
@@ -354,11 +352,13 @@ The `audit_reconciler` role connects with a **separate pool** in `cmd/reconciler
 | `events.WithMaxReceiveCount` + `WithDeadLetterHandler` | `inbound/consumer` | The dead-letter handler fires at `DeadLetterObserveAt(SQS_MAX_RECEIVE_COUNT)` = redrive − 1, returning an error so **SQS** performs the move to `<queue>-dlq` on the redrive (`maxReceiveCount=5`, §7.1, AL-EVT-4) |
 | `events.WithConsumerCodec(codec)` | `inbound/consumer` | Plugs in the **local** Glue decode-only codec (`outbound/glue`, implements `events.Codec`). v1.4.0 ships no `GlueCodec` / `ValidatingCodec` (BUILD_PLAN gap 14). It parses the 18-byte Glue header (zlib-safe, bomb-bounded) and validates the payload against the **producer's registered schema version** (`glue:GetSchemaVersion`, compiled once per version). It is invoked only when `dataschema` is set (AL-D12); a failure → redelivery → DLQ. `Encode` refuses (AL-INV-10). Validation errors carry paths and keywords only, never payload values (§11) |
 | `events.Envelope` / `events.Handler` | `inbound/consumer` | The envelope handed to the handler (§7.4). `toBusEvent` maps `Envelope.ID` → `source_event_id`, the dedup key |
-| `events.InitWithRegisterer` | `cmd/server` | Library metrics (`events_consumed_total{status}` …) on gincommon's registry |
+| `events.InitMetrics` | `cmd/server` | Library metrics (`platform_messages_*`, `platform_dependency_request_seconds` …) on gincommon's registry |
+| `events.NewSQSDLQPublisher` + `WithDLQForwarding` | `cmd/server` (fleet builder) | **D-22 (rev 0.28).** A body that is not an envelope, or one past the threshold whose decode fails, is forwarded with its raw body and attributes to the source queue's RedrivePolicy DLQ and deleted only once the forward succeeds. The threshold path is unchanged: the dead-letter handler returns an error so the SQS redrive moves over-threshold messages |
+| `config.LoadSQS` `HandlerTimeout` / `DrainTimeout` | `cmd/server` | `SQS_HANDLER_TIMEOUT` (20s) caps one delivery; `SQS_DRAIN_TIMEOUT` (15s) bounds the SIGTERM drain. The fleet stops all 11 consumers concurrently, so the whole drain is one timeout (rev 0.28) |
 
 **Dedup follows the library contract.** platform-events v1.4.0 has no processed-message store and no `skipDuplicate` / `ackUnknown` (gap 14). Its documented contract (`pkg/events/doc.go`) is "handlers must be idempotent; use `Envelope.ID` as the idempotency key". Audit Log implements it with the single `processed_events` ledger write in `AuditRepository.Append`, keyed on `Envelope.ID`, backed by `uq_audit_events_source_id` (AL-INV-4, §7.5). This is the same pattern every sibling uses. It never keys on an SQS `MessageId` / `ReceiptHandle`. Unknown types are **persisted** as `<domain>.unknown`, never acked-and-dropped (AL-EVT-4).
 
-**Known library gap (D-3, gap 42).** v1.4.0 deletes a message whose body is not valid envelope JSON, logging its raw body, and never DLQs it. This is alerted via `events_consumed_total{status="malformed"}` (RB-10) and filed upstream (§16).
+**Malformed messages (D-3 → D-22, rev 0.28).** platform-events v1.4.0 deleted a message whose body was not valid envelope JSON and logged its raw body. v2.0.0 logs only the body's size and SHA-256 (gap 42 closed), and with `WithDLQForwarding` the message goes to its queue's DLQ (`DLQReason` = `malformed message body: …`). `platform_messages_failed_total{reason="malformed"}` still alerts (RB-10), and `IAMAuditLogDLQNotEmpty` follows.
 
 Audit Log **does not** call `NewSNSPublisher`, `outbox.ApplySchema`, or `outbox.NewRunner`. A set `SNS_TOPIC_ARN` or `OUTBOX_DATABASE_URL` is logged as a startup warning (AL-INV-10, mirrors AuthZ Enrichment §3). Enforced by `check-forbidden-events-bypass.sh` (rev 0.25, gap 45).
 
@@ -800,7 +800,7 @@ A dedicated `rls_violation_log` table (RLS permanently disabled on itself to avo
 
 ### 4.4 Migrations
 
-Migrations live in `internal/adapter/outbound/postgres/migrations/`. They run at `cmd/server` startup via `platform-pgcommon/pkg/migrate.Runner` over `MIGRATION_DATABASE_URL` (direct to Postgres, not PgBouncer: the runner's advisory lock is session-scoped), tracked in `pgcommon_migrations` (gap 13). They use `NNNNNN_name.up.sql`/`.down.sql` naming, forward-only and additive (destructive changes are split expand/contract), matching O&M MIG-1..MIG-9. Every step has a tested down (`TestMigrations_FullDownUpRoundTrip`). **As implemented (rev 0.25):**
+Migrations live in `internal/adapter/outbound/postgres/migrations/`. They run at `cmd/server` startup via `platform-pgcommon/pkg/migrate.Runner` over `MIGRATION_DATABASE_URL` (direct to Postgres, not PgBouncer: the runner's advisory lock is session-scoped), tracked in `pgcommon_migrations` (gap 13). They use `NNNNNN_name.up.sql`/`.down.sql` naming, forward-only and additive (destructive changes are split expand/contract), matching O&M MIG-1..MIG-9. Every step has a tested down (`TestMigrations_FullDownUpRoundTrip`). **As implemented (rev 0.28):**
 
 1. `000001_schema` — extensions, enums, the `audit_events` parent (partitioned) + `DEFAULT` partition, `audit_event_archive_state`, `processed_events`, `tenant_plan_window`, `audit_export_jobs` (+ `updated_at`, gap 9), `audit_redaction_tasks`, all indexes. No outbox schema (AL-INV-10).
 2. `000002_rls` — `ENABLE`/`FORCE`/`REVOKE`, `app_tenant_id()`, `rls_check_tenant()`, `log_rls_violation()`, `rls_violation_log`, `tenant_isolation` policies.
@@ -812,6 +812,7 @@ Migrations live in `internal/adapter/outbound/postgres/migrations/`. They run at
 8. `000008_reconciler` — `audit_archive_objects.sealed`; seal-aware `apply_redaction()` / `sweep_redactions()` with archive invalidation; `audit_drop_partition()` (AL-INV-9 gate) and `audit_reopen_partition()` (D-19, D-20).
 9. `000009_ops_stats` — `audit_ops_stats()` for the DB-derived gauges (D-21).
 10. `000010_rls_violation_export` — `ops_export_watermark` + `audit_rls_violation_counts()`, feeding `iam_rls_violations_total` exactly once fleet-wide (rev 0.26).
+11. `000011_reconciler_lease` — `reconciler_job_lease (job PK, holder, expires_at)`, DML for `audit_reconciler` only (rev 0.28, D-23). A reconciler run claims its job's row (free or expired), releases it at the end, and a crashed run's lease expires after `RECONCILER_TIMEOUT + 5m`. `concurrencyPolicy: Forbid` does not cover manually created Jobs, and a session advisory lock does not survive PgBouncer transaction mode.
 
 **Partition management is not a migration** — monthly partitions are created at runtime by `PartitionService` through `audit_ensure_partitions()`, invoked both by the reconciler `reconcile` CronJob (ahead-of-need pre-creation) and defensively at server startup, so a missed CronJob run never blocks ingestion. There is **no `outbox.ApplySchema` step** (AL-INV-10). A `test/postgres/rls_test.go` re-runs the canonical fail-closed RLS cases after every migration (§14): missing GUC → 0 rows; cross-tenant write → `ERROR`; malformed GUC → 0 rows.
 
@@ -878,8 +879,8 @@ Audit Log exposes two route classes: a **public, admin-only query/export API** u
 |---|---|---|
 | `GET /api/v1/audit/*` (query, single-read, export) | human end user with role `tenant_admin` or `tenant_owner` (HLD §6.4 "View audit log" ✓ for owner/admin only) | Caller may read only their own tenant's trail; enforced by RLS (`app.tenant_id = x-tenant-id`) **and** a service-layer role check `RequireAuditReader` (`tenant_admin`∨`tenant_owner`). A plain `member` receives `403 insufficient_permissions`. |
 | `POST /api/v1/audit/exports` | `tenant_admin` / `tenant_owner` | As above; the export is RLS-scoped to the caller's tenant and clamped to the plan window. |
-| `POST /api/v1/internal/audit-entries[:batch]` | service principal or `iam-system` (mesh-only) | The caller must present a recognised mesh peer identity; the entry's `tenant_id` is bound to `app.tenant_id` so `WITH CHECK` forbids cross-tenant forgery (§10.2). No human principal may reach this route (gateway does not route `/internal/*`). |
-| `GET /api/v1/internal/audit/events` | service principal or `iam-system` (mesh-only) | Cross-service provenance lookups (e.g. a compliance verifier). The caller must pass an explicit `tenant_id`, bound to `app.tenant_id`; RLS still applies (no cross-tenant read). |
+| `POST /api/v1/internal/audit-entries[:batch]` | service principal or `iam-system` (mesh-only) | The caller must present a recognised mesh peer identity, checked by the Istio `AuthorizationPolicy` against `mesh.authorizationPolicy.internalCallerPrincipals` (rev 0.28, §10.2); the entry's `tenant_id` is bound to `app.tenant_id` so `WITH CHECK` forbids cross-tenant forgery (§10.2). No human principal may reach this route (gateway does not route `/internal/*`). |
+| `GET /api/v1/internal/audit/events` | service principal or `iam-system` (mesh-only) | Cross-service provenance lookups (e.g. a compliance verifier). Same identity check as above (rev 0.28). The caller must pass an explicit `tenant_id`, bound to `app.tenant_id`; RLS still applies (no cross-tenant read). |
 | `GET /healthz`, `/readyz`, `/metrics`, `/asyncapi`, `/asyncapi.yaml` | none | Liveness/readiness/observability; registered before auth. |
 
 ### 5.3 Endpoint catalogue
@@ -1351,7 +1352,7 @@ sequenceDiagram
 
 ## 9. Concurrency, Consistency, and Failure Handling
 
-**Concurrency model.** `cmd/server` runs one consumer goroutine group per inbound queue (11 queues) plus the Gin API, across 3 replicas. SQS gives at-least-once delivery with per-message visibility timeout; multiple replicas draw from the same queue safely because the terminal consistency guarantee is the `processed_events` unique insert + the `uq_audit_events_source_id` backstop — two replicas that both receive a redelivered message race on the ledger `INSERT … ON CONFLICT DO NOTHING`, and exactly one wins; the loser's transaction is a no-op (AL-INV-4). No distributed lock is needed or attempted (contrast a leader-elected job).
+**Concurrency model.** `cmd/server` runs one consumer goroutine group per inbound queue (11 queues) plus the Gin API, across 3 replicas. SQS gives at-least-once delivery with per-message visibility timeout; multiple replicas draw from the same queue safely because the terminal consistency guarantee is the `processed_events` unique insert + the `uq_audit_events_source_id` backstop — two replicas that both receive a redelivered message race on the ledger `INSERT … ON CONFLICT DO NOTHING`, and exactly one wins; the loser's transaction is a no-op (AL-INV-4). No distributed lock is needed or attempted on the ingest path. The reconciler, by contrast, holds a per-job lease row (`reconciler_job_lease`, migration `000011`, rev 0.28) so a manually created Job cannot overlap a scheduled one; a run that finds the lease held exits 0 without running.
 
 **Transaction discipline.** Every ingestion (bus or direct-write) is a single `RunInTx`: bind `app.tenant_id`, insert the ledger row, insert the audit row (guarded by `WITH CHECK`), commit, then ack SQS (bus) or return (direct-write). The audit write and the dedup mark are therefore atomic (§7.5). Query transactions are read-only under the caller's `app.tenant_id`.
 
@@ -1366,6 +1367,9 @@ sequenceDiagram
 | A single message | schema-decode failure | one event | → DLQ after `maxReceiveCount=5` (or immediately for a hard decode failure); **compliance incident** — alarmed for operator replay (AL-EVT-4), never dropped |
 | A single message | unknown `source_event_type` | one event | persisted as `<domain>.unknown` (`security_3y`), counted, alarmed — not DLQ'd (AL-EVT-4) |
 | S3 archive | unavailable | archival + archived-read fail | reconciler retries next run; partition **not** dropped (AL-INV-9); archived queries return `503`; **no hot data at risk** |
+| A single message | not a valid envelope / undecodable past the threshold | one event | forwarded to its queue's DLQ by platform-events (D-22, rev 0.28); if the forward fails the message stays visible and SQS's own redrive moves it |
+| A background loop | panic (catalog poller, export worker, ops monitor) | that loop | recovered, logged with its stack, restarted after 5 s (`supervise`, rev 0.28); the API and consumers are unaffected |
+| Postgres | lock contention / runaway statement | one request or job step | server pool `lock_timeout` 5 s / `statement_timeout` 30 s; reconciler 10 s / 25 m (rev 0.28): fail fast and retry rather than queue ingest behind a partition lock |
 | KMS | unavailable | archival write fails | archival deferred; hot data retained (fail-safe: never drop unarchived) |
 | Glue registry | schema unresolvable | affected topic decode fails | → DLQ; alarmed; other topics unaffected |
 | `tenant_plan_window` miss | no projection row | query window unknown | fall back to `AUDIT_DEFAULT_QUERY_WINDOW_DAYS` (conservative 365) |
@@ -1384,6 +1388,10 @@ Three independent layers, as the platform mandates: (1) the gateway authenticate
 
 - **Public routes** (`/api/v1/audit/*`): reachable only through the API gateway, which performs `jwt_authn` + `ext_authz` and injects `x-user-id`/`x-tenant-id`/`x-tenant-roles`. The service parses no JWT and trusts these headers only because the gateway is the sole ingress (mirrors User Profile §10.2).
 - **Internal routes** (`/api/v1/internal/*`): mesh-only; the gateway does not route `/internal/*`. mTLS peer identity is required; the caller presents its own service principal or the `iam-system` sentinel (`00000000-0000-0000-0000-0000000000a1`). An unrecognised peer is `403 forbidden_peer`.
+- **How the identity is enforced (rev 0.28, D-23).** The service checks only the `x-tenant-roles: iam-system` header (`RequireSystemRole`), so the identity check lives in the chart:
+  - an Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`) allows `/api/v1/internal/*` only from the SPIFFE principals in `mesh.authorizationPolicy.internalCallerPrincipals` (principals exist only over mTLS), and `/api/v1/audit/*` only from the gateway (its principal, or a source with no mesh principal), so no in-mesh workload can reach the header-trusting tenant-admin API with forged headers;
+  - the NetworkPolicy admits only `networkPolicy.internalCallers` (Catalog Admin, Realm Provisioner, Org & Membership, Group Mapping, Tender ACL by default), never the whole namespace;
+  - `APP_ENV=prod` refuses to render without the policy unless `mesh.acknowledgeNoMesh=true` (a tracked security exception); `TestHelm_InternalRoutesRequireMeshIdentity` pins it.
 - **Direct-write cross-tenant forgery is structurally prevented**: the ingest handler binds `app.tenant_id` to the request body's `tenant_id`, and the `WITH CHECK` clause of `tenant_isolation` rejects any row whose `tenant_id` differs — a compromised producer cannot write audit history into another tenant's trail (§4.3, §5.4).
 
 ### 10.3 Actor model
@@ -1436,11 +1444,13 @@ The HLD mandates append-only (§5.7) but specifies **no** cryptographic tamper-e
 | `platform_queue_depth` | gauge | `queue` | visible depth of each inbound queue (HPA source) |
 | `platform_dlq_depth` | gauge | `queue` | visible depth of each inbound queue's DLQ — **Critical at > 0** (AL-EVT-4, RB-1) |
 
-`event_type` is bounded to the §7.1 taxonomy for its topic (anything else is `unknown`); `queue` is one of the 11 `*-audit-q` names. Library metrics (not ours to rename): gincommon's `http_requests_total{status_class}` / `http_request_duration_seconds`, `pgmetrics` pool/query histograms, platform-events' `events_consumed_total{queue,event_type,status}` (its `status="malformed"` is alerted, D-3).
+`event_type` is bounded to the §7.1 taxonomy for its topic (anything else is `unknown`); `queue` is one of the 11 `*-audit-q` names. Library metrics (not ours to rename): gincommon's `platform_http_requests_total{status_class}` / `platform_http_request_duration_seconds`, pgcommon's `platform_db_*` pool/query metrics, platform-events' `platform_messages_processed_total` / `platform_messages_failed_total{reason}` / `platform_dlq_messages_total` (its `reason="malformed"` is alerted, D-3).
 
-**Tier-2 (`iam_*`):** `iam_rls_violations_total{violation_type}`, the IAM domain metric with the same meaning as in User Profile §11.2. `rls_check_tenant()` samples violations into `rls_violation_log`; `cmd/server`'s ops monitor feeds the counter from `audit_rls_violation_counts()` (migration `000010`, SECURITY DEFINER, aggregates only), which advances a watermark so each logged row is counted exactly once fleet-wide. `cross_tenant_access` = **Critical**, `missing_or_invalid_guc` = **Warning** (RB-5).
+**Tier-2 (`iam_*`):** `iam_rls_violations_total{violation_type}`, the IAM domain metric with the same meaning as in User Profile §11.2. Since rev 0.28 it is a central-registry entry (platform-gincommon v1.5.0, status *proposed*), built with `gincommon.NewSharedCounterVec`; the two RLS alerts carry `metric_status: proposed`. `rls_check_tenant()` samples violations into `rls_violation_log`; `cmd/server`'s ops monitor feeds the counter from `audit_rls_violation_counts()` (migration `000010`, SECURITY DEFINER, aggregates only), which advances a watermark so each logged row is counted exactly once fleet-wide. `cross_tenant_access` = **Critical**, `missing_or_invalid_guc` = **Warning** (RB-5).
 
 **Where the alerting gauges come from (rev 0.24, D-21).** The archival, redaction, DEFAULT-partition and queue/DLQ gauges are published by `cmd/server`, which is always scraped, from `audit_ops_stats()` and SQS `GetQueueAttributes`. Reconciler-only counters (`archive_partitions_total`, `retention_pruned_total`, `redaction_blocked_archive_total`) stay internal to the CronJob; its non-zero exit is the signal (RB-9).
+
+**Rev 0.28 — as built.** The authoritative, generated inventory is [`docs/observability/metric-registry.md`](../observability/metric-registry.md) (`make metrics-inventory`, drift-checked by `make metrics-lint`); how the tiers are built and who counts what is [`docs/observability/README.md`](../observability/README.md). Every series carries `{domain="iam", service="iam-audit-log", environment}` (the reconciler included); the Tier-1 table above reflects the rev-0.26 label sets, and `platform_dlq_messages_total` is counted once per message (service: `max_receive_count`; platform-events: `malformed` / `decode_error` forwards, D-22). Every alert's `runbook_url` is an absolute link to a real heading (`TestAlerts_RunbookURLsResolve`).
 
 **Compatibility policy (rev 0.26).** A renamed metric is emitted in parallel with its replacement (`status: deprecated` in the registry, with `replaced_by` and `sunset`). Dashboards, alerts, recording rules, SLOs and HPA references move to the replacement in the same change, which CI enforces; the deprecated name is removed after the approved sunset.
 
@@ -1453,14 +1463,11 @@ The HLD mandates append-only (§5.7) but specifies **no** cryptographic tamper-e
 | `iam_audit_log_events_ingested_total{source_service,ingest_mode,entry_type}` | counter | throughput by source and mode |
 | `iam_audit_log_duplicate_events_total{consumer}` | counter | dedup hits (redeliveries) |
 | `iam_audit_log_unknown_event_total{source_service}` | counter | unrecognised type persisted as `*.unknown` — **Warning** (extend taxonomy) |
-| `iam_audit_log_dlq_messages_total{queue}` | gauge | **deprecated (rev 0.26)** — replaced by the Canonical `platform_dlq_depth{queue}` (a gauge must not end `_total`); emitted in parallel until sunset |
 | `iam_audit_log_ingest_lag_seconds` | histogram | `recorded_at − occurred_at`; SLO p99 < 50 ms async (HLD §3.4) |
 | `iam_audit_log_default_partition_rows` | gauge | rows in `audit_events_default` — **Critical at > 0** (badly-clocked producer; §4.2; RB-3) |
-| `iam_audit_log_default_partition_rows_total` | gauge | **deprecated (rev 0.26)** — replaced by `iam_audit_log_default_partition_rows` (a gauge must not end `_total`) |
 | `iam_audit_log_archive_partitions_total{tier,result}` | counter | archival outcomes |
 | `iam_audit_log_archive_lag_seconds` | gauge | seconds past archival eligibility of the oldest still-attached partition — **Warning** > 1 d / **Critical** > 3 d (RB-2) |
 | `iam_audit_log_archive_stalled_partitions` | gauge | eligible partitions still attached past `OPS_ARCHIVE_STALL_GRACE` (AL-INV-9 held) — **Critical at > 0** (RB-2) |
-| `iam_audit_log_archive_stalled` | gauge | **deprecated (rev 0.26)** — replaced by `iam_audit_log_archive_stalled_partitions` (a gauge names its quantity) |
 | `iam_audit_log_retention_pruned_total{tier}` | counter | partition drops / S3 expirations reconciled |
 | `iam_audit_log_query_window_clamped_total{plan_code}` | counter | queries clamped to plan window (product signal) |
 | `iam_audit_log_query_archived_reads_total` | counter | queries served from S3 |
@@ -1472,7 +1479,7 @@ The HLD mandates append-only (§5.7) but specifies **no** cryptographic tamper-e
 | `iam_audit_log_catalog_plans_poll_total{result}` | counter | CAT-I2 plan-map poll outcomes (`result=success\|error\|timeout`, AL-D15) |
 | `iam_audit_log_catalog_plans_stale_seconds` | gauge | seconds since the last **successful** CAT-I2 poll — **Warning** past 2× `CATALOG_PLANS_POLL_INTERVAL`, **Critical** past 10× (stale-if-error masks a prolonged outage otherwise) |
 
-**Tracing & logging (rev 0.25):** logs, metrics and traces go through `platform-gincommon` only (§3.1, gap 43; `check-observability-confinement.sh`). Spans (HTTP, pgcommon `db.query`, the reconciler root span) and log `trace_id`s come from gincommon's TracerProvider via `outbound/telemetry`. net/http's own errors go to the gincommon logger, and gin writes nothing itself. Log lines carry IDs only; never `metadata` or payload (`TestLogHygiene_NoPayloadFields`), and schema-validation errors carry paths and keywords, never values. W3C trace propagation via `platform-gincommon`; each ingested row carries the producer's `trace_id`, so an audit entry links back to the originating request's trace. Structured Zap logs; no audit *payload* PII is logged at info level (the durable record is the store, not the log).
+**Tracing & logging (rev 0.28):** logs, metrics and traces go through `platform-gincommon` only (§3.1, gap 43; `check-observability-confinement.sh`). Both roots start tracing with `InitTracingWithConfig` (service, version, `domain=iam`, environment); spans (HTTP, pgcommon `db.query`, the reconciler root span) and log `trace_id`s come from gincommon's `NewSpanTracer` / `SpanTraceID` through `outbound/telemetry`. net/http's own errors go to the gincommon logger, and gin writes nothing itself. Log lines carry IDs only; never `metadata` or payload (`TestLogHygiene_NoPayloadFields`), and schema-validation errors carry paths and keywords, never values. W3C trace propagation via `platform-gincommon`; each ingested row carries the producer's `trace_id`, so an audit entry links back to the originating request's trace. Structured Zap logs; no audit *payload* PII is logged at info level (the durable record is the store, not the log).
 
 **Health:** `/healthz` (liveness), `/readyz` (Postgres reachable + each SQS consumer connected), `/metrics` (Prometheus). DLQ depth per `*-audit-q-dlq` is both a Prometheus gauge and a CloudWatch alarm (threshold 0), because a DLQ'd audit event is a compliance incident, not a stale cache (contrast AuthZ Enrichment's degrade-to-stale framing).
 
@@ -1485,7 +1492,7 @@ The HLD mandates append-only (§5.7) but specifies **no** cryptographic tamper-e
 | Env var | Default | Reader | Purpose |
 |---|---|---|---|
 | `APP_ENV` | `dev` | S+R | environment; read first so the gincommon logger exists before the rest of config (rev 0.25) |
-| `SERVICE_NAME` | `iam-audit-log` (`-reconciler` suffix in R) | S+R | required by `gincommon.ObservabilityMiddlewares`; OTel scope |
+| `SERVICE_NAME` | `iam-audit-log` | S+R | the one source of the service name: the metrics `service` label (both roots) and the trace `service.name` (`-reconciler` suffix in R); `APP_NAME` / `OTEL_SERVICE_NAME` are not read (rev 0.28) |
 | `BUILD_VERSION` | build ldflag | S+R | metric/trace version label |
 | `AWS_REGION` | `ap-south-1` | S+R | AWS SDK region (S3, Glue, DLQ depth) |
 | `AWS_ENDPOINT_URL` | — | S+R | emulator endpoint (floci) only; empty in AWS (IRSA) |
@@ -1512,6 +1519,7 @@ The HLD mandates append-only (§5.7) but specifies **no** cryptographic tamper-e
 | `MAX_METADATA_BYTES` | `8192` | S | `metadata` cap (D-9 truncation marker on the bus) |
 | `INGEST_BATCH_RATE_LIMIT_RPS` / `_BURST` | `10` / `20` | S | AL-6 per-tenant limiter (D-5) |
 | `ARCHIVE_SYNC_MAX_ROWS` / `_BYTES` | `10000` / `52428800` | S | archived-read sync bounds → `202` (AL-1) or `422 range_too_large` (AL-7) (D-10, D-14) |
+| `ARCHIVE_READ_CONCURRENCY` | `2` (1..32) | S | synchronous archived reads (AL-1/AL-7) in memory at once per replica; the rest wait within their request deadline (rev 0.28, D-23) |
 | `EXPORT_SIGNED_URL_TTL` | `168h` | S | export retrieval window (D-11) |
 | `EXPORT_DOWNLOAD_URL_TTL` | `15m` | S | per-poll presigned URL lifetime (≤ 168h) (D-11) |
 | `EXPORT_RATE_LIMIT_PER_MINUTE` / `_BURST` | `10` / `5` | S | AL-3 per-tenant limiter (§10.5) |
@@ -1533,9 +1541,11 @@ The HLD mandates append-only (§5.7) but specifies **no** cryptographic tamper-e
 
 | Env var(s) | Library | Notes |
 |---|---|---|
-| `PG_MAX_CONNS` (`20` server / `4` reconciler in Helm), `PG_MIN_CONNS`, `PG_SLOW_QUERY_THRESHOLD`, `PG_MAX_CONN_LIFETIME[_JITTER]`, `PG_MAX_CONN_IDLE_TIME`, `PG_HEALTH_CHECK_PERIOD`, `PG_BOUNCER_MODE` | `platform-pgcommon` (`ConfigFromEnv`) | the app pool forces `PGBouncerMode=true` regardless (transaction-local GUCs, AL-INV-3) |
-| `SQS_VISIBILITY_TIMEOUT` (`30s`), `SQS_MAX_RECEIVE_COUNT` (`5`, the queues' redrive count), `SQS_CONCURRENCY` (`4` in Helm; library default 1), `SQS_MAX_MESSAGES`, `SQS_WAIT_SECONDS` | `platform-events` (`config.LoadSQS`) | the dead-letter handler observes at `SQS_MAX_RECEIVE_COUNT − 1`, so SQS performs the redrive (§3.3.3) |
-| `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`, OTLP insecure / sample-ratio / baggage | `platform-gincommon` (`InitTracingFromEnv`) | OTLP export is a no-op until an endpoint is set |
+| `PG_MAX_CONNS` (`20` server / `4` reconciler in Helm), `PG_MIN_CONNS`, `PG_SLOW_QUERY_THRESHOLD`, `PG_STATEMENT_TIMEOUT` / `PG_LOCK_TIMEOUT` (Helm: server `30s`/`5s`, reconciler `25m`/`10s`, rev 0.28), `PG_MAX_CONN_LIFETIME[_JITTER]`, `PG_MAX_CONN_IDLE_TIME`, `PG_HEALTH_CHECK_PERIOD`, `PG_POOL_NAME`, `PG_BOUNCER_MODE` | `platform-pgcommon` (`ConfigFromEnv`) | both pools force `PGBouncerMode=true` regardless (transaction-local GUCs, AL-INV-3). Each pool gets its DSN explicitly, so `PG_HOST`/`PG_USER`/`PG_DBNAME`/`PG_SSLMODE` are never used; the reconciler drops `ConfigFromEnv`'s misleading DSN-source warnings (rev 0.28) |
+| `SQS_VISIBILITY_TIMEOUT` (`30s`), `SQS_MAX_RECEIVE_COUNT` (`5`, the queues' redrive count), `SQS_CONCURRENCY` (`4` in Helm; library default 1), `SQS_HANDLER_TIMEOUT` (`20s`) / `SQS_DRAIN_TIMEOUT` (`15s`) (rev 0.28), `SQS_MAX_MESSAGES`, `SQS_WAIT_SECONDS` | `platform-events` (`config.LoadSQS`) | the dead-letter handler observes at `SQS_MAX_RECEIVE_COUNT − 1`, so SQS performs the redrive (§3.3.3). `SQS_QUEUE_DEPTH_INTERVAL` stays unset: `OpsMonitor` owns the depth gauges |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_INSECURE`, `OTEL_TRACES_SAMPLER_RATIO`, `OTEL_PROPAGATOR_BAGGAGE`, `OTEL_TRACES_IGNORE_REMOTE_PARENT_SAMPLED`, `OTEL_TRACES_EXPORTER` | `platform-gincommon` (`InitTracingWithConfig`) | unset endpoint = `localhost:4317`; `none` turns export off (v1.6.0). Helm sets `false` / `0.1` / `false` / `false` (rev 0.28) |
+| `LOG_LEVEL`, `LOG_SAMPLING` | `platform-gincommon` logger | Helm: `info` / `false` (rev 0.28) |
+| `OBSERVABILITY_DOMAIN` | `platform-gincommon` | `iam`; the binaries also pass it in code |
 
 **CronJob schedules** (Helm `cronjobs.*`, not read by code): `reconcile` `0 2 * * *` (RECONCILER_SCHEDULE); `processed-events-prune` `0 3 * * *`; `redaction-retry` `*/15 * * * *`; `redaction-sweep` `30 3 * * *`. All are `concurrencyPolicy: Forbid`.
 
@@ -1545,7 +1555,7 @@ Retention-tier **durations** (7 y / 3 y / 90 d) are compiled constants tied to t
 
 ## 13. Deployment and Scaling
 
-`cmd/server` runs as a **Deployment, 3 replicas** (HLD §5.7), on `t3.medium` ("write-heavy, batched inserts", HLD §14.2), behind the mesh; all three replicas run the full consumer fleet and the API. Horizontal scaling is by SQS-driven replica count; the dedup ledger makes added replicas safe (§9). `cmd/reconciler` runs as a **CronJob** (`RECONCILER_SCHEDULE`), singleton per run, using the `audit_reconciler` role. Pod access to S3/KMS/SQS/Glue is via **IRSA** (no static AWS keys); the IAM policy (`deploy/iam/policy.json`) grants `s3:PutObject/GetObject` + Object Lock on `iam-audit-archive`, `kms:` on the archive key, `sqs:` on the 11 queues + DLQs, and `glue:GetSchemaVersion/GetSchemaByDefinition` (read-only). **Pod labels (rev 0.19):** `app.kubernetes.io/name: iam-audit-log`, `app.kubernetes.io/instance: iam-audit-log` (standard Helm chart convention), in the `iam` namespace (AL-Q17) — published so a caller's NetworkPolicy can scope a `podSelector` to this service specifically, rather than admitting the whole namespace.
+`cmd/server` runs as a **Deployment, 3 replicas** (HLD §5.7), on `t3.medium` ("write-heavy, batched inserts", HLD §14.2), behind the mesh; all three replicas run the full consumer fleet and the API. Horizontal scaling is by SQS-driven replica count; the dedup ledger makes added replicas safe (§9). `cmd/reconciler` runs as a **CronJob** (`RECONCILER_SCHEDULE`), singleton per run, using the `audit_reconciler` role. Pod access to S3/KMS/SQS/Glue is via **IRSA** (no static AWS keys); the IAM policy (`deploy/iam/policy.json`) grants `s3:PutObject/GetObject` + Object Lock on `iam-audit-archive`, `kms:` on the archive key, `sqs:` on the 11 queues + DLQs, and `glue:GetSchemaVersion/GetSchemaByDefinition` (read-only). **Network and identity (rev 0.28, D-23):** the NetworkPolicy admits `/api/v1/internal/*` only from `networkPolicy.internalCallers` and allows Catalog egress only to Catalog Admin's pods; an Istio `AuthorizationPolicy` + `PeerAuthentication` (`templates/mesh.yaml`) check caller identity (§10.2); server pods are labelled for sidecar injection with `holdApplicationUntilProxyStarts` and a 40 s drain, CronJob pods opt out. The IRSA policy also allows `sqs:SendMessage`/`GetQueueUrl` on the audit DLQs only (D-22), and its KMS statement must name the key ARN (the alias placeholder grants nothing; RELEASE_CHECKLIST). **Resource bounds (rev 0.28):** `ARCHIVE_READ_CONCURRENCY=2` keeps concurrent archived reads within the 512 Mi limit; pool statement/lock timeouts per §12. **Pod labels (rev 0.19):** `app.kubernetes.io/name: iam-audit-log`, `app.kubernetes.io/instance: iam-audit-log` (standard Helm chart convention), in the `iam` namespace (AL-Q17) — published so a caller's NetworkPolicy can scope a `podSelector` to this service specifically, rather than admitting the whole namespace.
 
 The service is single-region (`ap-south-1`, HLD §13.3) at MVP; the **S3 audit archive is cross-region replicated to a separate, compliance-isolated AWS account** (HLD §13.1/§13.2) — this is the durability and tamper-isolation backstop for the 7-year store.
 
@@ -1556,7 +1566,7 @@ The service is single-region (`ap-south-1`, HLD §13.3) at MVP; the **S3 audit a
 | RDS `audit` | automated backups + PITR (platform RDS default); RTO < 1 h / RPO < 5 min (HLD §3.4) |
 | Hot data loss window | bounded by SQS durability — un-acked events redeliver, so a replica or DB restore loses no audit event that SQS still holds (up to 14 d incl. DLQ) |
 | S3 archive | cross-region replication to a compliance-isolated account, "immediately available", RPO 0 (HLD §13.1); Object Lock (compliance mode) prevents deletion |
-| Reconciler idempotency | archival + prune are safe to re-run: `audit_event_archive_state` records progress; a partition is dropped only once, only after `verified` (AL-INV-9) |
+| Reconciler idempotency | archival + prune are safe to re-run: `audit_event_archive_state` records progress; a partition is dropped only once, only after `verified` (AL-INV-9); a per-job lease prevents two runs overlapping (rev 0.28) |
 
 ---
 
@@ -1573,7 +1583,10 @@ The service is single-region (`ap-south-1`, HLD §13.3) at MVP; the **S3 audit a
 | Reconciler | archive → verify → drop happy path; drop **blocked** when a tier unverified; access-tier expiry; S3 failure → no drop | LocalStack S3 (Object Lock) |
 | Redaction (rev 0.3) | `UserDeleted` → `security_3y` rows redacted, `compliance_7y` rows untouched (assert `tender.section.approved`/`auth.*` metadata unchanged); redelivered `UserDeleted` → task no-op (unique constraint); archival **refuses** a partition with a `pending` task (AL-INV-12) | testcontainers + LocalStack SQS |
 | e2e | producer (config change) → direct-write → query returns it; bus event → query returns it; export → signed URL → object contents | e2e suite in CI |
-| Arch/CI | `go-arch-lint`; `check-grants.sh` (no UPDATE/DELETE to `audit_app`); `check-forbidden-events-bypass.sh` (no publisher/outbox); `check-metric-naming.sh`; swag-check; asyncapi lint (zero `send`) | `.github/workflows` |
+| Arch/CI | `go-arch-lint`; `check-grants.sh` (no UPDATE/DELETE to `audit_app`); `check-forbidden-events-bypass.sh` (no publisher/outbox; DLQ publisher confined); `check-metric-naming.sh`; `check-observability-confinement.sh`; `metricslint.sh`; swag-check; asyncapi lint (zero `send`) | `.github/workflows` |
+| Hardening (rev 0.28) | reconciler repositories refused as `audit_app` (42501) and fail-closed reads (`TestReconcilerRepositories_RefusedAsAuditApp`); job lease held / free / missing (`TestJobLease_OneRunPerJob`, `TestRun_JobLease`); server boot with the consumer fleet and SIGTERM drain; malformed envelope forwarded to the DLQ (`TestWire_MalformedEnvelopeForwardedToDLQ_D22`); concurrent fleet stop; archived-read slots; panic-recovering loops; mesh/NetworkPolicy chart contract; alert `runbook_url` anchors | testcontainers, floci, unit |
+
+**Status (rev 0.28).** Merged coverage across unit, postgres and integration is 96.5% against a 95% gate (`coverage-gate.sh`). Tests that need `APP_ENV=prod` run in a re-executed child process (`fixtures.InOwnProcess`), because gincommon allows one metrics identity per process; the child forwards `-test.gocoverdir` so its coverage counts. The floci and Postgres fixtures tolerate a loaded Docker host (240 s floci init wait; Postgres waits for the published port and retries an unresolved DSN). The postgres package needs about 6–7 min under `-race`, so `TEST_POSTGRES_TIMEOUT` is 1500 s. Note: the testcontainers tooling is floci, not LocalStack, since rev 0.23.
 
 **Emulator note (rev 0.23).** Local integration tests (Floci) validate that Object Lock is enabled and enforced: they write with COMPLIANCE retention and verify contents and lock on read-back. They do **not** fully emulate AWS versioned-overwrite behavior. In AWS S3, a PUT to an existing locked key creates a new version and leaves the protected version unchanged; Floci rejects the PUT. Rewrite-under-lock (a re-archive, D-20) therefore relies on the documented AWS S3 contract, and a pinned regression test (`TestReconciler_FlociObjectLockSupport`) detects any future change in emulator behavior.
 
@@ -1653,7 +1666,7 @@ All audit data (RDS + S3 archive) is pinned to the active region (`ap-south-1` a
 | **AL-Q16** (new, rev 0.14; resolved rev 0.15) | **Platform-tenant `tenant_id` sentinel for platform-level direct-write entries.** `audit_events.tenant_id` is `NOT NULL` and RLS-scoped (§4.1); Catalog's `config.department.created`, `config.department.updated`, and `config.plan.updated` (**CAT-1/CAT-2/CAT-5, corrected scope rev 0.15** — departments and plans are both platform-wide tables, not just CAT-5's plan catalog) describe platform-level changes with no single tenant to attach. **Resolved, rev 0.15 (AL-D14):** reserved sentinel `tenant_id = '00000000-0000-0000-0000-0000000000b1'` (**`platform_tenant`**), published alongside the `iam_system` actor sentinel (§10.3). AL-5's ingest never validated `tenant_id` against a tenant registry in the first place (§5.4), so the sentinel needs no special allow-listing — it is bound to `app.tenant_id` and checked by the same generic `WITH CHECK` as any tenant id (§4.3). `platform_tenant` rows are structurally excluded from tenant-facing AL-1/AL-2 (no tenant's `x-tenant-id` equals the sentinel) and are queried by operator tooling through the existing `admin_readonly` BYPASSRLS path, which already emits `security.cross_tenant_access` on every session (§7.1, §10.2, §10.3) — no new operator route needed. Catalog v1.40 already sends the sentinel on all three entry types. | Catalog + Platform + Audit | **No** — Catalog queues undelivered entries in its own `pending_audit_entries` table until `AUDIT_PLATFORM_TENANT_ID` is configured; nothing is lost or written with a placeholder value | **Resolved, rev 0.15 (AL-D14)** |
 | **AL-Q17** (new, rev 0.16; resolved rev 0.17) | **This document's own mesh-internal base URL/service address is unspecified.** §5.4 and §18.2 specify AL-5's route path and mTLS/mesh-only transport, but never state the DNS name or port a producer's `platform-audit` client should configure (e.g. Catalog's `AUDIT_LOG_BASE_URL`). **Resolved, rev 0.17:** confirmed as `http://iam-audit-log.iam.svc.cluster.local:8080` — deploys in the `iam` namespace like every sibling, `APP_PORT` default `8080` matching the platform-wide convention (Realm Provisioner's own LLD confirms the pattern and the port). Also unblocks **Realm Provisioner**, whose own `platform-audit` client ships with `AUDIT_LOG_BASE_URL` empty today (§18.2; RP LLD config updated to match). | Platform + Audit | **No** — resolved | **Resolved, rev 0.17** |
 | **AL-Q18** (new, rev 0.16; adopted rev 0.17) | **`tenant_plan_window` sourcing and staleness — two compounding gaps.** (a) No mechanism was specified for how Catalog's authoritative `plans.audit_query_window_days` map (owned by Catalog, AL-D6) reaches this service. (b) `tenant_plan_window` stored the **resolved** `query_window_days` per tenant with no path for a later Catalog-side plan-window edit to reach already-provisioned tenants. **Adopted as AL-D15, rev 0.17** (Catalog: "yes, please adopt it as an AL-D" — Catalog is the data owner, their side (CAT-D15) is already built): a periodic **CAT-I2 poller** (`GET /api/v1/internal/plans`, mesh-only, `iam-system` role, `600s` interval matching Core's own `om:plans` cadence, `record_versions`-keyed cheap staleness check), resolving `query_window_days` from the tenant's stored `plan_code` against the live polled map at query time, with a **stale-if-error** failure posture (keep the last good map, never collapse to `AUDIT_DEFAULT_QUERY_WINDOW_DAYS` on a transient Catalog outage). §4.2, §5.4, §3.1, §11, §12, §22 (AL-D15), and §24 (RB-8) updated. No schema change on either side. | Catalog + Platform + Audit | **No** — resolved, adopted as AL-D15 | **Resolved, rev 0.17 (AL-D15)** |
-| **AL-Q19** (new, rev 0.25) | **Upstream platform-library asks.** The service confines logs/metrics/traces, DB access and eventing to their platform libraries (§3.1, gaps 43–45), and three library gaps force local seams. (a) **platform-gincommon** has no span API, `/metrics` handler or context trace-id helper, so `internal/adapter/outbound/telemetry` touches OTel/promhttp against gincommon's provider and registry; `gincommon.StartSpan`, `MetricsHandler` and `TraceID(ctx)` would retire it. (b) **platform-events** has no processed-message ledger helper, so dedup is the service's `processed_events` keyed on `Envelope.ID`, per the library contract; a ledger interface keyed on `Envelope.ID` would move it into the library. (c) **platform-events** deletes a malformed (non-envelope) message instead of leaving it for the DLQ, and logs its raw body (D-3, gap 42). | Platform (gincommon / events owners) | **No** (seams are local and CI-enforced) | **Open: filed upstream** |
+| **AL-Q19** (new, rev 0.25) | **Upstream platform-library asks.** The service confines logs/metrics/traces, DB access and eventing to their platform libraries (§3.1, gaps 43–45), and three library gaps force local seams. (a) **platform-gincommon** has no span API, `/metrics` handler or context trace-id helper, so `internal/adapter/outbound/telemetry` touches OTel/promhttp against gincommon's provider and registry; `gincommon.StartSpan`, `MetricsHandler` and `TraceID(ctx)` would retire it. (b) **platform-events** has no processed-message ledger helper, so dedup is the service's `processed_events` keyed on `Envelope.ID`, per the library contract; a ledger interface keyed on `Envelope.ID` would move it into the library. (c) **platform-events** deletes a malformed (non-envelope) message instead of leaving it for the DLQ, and logs its raw body (D-3, gap 42). | Platform (gincommon / events owners) | **No** (seams are local and CI-enforced) | **Rev 0.28: (a) and (c) closed** — gincommon v1.4.0+ provides the span/`/metrics`/trace-id API (seam retired), and platform-events v2 forwards malformed messages to the DLQ and no longer logs the body (D-22). **(b) open** (no ledger helper; dedup stays the service's `processed_events`) |
 
 Resolved-by-this-document (recorded for traceability): **EC-Q3** (auth entry-type vocabulary — §7.1); Group Mapping & Tender ACL "general-configuration-change retention tier" (→ `security_3y`, §15.2); O&M `TenantSettingChanged` transport (→ AL-5 direct-write, §7.4); HLD §17.2 open item "Audit Log Service — direct-write ingest contract" (→ AL-D1). **Resolved, rev 0.14 (see AL-Q13):** Catalog **CAT-Q7** / **CAT-D10** — Catalog has confirmed integration against the contract this document specifies (CAT-1/CAT-2/CAT-5 all adopted). The platform-tenant `tenant_id` question this confirmation surfaced (**AL-Q16**) resolved at rev 0.15 (AL-D14); `plans.audit_query_window_days`'s existence on Catalog's side — the item AL-Q13 was narrowed to — resolved at **rev 0.20** (Catalog's CAT-D15).
 
@@ -1809,11 +1822,11 @@ This LLD's decisions prompt the following HLD changes (raised, not self-applied 
 
 ## 24. Appendix — Operational Runbooks
 
-Full, actionable procedures (triage SQL, commands, verification), including RB-9 (reconciler CronJob failed) and RB-10 (malformed envelopes, D-3), are in [`docs/runbook.md`](../runbook.md) (rev 0.24). The summaries below remain the design-level statement.
+Full, actionable procedures (triage SQL, commands, verification), including RB-9 (reconciler CronJob failed) and RB-10 (malformed envelopes, now forwarded to the DLQ, D-22), are in [`docs/runbook.md`](../runbook.md) (rev 0.24); the per-alert triage index is [`docs/observability/runbooks.md`](../observability/runbooks.md) (rev 0.28). The summaries below remain the design-level statement.
 
-**RB-1 — DLQ has messages (`iam_audit_log_dlq_messages_total{queue} > 0`).** Treat as a **compliance incident** (potentially lost audit records). (1) Read the DLQ message(s); classify: schema-decode failure vs poison payload vs downstream outage that exhausted `maxReceiveCount`. (2) For a decode/schema issue, resolve the Glue schema mismatch or extend the taxonomy, then **redrive** the DLQ to the main queue (SQS native redrive) — dedup makes replay safe (AL-INV-4). (3) For a DB-outage backlog, confirm DB health, then redrive. (4) Never purge a DLQ without capturing its contents; record the incident. Never treat as degrade-to-stale (that is AuthZ Enrichment's posture, not Audit's).
+**RB-1 — DLQ has messages (`platform_dlq_depth{queue} > 0`; the pre-standard `iam_audit_log_dlq_messages_total` is removed).** Treat as a **compliance incident** (potentially lost audit records). (1) Read the DLQ message(s); classify: schema-decode failure vs poison payload vs downstream outage that exhausted `maxReceiveCount`. (2) For a decode/schema issue, resolve the Glue schema mismatch or extend the taxonomy, then **redrive** the DLQ to the main queue (SQS native redrive) — dedup makes replay safe (AL-INV-4). (3) For a DB-outage backlog, confirm DB health, then redrive. (4) Never purge a DLQ without capturing its contents; record the incident. Never treat as degrade-to-stale (that is AuthZ Enrichment's posture, not Audit's).
 
-**RB-2 — Archival stalled (`iam_audit_log_archive_stalled` / rising `archive_lag_seconds`).** The hot table will grow unbounded until cleared. (1) Check the reconciler CronJob's last run + logs. (2) Common causes: S3/KMS unavailable, Object-Lock config error, checksum-verify mismatch. (3) Fix the dependency; re-run the reconciler (idempotent, AL-INV-9). (4) Confirm the stalled `(partition, tier)` reaches `verified`, then the drop proceeds. Never manually `DROP` a partition that is not `verified`.
+**RB-2 — Archival stalled (`iam_audit_log_archive_stalled_partitions` / rising `archive_lag_seconds`).** The hot table will grow unbounded until cleared. (1) Check the reconciler CronJob's last run + logs. (2) Common causes: S3/KMS unavailable, Object-Lock config error, checksum-verify mismatch. (3) Fix the dependency; re-run the reconciler (idempotent, AL-INV-9). (4) Confirm the stalled `(partition, tier)` reaches `verified`, then the drop proceeds. Never manually `DROP` a partition that is not `verified`.
 
 **RB-3 — Rows in `audit_events_default` (`iam_audit_log_default_partition_rows_total > 0`).** A producer emitted an `occurred_at` outside every explicit partition (bad clock or very-late replay). (1) Inspect the rows' `source_service`/`occurred_at`. (2) If a real month partition is missing, create it (`PartitionService`) and the rows re-home on re-insert; if a bad-clock producer, file against that service. (3) The default partition must return to empty.
 
@@ -1835,7 +1848,7 @@ Frozen on sign-off of this LLD. Names here are cross-service contracts; a siblin
 
 **Service & module.** Service `iam-audit-log`; Go module `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`; `ServiceName = "iam-audit-log"`; repo (HLD §15.2) `iam-audit-log`.
 
-**Database (`audit`) — tables.** `audit_events` (partitioned monthly, children `audit_events_YYYY_MM` + `audit_events_default`), `audit_event_archive_state`, `audit_archive_objects` (rev 0.21), `processed_events`, `tenant_plan_window`, `audit_export_jobs`, `audit_redaction_tasks` (rev 0.3), `redacted_subjects` (rev 0.25), `rls_violation_log`, `schema_migrations`.
+**Database (`audit`) — tables.** `audit_events` (partitioned monthly, children `audit_events_YYYY_MM` + `audit_events_default`), `audit_event_archive_state`, `audit_archive_objects` (rev 0.21), `processed_events`, `tenant_plan_window`, `audit_export_jobs`, `audit_redaction_tasks` (rev 0.3), `redacted_subjects` (rev 0.25), `rls_violation_log`, `ops_export_watermark` (rev 0.26), `reconciler_job_lease` (rev 0.28), `pgcommon_migrations`.
 
 **Enums.** `audit_retention_tier` {`compliance_7y`,`security_3y`,`access_90d`}; `audit_actor_type` {`user`,`service_account`,`iam_system`,`anonymous`}; `audit_ingest_mode` {`bus`,`direct_write`}; `audit_archive_status` {`pending`,`archiving`,`archived`,`verified`,`dropped`,`expired`,`failed`}; `audit_export_status` {`pending`,`running`,`ready`,`failed`,`expired`}; `audit_redaction_status` {`pending`,`applied`,`not_applicable`,`missed`} (rev 0.3).
 
@@ -1859,17 +1872,17 @@ Frozen on sign-off of this LLD. Names here are cross-service contracts; a siblin
 
 **Reconciler jobs / CronJobs (rev 0.25).** `--job=reconcile` (`0 2 * * *`), `--job=processed-events-prune` (`0 3 * * *`), `--job=redaction-retry` (`*/15 * * * *`), `--job=redaction-sweep` (`30 3 * * *`); all `concurrencyPolicy: Forbid`.
 
-**Metrics (rev 0.26; inventory `deploy/monitoring/metric-registry.yaml`).** Tier 1, all Canonical: `platform_messages_received_total`, `platform_messages_processed_total`, `platform_messages_failed_total`, `platform_retry_total`, `platform_dlq_messages_total`, `platform_duplicate_messages_total`, `platform_dependency_request_seconds`, `platform_event_propagation_seconds`, `platform_queue_depth`, `platform_dlq_depth`. Tier 2: `iam_rls_violations_total`. Tier 3 (`iam_audit_log_*`):
+**Metrics (rev 0.28; generated inventory `docs/observability/metric-registry.md`, service inventory `deploy/monitoring/metric-registry.yaml`).** Tier 1 the service records into (others are the libraries'; statuses per the central registry): `platform_messages_received_total`, `platform_messages_processed_total`, `platform_messages_failed_total`, `platform_retry_total`, `platform_dlq_messages_total`, `platform_duplicate_messages_total`, `platform_dependency_request_seconds`, `platform_event_propagation_seconds`, `platform_queue_depth`, `platform_dlq_depth`. Tier 2: `iam_rls_violations_total` (registry, proposed). Tier 3 (`iam_audit_log_*`, 18):
 - ingest: `events_ingested_total`, `duplicate_events_total`, `unknown_event_total`, `ingest_lag_seconds`, `directwrite_requests_total`;
 - query and export: `query_window_clamped_total`, `query_archived_reads_total`, `export_jobs_total`;
 - gauges from cmd/server (D-21): `default_partition_rows`, `archive_lag_seconds`, `archive_stalled_partitions`, `redaction_pending_tasks`;
 - reconciler-internal: `archive_partitions_total`, `retention_pruned_total`, `redaction_blocked_archive_total`;
 - catalog and redaction: `catalog_plans_poll_total`, `catalog_plans_stale_seconds`, `redaction_tasks_total`;
-- deprecated, emitted until sunset: `dlq_messages_total` (→ `platform_dlq_depth`), `default_partition_rows_total` (→ `default_partition_rows`), `archive_stalled` (→ `archive_stalled_partitions`).
+- removed (rev 0.27, no compatibility period): `dlq_messages_total` (→ `platform_dlq_depth`), `default_partition_rows_total` (→ `default_partition_rows`), `archive_stalled` (→ `archive_stalled_partitions`).
 
-Labels: `service="audit-log"`, `domain="iam"` (Tier 1), `environment`, `version`. Monitoring files: `deploy/monitoring/{metric-registry.yaml, metric-lint.yaml, app-alerts.yml, recording-rules.yml, slo-rules.yml, dashboard-audit-log.json, prometheus-adapter-rule.yaml}`.
+Labels: `domain="iam"`, `service="iam-audit-log"`, `environment` on every series (both roots); `version` only on `platform_build_info`. Monitoring files: `deploy/monitoring/{metric-registry.yaml, metric-lint.yaml, app-alerts.yml, recording-rules.yml, slo-rules.yml, dashboard-audit-log.json, prometheus-adapter-rule.yaml}`.
 
-**Operational documents.** `docs/runbook.md` (RB-1..RB-10, §24), `docs/implementation/BUILD_PLAN.md` (decisions D-1..D-21, gaps), `docs/implementation/RELEASE_CHECKLIST.md` (deployment prerequisites), `deploy/monitoring/app-alerts.yml` + `deploy/helm/templates/prometheusrule.yaml` (alert rules).
+**Operational documents.** `docs/runbook.md` (RB-1..RB-10, §24), `docs/observability/` (README, generated `metric-registry.md`, `migration.md`, per-alert `runbooks.md`; rev 0.28), `docs/implementation/BUILD_PLAN.md` (decisions D-1..D-23, gaps), `docs/implementation/RELEASE_CHECKLIST.md` (deployment prerequisites), `deploy/monitoring/app-alerts.yml` + `deploy/helm/templates/prometheusrule.yaml` (alert rules).
 
 **Reserved principal.** `iam-system` = `00000000-0000-0000-0000-0000000000a1` (reused from the platform-wide frozen sentinel).
 

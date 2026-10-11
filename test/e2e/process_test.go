@@ -24,9 +24,20 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/fixtures"
 )
 
-// buildBinary compiles ./cmd/<name> from the repo root into a temp dir.
+// buildBinary returns the iam-audit-log-<name> binary to run. With
+// E2E_BINARY_DIR set (CI's e2e job runs `make build` first, like
+// iam-authz-enrichment's E2E_BINARY_PATH) it uses the prebuilt binary, so the
+// test runs exactly what the image ships; otherwise it compiles ./cmd/<name>
+// from the repo root into a temp dir.
 func buildBinary(t *testing.T, name string) string {
 	t.Helper()
+	if dir := os.Getenv("E2E_BINARY_DIR"); dir != "" {
+		bin := filepath.Join(dir, "iam-audit-log-"+name)
+		info, err := os.Stat(bin)
+		require.NoError(t, err, "E2E_BINARY_DIR is set but %s is missing: run make build", bin)
+		require.False(t, info.IsDir(), bin)
+		return bin
+	}
 	root, err := filepath.Abs("../..")
 	require.NoError(t, err)
 	out := filepath.Join(t.TempDir(), "iam-audit-log-"+name)
@@ -49,14 +60,13 @@ func freePort(t *testing.T) string {
 // fail-fast requirement of LLD §12 satisfied) for the given role DSNs.
 func productionEnv(roles fixtures.Roles, appPort, metricsPort string) []string {
 	env := []string{
-		"APP_ENV=production",
+		"APP_ENV=prod",
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"DATABASE_URL=" + roles.AppDSN,
 		"MIGRATION_DATABASE_URL=" + roles.SuperDSN,
 		"APP_PORT=" + appPort,
 		"METRICS_PORT=" + metricsPort,
-		"PG_SSLMODE=disable",
 	}
 	for _, q := range config.InboundQueues() {
 		env = append(env, q.EnvVar+"=http://sqs.local/000000000000/"+q.Name)
@@ -163,7 +173,7 @@ func TestReconcilerBinary_ReconcileJobAsAuditReconciler(t *testing.T) {
 
 	cmd := exec.Command(bin, "--job=reconcile")
 	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"), "APP_ENV=production", "PG_SSLMODE=disable",
+		"PATH=" + os.Getenv("PATH"), "APP_ENV=prod",
 		"RECONCILER_DATABASE_URL=" + roles.ReconcilerDSN,
 	}
 	out, err := cmd.CombinedOutput()

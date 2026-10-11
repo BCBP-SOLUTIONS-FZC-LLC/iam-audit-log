@@ -124,9 +124,14 @@ func TestServer_StartupFailuresExit1(t *testing.T) {
 
 	// Outside dev the app pool must authenticate as audit_app without
 	// BYPASSRLS; the testcontainers superuser must be refused (AL-INV-3).
+	// APP_ENV=prod is a different metrics identity, so it runs in its own
+	// process.
 	t.Run("production refuses a non-audit_app role", func(t *testing.T) {
+		if !fixtures.InOwnProcess(t) {
+			return
+		}
 		setDevEnv(t, dsn)
-		t.Setenv("APP_ENV", "production")
+		t.Setenv("APP_ENV", "prod")
 		for _, q := range config.InboundQueues() {
 			t.Setenv(q.EnvVar, "http://sqs.local/"+q.Name)
 		}
@@ -181,5 +186,38 @@ func TestServer_StartupPartitionFailureIsNotFatal(t *testing.T) {
 	}
 	if code := <-done; code != 0 {
 		t.Fatalf("exit %d, want 0", code)
+	}
+}
+
+// With inbound queues configured the server builds the consumer fleet (Glue
+// codec on the AWS endpoint override, DLQ forwarding, one consumer per
+// queue), stays live while the SQS endpoint is unreachable (consumers retry,
+// nothing crashes), and SIGTERM still drains the fleet to exit 0.
+func TestServer_BootsWithConsumerFleetAndDrains(t *testing.T) {
+	dsn := fixtures.StartPostgres(t)
+	setDevEnv(t, dsn)
+	t.Setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:1")
+	t.Setenv("AWS_REGION", "ap-south-1")
+	t.Setenv("AWS_ACCESS_KEY_ID", "test")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
+	t.Setenv("SQS_DRAIN_TIMEOUT", "2s")
+	q := config.InboundQueues()[0]
+	t.Setenv(q.EnvVar, "http://127.0.0.1:1/000000000000/"+q.Name)
+
+	done := make(chan int, 1)
+	go func() { done <- run() }()
+	base := "http://127.0.0.1:" + os.Getenv("APP_PORT")
+	waitFor(t, done, base+"/healthz", http.StatusOK)
+
+	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("run() exit code %d, want 0", code)
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatal("server with a consumer fleet did not drain within 40s")
 	}
 }

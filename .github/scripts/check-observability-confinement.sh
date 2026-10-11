@@ -9,10 +9,11 @@
 #            itself cannot be built.
 #   Metrics: collectors register only on gincommon.MetricsRegisterer() — no
 #            prometheus.MustRegister/Register/DefaultRegisterer/NewRegistry.
-#            /metrics is served only by the telemetry adapter.
-#   Traces:  the OpenTelemetry API is imported only by
-#            internal/adapter/outbound/telemetry, which draws spans from the
-#            TracerProvider gincommon installs.
+#            /metrics is served only by gincommon.MetricsHandler (through the
+#            telemetry adapter); promhttp is imported nowhere.
+#   Traces:  the OpenTelemetry API is imported nowhere: spans, trace ids and
+#            tracing init come from gincommon's tracing API (NewSpanTracer,
+#            SpanTraceID, InitTracingWithConfig; platform-gincommon >= v1.4.0).
 #
 # Non-test Go under cmd/, internal/, pkg/, api/. test/ is exempt (harnesses).
 set -euo pipefail
@@ -23,11 +24,11 @@ src() { grep -rlE "$1" --include='*.go' cmd internal pkg api 2>/dev/null | grep 
 
 telemetry='^internal/adapter/outbound/telemetry/'
 
-o=$(src '"go\.opentelemetry\.io/' | grep -vE "$telemetry" || true)
-[ -z "$o" ] || report "OpenTelemetry API imported outside the telemetry adapter:" "$o"
+o=$(src '"go\.opentelemetry\.io/' || true)
+[ -z "$o" ] || report "OpenTelemetry API imported (use gincommon's tracing API: NewSpanTracer, SpanTraceID, InitTracingWithConfig):" "$o"
 
-o=$(src '"github\.com/prometheus/client_golang/prometheus/promhttp"' | grep -vE "$telemetry" || true)
-[ -z "$o" ] || report "promhttp imported outside the telemetry adapter (serve /metrics via telemetry.MetricsHandler):" "$o"
+o=$(src '"github\.com/prometheus/client_golang/prometheus/promhttp"' || true)
+[ -z "$o" ] || report "promhttp imported (serve /metrics via gincommon.MetricsHandler):" "$o"
 
 o=$(src 'prometheus\.(MustRegister|Register|DefaultRegisterer|DefaultGatherer|NewRegistry)\b' | grep -vE "$telemetry" || true)
 [ -z "$o" ] || report "collector registered outside gincommon.MetricsRegisterer():" "$o"

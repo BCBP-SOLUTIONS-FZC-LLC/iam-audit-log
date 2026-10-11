@@ -31,7 +31,7 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/dbseed"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/test/fixtures"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
 // §14 "Reconciler" row, against floci S3 + PostgreSQL 15 with the real

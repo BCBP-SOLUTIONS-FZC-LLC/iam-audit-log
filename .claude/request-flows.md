@@ -16,6 +16,8 @@ The sequence diagrams live in LLD §8. This file summarizes the flows as impleme
 
 ## Query (AL-1, AL-7)
 
+Archived reads take one of `ARCHIVE_READ_CONCURRENCY` slots (default 2) before reading S3 objects into memory; a request that cannot get one waits within its 30 s deadline.
+
 `QueryService.Query`:
 1. Validate the filter, limit and cursor.
 2. Resolve the window (D-13: live map → the row's stored value → the default).
@@ -36,6 +38,7 @@ Sealed objects are the only S3 source, and their rows no longer exist in RDS, so
 
 ## Archival: `reconcile` job (`ArchiveService.Run`)
 
+0. **Lease:** `cmd/reconciler` claims `reconciler_job_lease` for the job (free or expired) and releases it at the end; if another run holds it, this run exits 0 without running.
 1. **Pre-create partitions** (`audit_ensure_partitions`).
 2. **Re-open (D-19):** a DEFAULT row belonging to a month whose state is `dropped` → `audit_reopen_partition()`. It swaps DEFAULT out, recreates the month and re-routes the rows through the parent (no row UPDATE/DELETE), then resets the tiers to pending. DEFAULT rows for months that were never dropped are left for manual RB-3.
 3. **Eligible months** (`domain.ArchiveEligible`: past the hot window and before the trailing writable months):

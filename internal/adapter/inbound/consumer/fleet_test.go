@@ -12,7 +12,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/pkg/events"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2/pkg/events"
 )
 
 type fakeConsumer struct {
@@ -42,31 +42,12 @@ func (f *fakeConsumer) Stop() error {
 }
 
 type recMetrics struct {
-	mu                              sync.Mutex
-	received, processed, failed, dl int
-	propagated                      int
-	lastQueue, lastType, lastReason string
+	mu       sync.Mutex
+	dl       int
+	lastType string
 }
 
-func (m *recMetrics) Received(q, et string) {
-	m.mu.Lock()
-	m.received++
-	m.lastQueue, m.lastType = q, et
-	m.mu.Unlock()
-}
-func (m *recMetrics) Processed(et string) { m.mu.Lock(); m.processed++; m.lastType = et; m.mu.Unlock() }
-func (m *recMetrics) Failed(et, reason string) {
-	m.mu.Lock()
-	m.failed++
-	m.lastType, m.lastReason = et, reason
-	m.mu.Unlock()
-}
-func (m *recMetrics) DeadLettered(string) { m.mu.Lock(); m.dl++; m.mu.Unlock() }
-func (m *recMetrics) Propagated(string, time.Duration) {
-	m.mu.Lock()
-	m.propagated++
-	m.mu.Unlock()
-}
+func (m *recMetrics) DeadLettered(et string) { m.mu.Lock(); m.dl++; m.lastType = et; m.mu.Unlock() }
 
 type captured struct {
 	url     string
@@ -137,24 +118,19 @@ func TestFleet_HealthReportsExitedConsumer(t *testing.T) {
 	}
 }
 
-// Instrumentation + the dead-letter observer (never deletes: returns error
-// so SQS redrives to <queue>-dlq — AL-EVT-4).
-func TestInstrumentAndDeadLetter_ALEVT4(t *testing.T) {
+// The dead-letter observer counts the message and never deletes it: it
+// returns an error so SQS redrives to <queue>-dlq (AL-EVT-4). The rest of the
+// consumption lifecycle is platform-events' to count.
+func TestDeadLetter_ALEVT4(t *testing.T) {
 	m := &recMetrics{}
 	q := Queue{Name: "q", Topic: domain.TopicUser}
-	ok := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })
-	bad := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })
-	_ = ok(context.Background(), events.Envelope[json.RawMessage]{})
-	_ = bad(context.Background(), events.Envelope[json.RawMessage]{})
-	if m.received != 2 || m.processed != 1 || m.failed != 1 {
-		t.Errorf("metrics = %+v", m)
-	}
-	if err := deadLetter("q", m)(context.Background(), events.Envelope[json.RawMessage]{}); err == nil || m.dl != 1 {
+	if err := deadLetter(q, m)(context.Background(), events.Envelope[json.RawMessage]{Type: "UserDeleted"}); err == nil || m.dl != 1 {
 		t.Error("dead-letter handler must count and return an error")
 	}
-	_ = instrument(q, nil, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })(context.Background(), events.Envelope[json.RawMessage]{})
-	_ = instrument(q, nil, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })(context.Background(), events.Envelope[json.RawMessage]{})
-	_ = deadLetter("q", nil)(context.Background(), events.Envelope[json.RawMessage]{})
+	if m.lastType != "UserDeleted" {
+		t.Errorf("event_type = %q", m.lastType)
+	}
+	_ = deadLetter(q, nil)(context.Background(), events.Envelope[json.RawMessage]{})
 }
 
 type fakeIngester struct {
@@ -172,13 +148,13 @@ func (f *fakeIngester) IngestBus(_ context.Context, ev domain.BusEvent, consumer
 func TestHandler_MapsEnvelope(t *testing.T) {
 	ing := &fakeIngester{}
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	h := Handler(Queue{Topic: domain.TopicAuth, Consumer: "auth"}, ing)
+	h := Handler(Queue{Name: "auth-audit-q", Topic: domain.TopicAuth, Consumer: "auth"}, ing)
 	env := events.Envelope[json.RawMessage]{ID: "i", Type: "LoginSuccess", Source: "iam-event-consumer", TenantID: "t",
 		Subject: "s", Actor: "a", IPAddress: "1.2.3.4", UserAgent: "ua", TraceID: "tr", Timestamp: at, Payload: json.RawMessage(`{}`)}
 	if err := h(context.Background(), env); err != nil {
 		t.Fatal(err)
 	}
-	want := domain.BusEvent{ID: "i", Type: "LoginSuccess", Source: "iam-event-consumer", Topic: domain.TopicAuth, TenantID: "t",
+	want := domain.BusEvent{ID: "i", Type: "LoginSuccess", Source: "iam-event-consumer", Topic: domain.TopicAuth, Queue: "auth-audit-q", TenantID: "t",
 		Subject: "s", Actor: "a", IPAddress: "1.2.3.4", UserAgent: "ua", TraceID: "tr", Time: at, Payload: json.RawMessage(`{}`)}
 	if string(ing.got.Payload) != "{}" || ing.consumer != "auth" {
 		t.Fatalf("got %+v", ing.got)
@@ -203,11 +179,10 @@ func TestDeadLetterObserveAt(t *testing.T) {
 	}
 }
 
-// Tier-1 labels are bounded: a type known to the topic's taxonomy is kept,
-// anything else becomes "unknown"; the queue label is the queue name.
-func TestInstrument_EventTypeBounding(t *testing.T) {
+// The dead-letter event_type label is bounded: a type known to the topic's
+// taxonomy is kept, anything else becomes "unknown".
+func TestDeadLetter_EventTypeBounding(t *testing.T) {
 	q := Queue{Name: "user-audit-q", Topic: domain.TopicUser}
-	ok := func(context.Context, events.Envelope[json.RawMessage]) error { return nil }
 	for typ, want := range map[string]string{
 		"UserDeleted":      "UserDeleted",
 		"TotallyMadeUp":    "unknown",
@@ -215,49 +190,56 @@ func TestInstrument_EventTypeBounding(t *testing.T) {
 		"":                 "unknown",
 	} {
 		m := &recMetrics{}
-		_ = instrument(q, m, ok)(context.Background(), events.Envelope[json.RawMessage]{Type: typ})
-		if m.lastType != want || m.lastQueue != "user-audit-q" {
-			t.Errorf("%q: event_type=%q queue=%q, want %q", typ, m.lastType, m.lastQueue, want)
+		_ = deadLetter(q, m)(context.Background(), events.Envelope[json.RawMessage]{Type: typ})
+		if m.lastType != want {
+			t.Errorf("%q: event_type=%q, want %q", typ, m.lastType, want)
 		}
 	}
 }
 
-// Propagation is observed only for a processed message with an envelope time.
-func TestInstrument_PropagatedOnSuccessWithTimestamp(t *testing.T) {
-	q := Queue{Name: "q", Topic: domain.TopicUser}
-	m := &recMetrics{}
-	ok := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return nil })
-	bad := instrument(q, m, func(context.Context, events.Envelope[json.RawMessage]) error { return errors.New("x") })
-	_ = ok(context.Background(), events.Envelope[json.RawMessage]{})                                         // no timestamp
-	_ = bad(context.Background(), events.Envelope[json.RawMessage]{Timestamp: time.Now().Add(-time.Second)}) // failed
-	if m.propagated != 0 {
-		t.Fatalf("propagated = %d, want 0", m.propagated)
-	}
-	_ = ok(context.Background(), events.Envelope[json.RawMessage]{Timestamp: time.Now().Add(-time.Second)})
-	if m.propagated != 1 {
-		t.Fatalf("propagated = %d, want 1", m.propagated)
-	}
+// barrierConsumer's Stop returns only once every consumer in the fleet is
+// stopping, so a sequential Fleet.Stop would deadlock (and time out).
+type barrierConsumer struct {
+	arrive *sync.WaitGroup
+	all    chan struct{}
 }
 
-// failureReason maps handler errors onto the registry's reason vocabulary.
-func TestFailureReason(t *testing.T) {
-	for name, tc := range map[string]struct {
-		err  error
-		want string
-	}{
-		"dependency": {domain.NewError(domain.ErrDependencyUnavailable, "db down"), "dependency_unavailable"},
-		"wrapped":    {fmt.Errorf("ingest: %w", domain.NewError(domain.ErrDependencyUnavailable, "db")), "dependency_unavailable"},
-		"domain":     {domain.NewError(domain.ErrInvalidRequest, "bad"), "invalid_event"},
-		"plain":      {errors.New("boom"), "internal"},
-	} {
-		if got := failureReason(tc.err); got != tc.want {
-			t.Errorf("%s: %q, want %q", name, got, tc.want)
+func (b *barrierConsumer) Start(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+func (b *barrierConsumer) Stop() error {
+	b.arrive.Done()
+	<-b.all
+	return nil
+}
+
+// Every consumer is stopped concurrently: total shutdown is one drain
+// timeout, not one per queue.
+func TestFleet_StopsConsumersConcurrently(t *testing.T) {
+	const n = 11
+	var arrive sync.WaitGroup
+	arrive.Add(n)
+	all := make(chan struct{})
+	go func() { arrive.Wait(); close(all) }()
+	queues := make([]Queue, n)
+	for i := range queues {
+		queues[i] = Queue{Name: fmt.Sprintf("q%d", i), URL: "u"}
+	}
+	f, err := NewFleet(queues, func(string, events.Handler, ...events.ConsumerOption) (events.Consumer, error) {
+		return &barrierConsumer{arrive: &arrive, all: all}, nil
+	}, nil, nil, func(Queue) events.Handler { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.Start(ctx, nil)
+	done := make(chan error, 1)
+	go func() { cancel(); done <- f.Stop() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
 		}
-		m := &recMetrics{}
-		_ = instrument(Queue{Name: "q", Topic: domain.TopicUser}, m,
-			func(context.Context, events.Envelope[json.RawMessage]) error { return tc.err })(context.Background(), events.Envelope[json.RawMessage]{})
-		if m.lastReason != tc.want {
-			t.Errorf("%s: instrument reason %q, want %q", name, m.lastReason, tc.want)
-		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop is sequential: the consumers never all reached Stop")
 	}
 }

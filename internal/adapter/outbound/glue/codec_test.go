@@ -81,6 +81,7 @@ func TestDecode_ZlibAndHeaderErrors(t *testing.T) {
 	zw := zlib.NewWriter(&buf)
 	_, _ = zw.Write([]byte(`{"a":1}`))
 	_ = zw.Close()
+	whole := append([]byte(nil), buf.Bytes()...)
 	c := NewCodec(nil) // strip-only (dev/test)
 	out, err := c.Decode(context.Background(), "x", frame(t, v1, zlibCompressed, buf.Bytes()))
 	if err != nil || string(out) != `{"a":1}` {
@@ -98,8 +99,11 @@ func TestDecode_ZlibAndHeaderErrors(t *testing.T) {
 		"bad version":     append([]byte{0x02, noCompression}, make([]byte, 16)...),
 		"bad compression": frame(t, v1, 0x09, []byte(`{}`)),
 		"bad zlib":        frame(t, v1, zlibCompressed, []byte("not zlib")),
-		"zlib bomb":       frame(t, v1, zlibCompressed, buf.Bytes()),
-		"not json":        frame(t, v1, noCompression, []byte(`{nope`)),
+		// A valid zlib header whose stream is cut short fails while reading,
+		// not at the header: a truncated SQS body must not decode.
+		"truncated zlib": frame(t, v1, zlibCompressed, whole[:len(whole)-6]),
+		"zlib bomb":      frame(t, v1, zlibCompressed, buf.Bytes()),
+		"not json":       frame(t, v1, noCompression, []byte(`{nope`)),
 	}
 	for name, in := range cases {
 		if _, err := c.Decode(context.Background(), "x", in); err == nil {

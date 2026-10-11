@@ -7,16 +7,16 @@
 //     other way; check-observability-confinement.sh enforces it.
 //   - Metrics: every collector registers on gincommon.MetricsRegisterer()
 //     (internal/adapter/outbound/metrics), and /metrics is served from that
-//     same registry by MetricsHandler.
-//   - Traces: gincommon.InitTracingFromEnv / ObservabilityMiddlewares install
-//     the process TracerProvider and OTLP pipeline. Tracer and StartSpan take
-//     spans from that provider, and TraceID reads the active span, so every
-//     span and log trace_id belongs to gincommon's pipeline.
+//     same registry by gincommon.MetricsHandler.
+//   - Traces: gincommon.InitTracingWithConfig / ObservabilityMiddlewares
+//     install the process TracerProvider and OTLP pipeline. Tracer and
+//     TraceID wrap gincommon's tracing API (NewSpanTracer, SpanTraceID), so
+//     every span and log trace_id belongs to gincommon's pipeline.
 //
-// gincommon v1.3.0 exposes no span API, no /metrics handler and no
-// context-aware trace-id helper outside a *gin.Context. This package is the
-// only place allowed to touch the OpenTelemetry and promhttp APIs to fill
-// those three gaps (BUILD_PLAN gap 43); no other package may import them.
+// Since platform-gincommon v1.4.0 the span API, the /metrics handler and the
+// context trace-id helper are gincommon's own, so this package no longer
+// imports OpenTelemetry or promhttp (BUILD_PLAN gap 43); nothing in the
+// repository does.
 package telemetry
 
 import (
@@ -28,11 +28,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/trace"
-
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 )
@@ -40,7 +35,7 @@ import (
 // Tracer implements port.Tracer (and pgcommon.Config.Tracer) on the
 // TracerProvider gincommon installed.
 type Tracer struct {
-	tracer trace.Tracer
+	*gincommon.SpanTracer
 }
 
 var _ port.Tracer = (*Tracer)(nil)
@@ -50,35 +45,20 @@ func NewTracer(serviceName string) *Tracer {
 	if serviceName == "" {
 		serviceName = "iam-audit-log"
 	}
-	return &Tracer{tracer: otel.Tracer(serviceName)}
-}
-
-// StartSpan starts a span named name and returns the child context together
-// with the span's end function.
-func (t *Tracer) StartSpan(ctx context.Context, name string) (spanCtx context.Context, end func()) {
-	ctx, span := t.tracer.Start(ctx, name)
-	return ctx, func() { span.End() }
+	return &Tracer{gincommon.NewSpanTracer(serviceName)}
 }
 
 // TraceID returns the active span's trace id, or "" (port.TraceIDFunc).
-func TraceID(ctx context.Context) string {
-	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
-		return sc.TraceID().String()
-	}
-	return ""
-}
+func TraceID(ctx context.Context) string { return gincommon.SpanTraceID(ctx) }
 
 var _ port.TraceIDFunc = TraceID
 
 // MetricsHandler serves exactly the registry behind
 // gincommon.MetricsRegisterer(), so /metrics exposes gincommon's HTTP metrics
 // and every collector registered on it, and nothing registered elsewhere.
-func MetricsHandler() http.Handler {
-	if g, ok := gincommon.MetricsRegisterer().(prometheus.Gatherer); ok {
-		return promhttp.HandlerFor(g, promhttp.HandlerOpts{})
-	}
-	return promhttp.Handler()
-}
+// gincommon's handler continues past a failing collector instead of blanking
+// the scrape.
+func MetricsHandler() http.Handler { return gincommon.MetricsHandler() }
 
 // HTTPErrorLog returns a standard-library *log.Logger for http.Server.ErrorLog
 // that forwards each line to the gincommon logger at error level. Without it,

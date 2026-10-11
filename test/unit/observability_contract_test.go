@@ -16,15 +16,19 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
 )
 
 // registeredMetrics returns every collector name constructed in
-// registerMetrics() (business.go is the sole registration file, §11).
+// buildCollectors() (business.go is the sole registration file, §11): the
+// names passed to gincommon.New* / NewShared*Vec, and the Name: literal of
+// the one prometheus.NewGaugeFunc.
 func registeredMetrics(t *testing.T) map[string]bool {
 	t.Helper()
 	src := string(repoFile(t, "internal/adapter/outbound/metrics/business.go"))
 	out := map[string]bool{}
-	for _, m := range regexp.MustCompile(`Name:\s*"([a-z0-9_]+)"`).FindAllStringSubmatch(src, -1) {
+	for _, m := range regexp.MustCompile(`(?:Name:\s*|gincommon\.New\w+\([^,]+,\s*)"([a-z0-9_]+)"`).FindAllStringSubmatch(src, -1) {
 		out[m[1]] = true
 	}
 	if len(out) == 0 {
@@ -38,9 +42,12 @@ func lldTier3Metrics(t *testing.T) map[string]bool {
 	t.Helper()
 	lld := string(repoFile(t, "docs/lld/iam-lld-audit-log-service.md"))
 	start := strings.Index(lld, "**Tier-3 (`iam_audit_log_*`):**")
-	end := strings.Index(lld[start:], "**Tracing & logging") // tolerate a "(rev N)" suffix on the next section marker
-	if start < 0 || end < 0 {
+	if start < 0 {
 		t.Fatal("LLD §11 Tier-3 table not found")
+	}
+	end := strings.Index(lld[start:], "**Tracing & logging") // tolerate a "(rev N)" suffix on the next section marker
+	if end < 0 {
+		t.Fatal("LLD §11 Tier-3 table has no end marker (**Tracing & logging)")
 	}
 	out := map[string]bool{}
 	for _, line := range strings.Split(lld[start:start+end], "\n") {
@@ -99,15 +106,22 @@ func TestMetrics_LLDTier3Registered(t *testing.T) {
 	}
 }
 
-// libraryMetrics are metrics registered by shared libraries or the platform,
-// with names verified against the module cache (platform-gincommon v1.3.0,
-// platform-events v1.4.0) and kube-state-metrics.
-var libraryMetrics = map[string]bool{
-	"up":                            true,
-	"http_requests_total":           true, // gincommon {method,route,status_class,error_class}
-	"http_request_duration_seconds": true, // gincommon
-	"events_consumed_total":         true, // platform-events {queue,event_type,status}
-	"kube_job_status_failed":        true, // kube-state-metrics
+// libraryMetrics are metrics registered by shared libraries or the platform:
+// the platform_* successors platform-gincommon and platform-events emit
+// (metrics.LibraryRegistry, checked against the central Platform
+// Observability Registry by TestRegistryLedger_MatchesPlatformRegistry) plus
+// Prometheus' up and kube-state-metrics. The pre-standard names
+// (http_requests_total, http_request_duration_seconds, events_consumed_total)
+// were removed from the libraries and must not be read.
+func libraryMetrics() map[string]bool {
+	out := map[string]bool{
+		"up":                     true,
+		"kube_job_status_failed": true, // kube-state-metrics
+	}
+	for _, e := range metrics.LibraryRegistry {
+		out[e.Name] = true
+	}
+	return out
 }
 
 // ruleExprs returns every PromQL expression in the observability artifacts:
@@ -178,7 +192,7 @@ func ruleExprs(t *testing.T) map[string]string {
 // recording rule defined here, or is a known library/platform metric, and no
 // artifact reads a deprecated metric.
 func TestAlerts_ReferenceKnownMetrics(t *testing.T) {
-	code, deprecated := registeredMetrics(t), deprecatedMetrics(t)
+	code, deprecated, library := registeredMetrics(t), deprecatedMetrics(t), libraryMetrics()
 	exprs := ruleExprs(t)
 	recorded := map[string]bool{}
 	for k := range exprs {
@@ -199,7 +213,7 @@ func TestAlerts_ReferenceKnownMetrics(t *testing.T) {
 			if r, dep := deprecated[base]; dep {
 				t.Errorf("%s reads deprecated metric %s — use %s", where, base, r)
 			}
-			if !code[name] && !code[base] && !libraryMetrics[name] && !recorded[name] {
+			if !code[name] && !code[base] && !library[name] && !library[base] && !recorded[name] {
 				t.Errorf("%s reads unknown metric %s", where, name)
 			}
 		}
@@ -322,5 +336,64 @@ func TestLogHygiene_NoPayloadFields(t *testing.T) {
 	sort.Strings(violations)
 	for _, v := range violations {
 		t.Error(v)
+	}
+}
+
+// Every alert carries a runbook_url Alertmanager can open: an absolute link
+// into this repository's main branch whose file exists and whose anchor is a
+// real heading there (GitHub heading slugs).
+func TestAlerts_RunbookURLsResolve(t *testing.T) {
+	const base = "https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/"
+	slug := func(h string) string {
+		s := strings.ToLower(strings.TrimSpace(h))
+		s = regexp.MustCompile(`[^\w\- ]`).ReplaceAllString(s, "")
+		return strings.ReplaceAll(s, " ", "-")
+	}
+	anchors := map[string]map[string]bool{}
+	headings := func(path string) map[string]bool {
+		if a, ok := anchors[path]; ok {
+			return a
+		}
+		a := map[string]bool{}
+		for _, line := range strings.Split(string(repoFile(t, path)), "\n") {
+			if m := regexp.MustCompile(`^#{1,6} (.+)$`).FindStringSubmatch(line); m != nil {
+				a[slug(m[1])] = true
+			}
+		}
+		anchors[path] = a
+		return a
+	}
+	type rules struct {
+		Groups []struct {
+			Rules []struct {
+				Alert       string            `yaml:"alert"`
+				Annotations map[string]string `yaml:"annotations"`
+			} `yaml:"rules"`
+		} `yaml:"groups"`
+	}
+	n := 0
+	for _, f := range []string{"deploy/monitoring/app-alerts.yml", "deploy/monitoring/slo-rules.yml"} {
+		var r rules
+		repoYAML(t, f, &r)
+		for _, g := range r.Groups {
+			for _, rule := range g.Rules {
+				if rule.Alert == "" {
+					continue
+				}
+				n++
+				u := rule.Annotations["runbook_url"]
+				path, anchor, ok := strings.Cut(strings.TrimPrefix(u, base), "#")
+				if !strings.HasPrefix(u, base) || !ok {
+					t.Errorf("%s: runbook_url %q is not an absolute %s…#anchor link", rule.Alert, u, base)
+					continue
+				}
+				if !headings(path)[anchor] {
+					t.Errorf("%s: runbook_url anchor #%s is not a heading in %s", rule.Alert, anchor, path)
+				}
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no alerts parsed")
 	}
 }

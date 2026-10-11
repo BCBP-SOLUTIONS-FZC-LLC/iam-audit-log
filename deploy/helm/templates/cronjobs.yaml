@@ -28,6 +28,9 @@ spec:
           labels:
             {{- include "iam-audit-log.selectorLabels" $ | nindent 12 }}
             app.kubernetes.io/component: cronjob-{{ $job.jobName }}
+            # Never a sidecar: an Envoy that outlives the reconciler keeps
+            # the Job from completing. The reconciler serves no requests.
+            sidecar.istio.io/inject: "false"
           annotations:
             rotationEpoch: {{ $.Values.rotationEpoch | default "0" | quote }}
             checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}

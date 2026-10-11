@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/cmd/reconciler/jobs"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/adapter/outbound/metrics"
@@ -30,8 +31,8 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/logger"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgcommon"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/pkg/pgmetrics"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgmetrics"
 )
 
 // buildVersion is injected by -ldflags at build time.
@@ -42,8 +43,12 @@ var buildVersion = "dev"
 // Phase 1/7 jobs land).
 var jobRegistry = jobs.Registry
 
-// libMetricsOnce keeps run() re-entrant: pgmetrics init is not idempotent.
-var libMetricsOnce sync.Once
+// libMetricsOnce keeps run() re-entrant: pgmetrics init runs once per process.
+var (
+	libMetricsOnce     sync.Once
+	libMetricsErr      error
+	libMetricsWarnings []pgmetrics.RegistrationWarning
+)
 
 func main() { os.Exit(run()) }
 
@@ -83,7 +88,14 @@ func run() int {
 		log.Error("invalid configuration", "error", err.Error())
 		return 1
 	}
-	shutdownTracing := gincommon.InitTracingFromEnv()
+	shutdownTracing, err := gincommon.InitTracingWithConfig(gincommon.TracingConfig{
+		ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion,
+		Domain: config.ObservabilityDomain, Environment: cfg.AppEnv, Logger: rawLog,
+	})
+	if err != nil {
+		log.Error("init tracing", "error", err.Error())
+		return 1
+	}
 	defer shutdownTracing()
 	defer func() {
 		if err := gincommon.Shutdown(rawLog); err != nil {
@@ -93,11 +105,31 @@ func run() int {
 
 	// No /metrics listener on a CronJob; collectors still exist because
 	// jobs increment them (pushed via the platform's CronJob scrape path).
-	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{Logger: rawLog, ServiceName: cfg.ServiceName, BuildVersion: cfg.BuildVersion})
-	metrics.Register(cfg.AppEnv)
-	libMetricsOnce.Do(func() {
-		pgmetrics.InitWithRegisterer(cfg.ServiceName, cfg.BuildVersion, gincommon.MetricsRegisterer())
+	// The reconciler uses no platform-events API, so only pgcommon's
+	// metrics are initialized here (with gincommon's identity labels), before
+	// the pool is created so its connection gauges register.
+	// The metrics identity is the service's own (iam-audit-log), so the
+	// shared iam_audit_log_* collectors validate; traces keep the
+	// "-reconciler" service.name set by InitTracingWithConfig above.
+	_ = gincommon.ObservabilityMiddlewares(gincommon.Config{
+		Logger: rawLog, ServiceName: cfg.MetricsServiceName, BuildVersion: cfg.BuildVersion,
+		Domain: config.ObservabilityDomain, Environment: cfg.AppEnv, // APP_ENV, validated by LoadReconciler
 	})
+	if err := metrics.Register(); err != nil {
+		log.Error("register metrics", "error", err.Error())
+		return 1
+	}
+	libMetricsOnce.Do(func() {
+		libMetricsWarnings, libMetricsErr = pgmetrics.InitWithIdentity(
+			pgmetrics.IdentityFromLabels(gincommon.MetricsConstLabels()), gincommon.MetricsRegisterer())
+		for _, w := range libMetricsWarnings {
+			log.Warn("platform-pgcommon metric disabled", "metric", w.Metric, "error", w.Err.Error())
+		}
+	})
+	if libMetricsErr != nil {
+		log.Error("init platform-pgcommon metrics", "error", libMetricsErr.Error())
+		return 1
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
@@ -140,6 +172,27 @@ func run() int {
 	}
 	archives := pgadapter.NewArchiveRepository(pool)
 
+	// One run per job at a time, manual Jobs included (migration 000011). A
+	// lease left by a crashed run expires after the run deadline.
+	lease := pgadapter.NewJobLease(pool)
+	holder := leaseHolder()
+	acquired, err := lease.Claim(ctx, jobName, holder, cfg.Timeout+5*time.Minute)
+	if err != nil {
+		log.Error("claim job lease", "job", jobName, "error", err.Error())
+		return 1
+	}
+	if !acquired {
+		log.Warn("another run of this job holds the lease — skipped", "job", jobName)
+		return 0
+	}
+	defer func() {
+		relCtx, cancelRel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelRel()
+		if err := lease.Release(relCtx, jobName, holder); err != nil {
+			log.Warn("release job lease (expires on its own)", "job", jobName, "error", err.Error())
+		}
+	}()
+
 	log.Info("reconciler starting", "job", jobName)
 	res, err := fn(ctx, &jobs.Context{
 		Pool:                   pool,
@@ -170,6 +223,13 @@ func run() int {
 	log.Info("reconciler complete", "job", jobName,
 		"attempted", res.Attempted, "succeeded", res.Succeeded, "failed", res.Failed, "skipped", res.Skipped)
 	return 0
+}
+
+// leaseHolder identifies this run: the pod name (the Job's pod) plus a
+// random suffix, so a restarted container in the same pod is distinct.
+func leaseHolder() string {
+	host, _ := os.Hostname() //nolint:errcheck // "" is still a valid prefix
+	return host + "/" + uuid.NewString()
 }
 
 // buildArchiveStore wires the S3 archive writer (LLD §15.4): SSE-KMS with

@@ -1,0 +1,108 @@
+{{- /*
+Istio L7 identity policy for /api/v1/internal/* (LLD §10.2: "mTLS peer
+identity required; an unrecognised peer is 403 forbidden_peer").
+
+NetworkPolicy cannot authenticate a caller, and RequireSystemRole only checks
+the x-tenant-roles header, so without this policy any pod allowed through the
+NetworkPolicy could forge AL-5/AL-6 entries or read any tenant through AL-7.
+This policy turns the contract into an identity check:
+
+  /api/v1/internal/*  only from mesh.authorizationPolicy.internalCallerPrincipals.
+                      Principals exist only on mTLS traffic, so a plaintext or
+                      unlisted caller is denied by the sidecar (403).
+  /api/v1/audit/*     only from the gateway: its principal when it is
+                      mesh-injected (gatewayPrincipals), otherwise only from
+                      sources WITHOUT a principal (a non-injected Envoy Gateway
+                      sends plaintext; NetworkPolicy limits plaintext to its
+                      namespace). Either way an in-mesh workload cannot reach
+                      the header-trusting tenant-admin API with forged identity.
+  /healthz, /readyz   GET from anywhere (kubelet probes carry no principal).
+  metrics port        any source; the NetworkPolicy limits it to monitoring.
+
+Requires Istio with security.istio.io/v1 (1.22+). Mirrors iam-group-mapping's
+mesh.yaml, adapted to one port that serves both route classes.
+*/ -}}
+{{- $m := .Values.mesh }}
+{{- $prod := eq (.Values.env.APP_ENV | default "") "prod" }}
+{{- if and $prod (not $m.authorizationPolicy.enabled) (not $m.acknowledgeNoMesh) }}
+{{- fail "APP_ENV=prod requires mesh.authorizationPolicy.enabled (the identity check on /api/v1/internal/*), or mesh.acknowledgeNoMesh=true under a tracked security exception." }}
+{{- end }}
+{{- if $m.authorizationPolicy.enabled }}
+{{- if not $m.authorizationPolicy.internalCallerPrincipals }}
+{{- fail "mesh.authorizationPolicy.enabled requires mesh.authorizationPolicy.internalCallerPrincipals (SPIFFE ids of the AL-5/AL-6/AL-7 callers)." }}
+{{- end }}
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ include "iam-audit-log.fullname" . }}
+  labels:
+    {{- include "iam-audit-log.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "iam-audit-log.selectorLabels" . | nindent 6 }}
+  # ALLOW: a request matching no rule is denied by the sidecar (403), the
+  # AsyncAPI docs routes included unless added via additionalRules.
+  action: ALLOW
+  rules:
+    # AL-5 / AL-6 / AL-7 — named service identities only.
+    - from:
+        - source:
+            principals:
+              {{- toYaml $m.authorizationPolicy.internalCallerPrincipals | nindent 14 }}
+      to:
+        - operation:
+            ports: [{{ .Values.service.port | quote }}]
+            paths: ["/api/v1/internal/*"]
+    # AL-1..AL-4 — the gateway only.
+    - from:
+        - source:
+            {{- if $m.authorizationPolicy.gatewayPrincipals }}
+            principals:
+              {{- toYaml $m.authorizationPolicy.gatewayPrincipals | nindent 14 }}
+            {{- else }}
+            notPrincipals: ["*"]
+            {{- end }}
+      to:
+        - operation:
+            ports: [{{ .Values.service.port | quote }}]
+            paths: ["/api/v1/audit/*"]
+    # Health probes.
+    - to:
+        - operation:
+            ports: [{{ .Values.service.port | quote }}]
+            methods: ["GET"]
+            paths: ["/healthz", "/readyz"]
+    # Metrics listener.
+    - to:
+        - operation:
+            ports: [{{ .Values.service.metricsPort | quote }}]
+    {{- with $m.authorizationPolicy.additionalRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- if $m.peerAuthentication.enabled }}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: {{ include "iam-audit-log.fullname" . }}
+  labels:
+    {{- include "iam-audit-log.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "iam-audit-log.selectorLabels" . | nindent 6 }}
+  # PERMISSIVE on the API port by default: a non-injected Envoy Gateway sends
+  # plaintext to /api/v1/audit/*. The internal routes still need mTLS, because
+  # the AuthorizationPolicy allows them only from principals. STRICT when the
+  # gateway is mesh-injected. Metrics stays PERMISSIVE for a Prometheus
+  # outside the mesh.
+  mtls:
+    mode: {{ $m.peerAuthentication.mode }}
+  portLevelMtls:
+    {{ .Values.service.port }}:
+      mode: {{ $m.peerAuthentication.apiPortMode | default "PERMISSIVE" }}
+    {{ .Values.service.metricsPort }}:
+      mode: PERMISSIVE
+{{- end }}

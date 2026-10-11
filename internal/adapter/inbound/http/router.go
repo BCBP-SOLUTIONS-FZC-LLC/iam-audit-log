@@ -20,15 +20,16 @@ type Pinger interface {
 	Health(ctx context.Context) error
 }
 
-// DocsConfig controls the AsyncAPI surface: always on outside production;
-// in production opt-in via Enabled and, if AuthToken is set, bearer-gated.
+// DocsConfig controls the AsyncAPI surface: always on outside production
+// (APP_ENV=prod); in production opt-in via Enabled and, if AuthToken is set,
+// bearer-gated.
 type DocsConfig struct {
 	Environment string
 	Enabled     bool
 	AuthToken   string
 }
 
-func (d DocsConfig) active() bool { return d.Environment != "production" || d.Enabled }
+func (d DocsConfig) active() bool { return d.Environment != "prod" || d.Enabled }
 
 // RouteRegistrar mounts a phase's handlers onto an already-authorized group.
 type RouteRegistrar func(g *gin.RouterGroup)
@@ -169,7 +170,7 @@ func registerDocsRoutes(r *gin.Engine, cfg RouterConfig) {
 		return
 	}
 	auth := func(c *gin.Context) { c.Next() }
-	if cfg.Docs.Environment == "production" && cfg.Docs.AuthToken != "" {
+	if cfg.Docs.Environment == "prod" && cfg.Docs.AuthToken != "" {
 		expected := []byte("Bearer " + cfg.Docs.AuthToken)
 		auth = func(c *gin.Context) {
 			if subtle.ConstantTimeCompare([]byte(c.GetHeader("Authorization")), expected) != 1 {

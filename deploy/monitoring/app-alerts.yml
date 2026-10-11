@@ -5,13 +5,17 @@
 # prometheus-operator PrometheusRule CRD.
 #
 # Enterprise Platform Observability Standard (gap 46):
-#   - Tier-1 (platform_*) series are selected by {domain="iam", service="audit-log"},
-#     and Tier-2/Tier-3 (iam_*) series by {service="audit-log"}. Both labels are
-#     injected centrally. `job` is kept only for series this service does not
-#     label itself (up, gincommon http_*, platform-events events_*, kube-state).
-#   - No rule reads a deprecated metric (deploy/monitoring/metric-registry.yaml);
-#     TestAlerts_ReferenceKnownMetrics enforces it, and metrics-registry-lint.sh
-#     that no Proposed platform_* name is a live target.
+#   - Every series — the service's own and the platform libraries'
+#     (gincommon platform_http_*, platform-events platform_messages_*) —
+#     carries {domain="iam", service="iam-audit-log", environment}, injected
+#     centrally; rules select on domain+service. `job` is kept only for series
+#     no platform library labels (up, kube-state-metrics).
+#   - No rule reads a removed or deprecated metric (metricslint refs,
+#     TestAlerts_ReferenceKnownMetrics).
+#   - An alert that reads a Proposed (not yet ratified) platform_* metric, or
+#     a recording rule built on one, carries the label
+#     metric_status: proposed so routing can tell it apart;
+#     metrics-registry-lint.sh enforces it (registry.go holds the statuses).
 #   - TestAlerts_StaticMirrorMatchesHelm keeps this file and the Helm template
 #     identical.
 groups:
@@ -29,7 +33,7 @@ groups:
             No iam-audit-log pods have been scraped as healthy for 2 minutes. Audit
             events are accumulating in SQS (not lost) and direct-write producers are
             retrying. kubectl get pods -l app.kubernetes.io/name=iam-audit-log
-          runbook_url: docs/runbook.md#rb-9
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-9--reconciler-cronjob-failed--service-down
 
       - alert: IAMAuditLogReplicasMissing
         expr: sum(up{job="iam-audit-log"}) < 2
@@ -42,48 +46,54 @@ groups:
           description: >-
             Only {{ $value }} replicas are healthy. A further disruption takes
             ingestion and the query API to zero.
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/observability/runbooks.md#iamauditlogreplicasmissing
 
       - alert: IAMAuditLogHighErrorRate
-        expr: service:http_requests_error_ratio:5m{job="iam-audit-log"} > 0.05
+        expr: service:platform_http_requests_error_ratio:5m{domain="iam", service="iam-audit-log"} > 0.05
         for: 5m
         labels:
           severity: warning
           team: platform
+          metric_status: proposed
         annotations:
           summary: iam-audit-log 5xx rate above 5%
           description: >-
             {{ $value | humanizePercentage }} of requests return 5xx. Check Postgres
             and S3 reachability (dependency_unavailable).
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/observability/runbooks.md#iamauditloghigherrorrate
 
   - name: audit_log_messaging
     rules:
       - alert: IAMAuditLogDLQNotEmpty
-        expr: max by (queue) (platform_dlq_depth{domain="iam", service="audit-log"}) > 0
+        expr: max by (queue) (platform_dlq_depth{domain="iam", service="iam-audit-log"}) > 0
         for: 1m
         labels:
           severity: critical
           team: platform
+          metric_status: proposed
         annotations:
           summary: "Audit DLQ for {{ $labels.queue }} has messages — compliance incident"
           description: >-
             {{ $value }} message(s) in {{ $labels.queue }}-dlq. Each is a potentially
             lost audit record (AL-EVT-4). Investigate and replay, never purge.
-          runbook_url: docs/runbook.md#rb-1
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogDeadLettered
-        expr: sum by (queue, reason) (increase(platform_dlq_messages_total{domain="iam", service="audit-log"}[15m])) > 0
+        expr: sum by (operation, event_type, reason) (increase(platform_dlq_messages_total{domain="iam", service="iam-audit-log"}[15m])) > 0
         labels:
           severity: critical
           team: platform
         annotations:
-          summary: "Messages from {{ $labels.queue }} reached the dead-letter threshold ({{ $labels.reason }})"
+          summary: "{{ $labels.event_type }} messages reached the dead-letter threshold ({{ $labels.reason }})"
           description: >-
             {{ $value }} message(s) exhausted their deliveries and are moving to the DLQ
-            (AL-EVT-4). The DLQ-depth alert follows once SQS redrives them.
-          runbook_url: docs/runbook.md#rb-1
+            (AL-EVT-4). The counter has no queue label (registry label set); the
+            "dead-letter handler invoked" log line names the queue, and the DLQ-depth
+            alert follows per queue once SQS redrives them.
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogMessageFailures
-        expr: service:platform_messages_failure_ratio:5m{domain="iam", service="audit-log"} > 0.05
+        expr: service:platform_messages_failure_ratio:5m{domain="iam", service="iam-audit-log"} > 0.05
         for: 10m
         labels:
           severity: warning
@@ -92,52 +102,55 @@ groups:
           summary: More than 5% of consumed messages are failing
           description: >-
             {{ $value | humanizePercentage }} of received messages failed in the last 5
-            minutes. See service:platform_messages_failed:rate5m by reason
-            (dependency_unavailable = Postgres; invalid_event = a producer shape).
-          runbook_url: docs/runbook.md#rb-1
+            minutes. See service:platform_messages_failed:rate5m by reason (platform-events:
+            handler_error = the ingest path failed, e.g. Postgres unreachable or an invalid
+            event; decode_error = Glue schema validation; malformed = not an envelope).
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogRetrySpike
-        expr: sum by (reason) (service:platform_retry:rate5m{domain="iam", service="audit-log"}) > 0.5
+        expr: sum by (operation) (service:platform_retry:rate5m{domain="iam", service="iam-audit-log"}) > 0.5
         for: 10m
         labels:
           severity: warning
           team: platform
         annotations:
-          summary: "Retry spike ({{ $labels.reason }})"
+          summary: "Retry spike ({{ $labels.operation }})"
           description: >-
             {{ $value }} redeliveries/s over 10 minutes. Sustained retries end in the DLQ
             after SQS_MAX_RECEIVE_COUNT deliveries.
-          runbook_url: docs/runbook.md#rb-1
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogQueueBacklog
-        expr: max by (queue) (platform_queue_depth{domain="iam", service="audit-log"}) > 1000
+        expr: max by (queue) (platform_queue_depth{domain="iam", service="iam-audit-log"}) > 1000
         for: 15m
         labels:
           severity: warning
           team: platform
+          metric_status: proposed
         annotations:
           summary: "Queue {{ $labels.queue }} backlog above 1000 messages"
           description: >-
             {{ $value }} messages waiting. Consumers are slow or down; check replicas,
             Postgres latency and the failure ratio.
-          runbook_url: docs/runbook.md#rb-1
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-1--dlq-has-messages
 
       - alert: IAMAuditLogMalformedEnvelopes
-        expr: sum(increase(events_consumed_total{job="iam-audit-log", status="malformed"}[10m])) > 0
+        expr: sum(increase(platform_messages_failed_total{domain="iam", service="iam-audit-log", reason="malformed"}[10m])) > 0
         labels:
           severity: critical
           team: platform
         annotations:
-          summary: iam-audit-log received malformed envelopes (deleted by platform-events)
+          summary: iam-audit-log received malformed envelopes (forwarded to the DLQ)
           description: >-
-            platform-events v1.4.0 deletes a message whose body is not a valid envelope:
-            no retry, no DLQ (decision D-3). {{ $value }} such message(s) in 10 minutes.
-          runbook_url: docs/runbook.md#rb-10
+            {{ $value }} message(s) in 10 minutes were not a valid envelope. platform-events
+            forwards each to its queue's DLQ (decision D-22, replacing D-3's delete), so
+            IAMAuditLogDLQNotEmpty follows. A producer is emitting a broken envelope.
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-10--malformed-envelopes
 
   - name: audit_log_ingest
     rules:
       - alert: IAMAuditLogUnknownEventTypes
-        expr: sum by (source_service) (increase(iam_audit_log_unknown_event_total{service="audit-log"}[1h])) > 0
+        expr: sum by (source_service) (increase(iam_audit_log_unknown_event_total{domain="iam", service="iam-audit-log"}[1h])) > 0
         labels:
           severity: warning
           team: platform
@@ -146,9 +159,10 @@ groups:
           description: >-
             Events were persisted as <domain>.unknown (AL-EVT-4: captured, not lost).
             Extend the taxonomy (LLD §7.1) and AsyncAPI.
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/observability/runbooks.md#iamauditlogunknowneventtypes
 
       - alert: IAMAuditLogIngestLagHigh
-        expr: service:iam_audit_log_ingest_lag:p99_15m{service="audit-log"} > 0.05
+        expr: service:iam_audit_log_ingest_lag:p99_15m{domain="iam", service="iam-audit-log"} > 0.05
         for: 15m
         labels:
           severity: warning
@@ -158,12 +172,13 @@ groups:
           description: >-
             p99 recorded_at − occurred_at is {{ $value | humanizeDuration }}
             (HLD §3.4). Check the SQS backlog, consumer health and Postgres latency.
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/observability/runbooks.md#iamauditlogingestlaghigh
 
       - alert: IAMAuditLogDirectWriteErrors
         expr: |
-          sum(rate(iam_audit_log_directwrite_requests_total{service="audit-log", result="error"}[10m]))
+          sum(rate(iam_audit_log_directwrite_requests_total{domain="iam", service="iam-audit-log", result="error"}[10m]))
             /
-          clamp_min(sum(rate(iam_audit_log_directwrite_requests_total{service="audit-log"}[10m])), 1e-9)
+          clamp_min(sum(rate(iam_audit_log_directwrite_requests_total{domain="iam", service="iam-audit-log"}[10m])), 1e-9)
           > 0.05
         for: 10m
         labels:
@@ -174,12 +189,12 @@ groups:
           description: >-
             {{ $value | humanizePercentage }} of direct-write entries fail with a
             server-side error. Producers retry with the same Idempotency-Key.
-          runbook_url: docs/runbook.md#rb-6
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-6--direct-write-producer-failing
 
   - name: audit_log_storage
     rules:
       - alert: IAMAuditLogDefaultPartitionRows
-        expr: max(iam_audit_log_default_partition_rows{service="audit-log"}) > 0
+        expr: max(iam_audit_log_default_partition_rows{domain="iam", service="iam-audit-log"}) > 0
         for: 5m
         labels:
           severity: critical
@@ -190,10 +205,10 @@ groups:
             {{ $value }} row(s) fell outside every explicit partition (bad producer clock
             or a very late replay). Dropped months are re-opened automatically by the
             next reconcile run (D-19); anything else needs RB-3.
-          runbook_url: docs/runbook.md#rb-3
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-3--rows-in-audit_events_default
 
       - alert: IAMAuditLogArchiveStalled
-        expr: max(iam_audit_log_archive_stalled_partitions{service="audit-log"}) > 0
+        expr: max(iam_audit_log_archive_stalled_partitions{domain="iam", service="iam-audit-log"}) > 0
         for: 30m
         labels:
           severity: critical
@@ -204,10 +219,10 @@ groups:
             {{ $value }} partition(s) are past archival eligibility plus
             OPS_ARCHIVE_STALL_GRACE and not dropped (AL-INV-9 held). The hot table
             grows until this clears.
-          runbook_url: docs/runbook.md#rb-2
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-2--archival-stalled
 
       - alert: IAMAuditLogArchiveLagWarning
-        expr: max(iam_audit_log_archive_lag_seconds{service="audit-log"}) > 86400
+        expr: max(iam_audit_log_archive_lag_seconds{domain="iam", service="iam-audit-log"}) > 86400
         for: 30m
         labels:
           severity: warning
@@ -217,10 +232,10 @@ groups:
           description: >-
             Archive lag is {{ $value | humanizeDuration }}. A nightly reconcile run
             should have archived and dropped it.
-          runbook_url: docs/runbook.md#rb-2
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-2--archival-stalled
 
       - alert: IAMAuditLogArchiveLagCritical
-        expr: max(iam_audit_log_archive_lag_seconds{service="audit-log"}) > 259200
+        expr: max(iam_audit_log_archive_lag_seconds{domain="iam", service="iam-audit-log"}) > 259200
         for: 30m
         labels:
           severity: critical
@@ -230,10 +245,10 @@ groups:
           description: >-
             Archive lag is {{ $value | humanizeDuration }}: several reconcile runs have
             not archived it.
-          runbook_url: docs/runbook.md#rb-2
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-2--archival-stalled
 
       - alert: IAMAuditLogRedactionPending
-        expr: max(iam_audit_log_redaction_pending_tasks{service="audit-log"}) > 0
+        expr: max(iam_audit_log_redaction_pending_tasks{domain="iam", service="iam-audit-log"}) > 0
         for: 15m
         labels:
           severity: critical
@@ -243,52 +258,56 @@ groups:
           description: >-
             {{ $value }} redaction task(s) pending past OPS_REDACTION_PENDING_AGE.
             Archival of affected partitions is refused (AL-INV-12) until they finish.
-          runbook_url: docs/runbook.md#rb-7
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-7--redaction-task-stuck-pending
 
   - name: audit_log_security
     rules:
       - alert: IAMAuditLogCrossTenantAccess
-        expr: sum(increase(iam_rls_violations_total{service="audit-log", violation_type="cross_tenant_access"}[5m])) > 0
+        expr: sum(increase(iam_rls_violations_total{domain="iam", service="iam-audit-log", violation_type="cross_tenant_access"}[5m])) > 0
         labels:
           severity: critical
           team: security
+          metric_status: proposed
         annotations:
           summary: Cross-tenant access attempt blocked by RLS
           description: >-
             RLS rejected a cross-tenant row (fail-closed, AL-INV-3). A possible attack
             or a GUC-binding bug. rls_violation_log is sampled (1%), so any count is
             significant.
-          runbook_url: docs/runbook.md#rb-5
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-5--suspected-tenant-isolation-issue
 
       - alert: IAMAuditLogMissingGUC
-        expr: sum(increase(iam_rls_violations_total{service="audit-log", violation_type="missing_or_invalid_guc"}[15m])) > 0
+        expr: sum(increase(iam_rls_violations_total{domain="iam", service="iam-audit-log", violation_type="missing_or_invalid_guc"}[15m])) > 0
         labels:
           severity: warning
           team: platform
+          metric_status: proposed
         annotations:
           summary: Queries ran without a valid app.tenant_id
           description: >-
             RLS returned zero rows for a query with a missing or malformed tenant GUC
             (fail-closed). A code path is not binding the tenant.
-          runbook_url: docs/runbook.md#rb-5
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-5--suspected-tenant-isolation-issue
 
   - name: audit_log_dependencies
     rules:
       - alert: IAMAuditLogDependencyErrors
-        expr: service:platform_dependency_request_error_ratio:10m{domain="iam", service="audit-log"} > 0.1
+        expr: service:platform_dependency_request_error_ratio:10m{domain="iam", service="iam-audit-log"} > 0.1
         for: 10m
         labels:
           severity: warning
           team: platform
+          metric_status: proposed
         annotations:
           summary: "Dependency {{ $labels.dependency }} failing more than 10% of calls"
           description: >-
             {{ $value | humanizePercentage }} of {{ $labels.dependency }} calls end in
-            error or timeout (catalog-admin → RB-8; s3 → RB-2 / archived reads 503).
-          runbook_url: docs/runbook.md#rb-8
+            outcome="error" — a fault or a timeout (catalog-admin → RB-8; s3 → RB-2 /
+            archived reads 503; sqs / codec are platform-events' own calls).
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-8--catalog-plans-poll-failing--stale
 
       - alert: IAMAuditLogCatalogPlansStaleWarning
-        expr: max(iam_audit_log_catalog_plans_stale_seconds{service="audit-log"}) > 1200
+        expr: max(iam_audit_log_catalog_plans_stale_seconds{domain="iam", service="iam-audit-log"}) > 1200
         for: 5m
         labels:
           severity: warning
@@ -298,10 +317,10 @@ groups:
           description: >-
             No successful CAT-I2 poll for {{ $value | humanizeDuration }}. The last good
             map is still served (stale-if-error, AL-D15).
-          runbook_url: docs/runbook.md#rb-8
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-8--catalog-plans-poll-failing--stale
 
       - alert: IAMAuditLogCatalogPlansStaleCritical
-        expr: max(iam_audit_log_catalog_plans_stale_seconds{service="audit-log"}) > 6000
+        expr: max(iam_audit_log_catalog_plans_stale_seconds{domain="iam", service="iam-audit-log"}) > 6000
         for: 5m
         labels:
           severity: critical
@@ -311,7 +330,7 @@ groups:
           description: >-
             No successful CAT-I2 poll for {{ $value | humanizeDuration }}. A plan-window
             change on Catalog is not propagating. Escalate to Catalog.
-          runbook_url: docs/runbook.md#rb-8
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-8--catalog-plans-poll-failing--stale
 
   - name: audit_log_reconciler
     rules:
@@ -326,7 +345,7 @@ groups:
             A reconcile run exited non-zero: partitions blocked (pending redaction) or
             stalled (unverified tier, persistent late writes), or the run itself
             failed. Job {{ $labels.job_name }}.
-          runbook_url: docs/runbook.md#rb-9
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-9--reconciler-cronjob-failed--service-down
 
       - alert: IAMAuditLogMaintenanceJobFailed
         expr: max by (job_name) (kube_job_status_failed{job_name=~"iam-audit-log-(redaction-retry|redaction-sweep|processed-events-prune)-[0-9]+"}) > 0
@@ -338,4 +357,4 @@ groups:
           description: >-
             redaction-retry, redaction-sweep or processed-events-prune exited non-zero.
             Check the Job's logs.
-          runbook_url: docs/runbook.md#rb-9
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-9--reconciler-cronjob-failed--service-down
