@@ -3,7 +3,7 @@
 The Audit Log Service is the **compliance system of record** for the Tender Management SaaS platform. It keeps one append-only, tenant-scoped store that answers *"who did what, to what, when, and from where"* for every IAM and domain service. It is a **pure sink**: it consumes every audit-bearing SNS topic through 11 SQS queues and accepts a small set of non-bus "direct audit writes" over the mesh. It publishes nothing and has no outbox (AL-INV-10). Tenant admins read their trail through a plan-window-clamped query and export API. Compliance callers read it through a mesh-only provenance endpoint.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`
-**Module:** Go 1.26.6 · private module · deployed as two binaries from one image (`cmd/server`, `cmd/reconciler`)
+**Module:** Go 1.26.9 · private module · deployed as two binaries from one image (`cmd/server`, `cmd/reconciler`)
 **Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.28** (as-built through Phase 8, the platform-library / observability-standard alignment, and the production-readiness hardening). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-23) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
 
 **Status:** shared libraries at their latest releases (platform-gincommon v1.6.0, platform-events/v2 v2.0.0, platform-pgcommon/v2 v2.0.0); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
@@ -330,7 +330,7 @@ The alerting gauges do not come from these jobs. They are archive stall and lag,
 
 ### Prerequisites
 
-- Go 1.26.6+
+- Go 1.26.9+
 - Docker (Postgres 15 plus floci, via `make docker-up`)
 - `GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*` (and `GONOSUMDB`) with access to the private `platform-*` modules
 - The `aws` CLI is optional. The examples below run it inside the floci container instead.
@@ -710,7 +710,7 @@ The Helm `PrometheusRule` (30 alerts) is **generated** from the three rule files
 
 The `Dockerfile` has two stages:
 
-- **Builder:** `golang:1.26.6-bookworm`, pinned by SHA digest. The private-module token is passed as a BuildKit secret and never lands in a layer.
+- **Builder:** `golang:1.26.9-bookworm`, pinned by SHA digest. The private-module token is passed as a BuildKit secret and never lands in a layer.
 - **Runtime:** `gcr.io/distroless/static-debian12:nonroot`, also digest-pinned, with no shell and running as non-root. Only the two binaries are copied in.
 
 The image has `EXPOSE 8080 9090`.
