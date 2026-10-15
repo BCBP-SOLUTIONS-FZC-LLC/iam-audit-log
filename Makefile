@@ -136,6 +136,8 @@ help:
 	@echo "  make prometheusrule   - regenerate the Helm PrometheusRule from deploy/monitoring/"
 	@echo "  make swag             - regenerate docs/swagger/ from handler annotations"
 	@echo "  make swag-check       - fail if Swagger regeneration would change docs/swagger/ (CI drift gate)"
+	@echo "  make extract-schemas  - derive internal/eventschema/*.json from api/asyncapi.yaml (schema-gov)"
+	@echo "  make schema-validate  - extract --check + schema-gov validate (what CI runs)"
 	@echo "  make docs-serve       - run the server and print the doc URLs"
 	@echo "  make install-hooks    - install .githooks/pre-commit into .git/hooks"
 	@echo "  make godoc            - serve local godoc/pkgsite at http://localhost:8080"
@@ -417,12 +419,22 @@ prometheusrule:
 # -----------------------------
 # SCHEMA GOVERNANCE
 # -----------------------------
-# Intentionally absent (unlike iam-org-membership's platform-schemagov
-# targets): this service PUBLISHES NOTHING (AL-INV-10) — it owns no produced
-# event schemas to extract, validate, register, verify or prune. The schemas
-# it consumes are registered by their producers; the Glue decode goes through
-# platform-events. api/asyncapi.yaml is receive-only, gated by
-# check-asyncapi-receive-only.sh in `make invariant-lint`.
+# Mirrors iam-org-membership's extract-schemas / schema-validate (D-24), using
+# the pip-installed CLI (CI installs platform-schemagov v0.4.0 from source; the
+# GHCR image is not pullable from this repo). This service publishes nothing
+# (AL-INV-10): internal/eventschema/*.json are open, per-message schemas derived
+# from api/asyncapi.yaml so `schema-gov validate` (schema-registry.yml) and
+# `extract --check` (validate-test.yml) pass. Nothing is registered in Glue.
+SCHEMA_GOV ?= schema-gov
+
+.PHONY: extract-schemas
+extract-schemas:
+	$(SCHEMA_GOV) extract --asyncapi api/asyncapi.yaml --schema-dir internal/eventschema
+
+.PHONY: schema-validate
+schema-validate:
+	$(SCHEMA_GOV) extract --asyncapi api/asyncapi.yaml --schema-dir internal/eventschema --check
+	$(SCHEMA_GOV) validate --asyncapi api/asyncapi.yaml --schema-dir internal/eventschema
 
 # -----------------------------
 # CLEAN

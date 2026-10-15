@@ -4,6 +4,13 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — Schema Registry `schema-gov validate` (2026-10-15)
+- **`schema-registry.yml` failed with 70 errors** (Pass 1: no schema files; Pass 7: 69 messages without a JSON file), because every AsyncAPI message shared `ProducerPayload`. Aligned with iam-org-membership (D-24):
+  - Each message has its own open `<Name>Payload` and `x-lifecycle: {status: active}`.
+  - `internal/eventschema/*.json` (69) are derived by the new `make extract-schemas`, and `make schema-validate` mirrors CI.
+  - Message keys lost their underscore (`authAudit_LoginSuccess` → `authAuditLoginSuccess`; `MFA`/`SLA` → `Mfa`/`Sla`), so that schema-gov's `extract` and `validate` agree on file names.
+  - No payload contract or Glue registration is added (AL-INV-10).
+
 ### Added — Commercial domain support: CD-17 source constants + CD-21 entitlement queue (2026-10-15)
 - **CD-17: `CommercialSource*` constants** in new `internal/core/domain/commercial_sources.go` — canonical envelope source names for `commercial-billing`, `commercial-entitlements` and `commercial-usage-metering` (Commercial HLD §9.3). Tests `TestBuildBusEntry_CommercialSources_CD17` and `TestIngestBus_CommercialSources_CD17` verify each agreed name is stored verbatim as `source_service` and triggers correct entry-type classification.
 - **CD-21: 12th inbound queue `entitlement-audit-q`** for `entitlement.events` (Commercial Entitlements service):

@@ -103,18 +103,18 @@ channels:
           name: auth-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      authAudit_LoginSuccess:
-        $ref: '#/components/messages/authAudit_LoginSuccess'
-      authAudit_LoginFailure:
-        $ref: '#/components/messages/authAudit_LoginFailure'
-      authAudit_PasswordReset:
-        $ref: '#/components/messages/authAudit_PasswordReset'
-      authAudit_MFAEnrolled:
-        $ref: '#/components/messages/authAudit_MFAEnrolled'
-      authAudit_MFAReset:
-        $ref: '#/components/messages/authAudit_MFAReset'
-      authAudit_EmailVerified:
-        $ref: '#/components/messages/authAudit_EmailVerified'
+      authAuditLoginSuccess:
+        $ref: '#/components/messages/authAuditLoginSuccess'
+      authAuditLoginFailure:
+        $ref: '#/components/messages/authAuditLoginFailure'
+      authAuditPasswordReset:
+        $ref: '#/components/messages/authAuditPasswordReset'
+      authAuditMfaEnrolled:
+        $ref: '#/components/messages/authAuditMfaEnrolled'
+      authAuditMfaReset:
+        $ref: '#/components/messages/authAuditMfaReset'
+      authAuditEmailVerified:
+        $ref: '#/components/messages/authAuditEmailVerified'
   userAudit:
     address: user-audit-q
     title: iam.user.events → user-audit-q
@@ -130,16 +130,16 @@ channels:
           name: user-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      userAudit_UserProvisioned:
-        $ref: '#/components/messages/userAudit_UserProvisioned'
-      userAudit_UserUpdated:
-        $ref: '#/components/messages/userAudit_UserUpdated'
-      userAudit_UserStatusChanged:
-        $ref: '#/components/messages/userAudit_UserStatusChanged'
-      userAudit_UserAvailabilityChanged:
-        $ref: '#/components/messages/userAudit_UserAvailabilityChanged'
-      userAudit_UserDeleted:
-        $ref: '#/components/messages/userAudit_UserDeleted'
+      userAuditUserProvisioned:
+        $ref: '#/components/messages/userAuditUserProvisioned'
+      userAuditUserUpdated:
+        $ref: '#/components/messages/userAuditUserUpdated'
+      userAuditUserStatusChanged:
+        $ref: '#/components/messages/userAuditUserStatusChanged'
+      userAuditUserAvailabilityChanged:
+        $ref: '#/components/messages/userAuditUserAvailabilityChanged'
+      userAuditUserDeleted:
+        $ref: '#/components/messages/userAuditUserDeleted'
   membershipAudit:
     address: membership-audit-q
     title: iam-membership-events → membership-audit-q
@@ -155,30 +155,30 @@ channels:
           name: membership-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      membershipAudit_DepartmentMembershipGranted:
-        $ref: '#/components/messages/membershipAudit_DepartmentMembershipGranted'
-      membershipAudit_DepartmentMembershipRevoked:
-        $ref: '#/components/messages/membershipAudit_DepartmentMembershipRevoked'
-      membershipAudit_DepartmentMembershipLevelChanged:
-        $ref: '#/components/messages/membershipAudit_DepartmentMembershipLevelChanged'
-      membershipAudit_TenantRoleGranted:
-        $ref: '#/components/messages/membershipAudit_TenantRoleGranted'
-      membershipAudit_TenantRoleRevoked:
-        $ref: '#/components/messages/membershipAudit_TenantRoleRevoked'
-      membershipAudit_MembershipRevoked:
-        $ref: '#/components/messages/membershipAudit_MembershipRevoked'
-      membershipAudit_TenantMembershipsPurged:
-        $ref: '#/components/messages/membershipAudit_TenantMembershipsPurged'
-      membershipAudit_TenderAssigneeOverridden:
-        $ref: '#/components/messages/membershipAudit_TenderAssigneeOverridden'
-      membershipAudit_MFAReset:
-        $ref: '#/components/messages/membershipAudit_MFAReset'
-      membershipAudit_TenantStateChanged:
-        $ref: '#/components/messages/membershipAudit_TenantStateChanged'
-      membershipAudit_TenantSeatOverageStarted:
-        $ref: '#/components/messages/membershipAudit_TenantSeatOverageStarted'
-      membershipAudit_TenantSeatOverageResolved:
-        $ref: '#/components/messages/membershipAudit_TenantSeatOverageResolved'
+      membershipAuditDepartmentMembershipGranted:
+        $ref: '#/components/messages/membershipAuditDepartmentMembershipGranted'
+      membershipAuditDepartmentMembershipRevoked:
+        $ref: '#/components/messages/membershipAuditDepartmentMembershipRevoked'
+      membershipAuditDepartmentMembershipLevelChanged:
+        $ref: '#/components/messages/membershipAuditDepartmentMembershipLevelChanged'
+      membershipAuditTenantRoleGranted:
+        $ref: '#/components/messages/membershipAuditTenantRoleGranted'
+      membershipAuditTenantRoleRevoked:
+        $ref: '#/components/messages/membershipAuditTenantRoleRevoked'
+      membershipAuditMembershipRevoked:
+        $ref: '#/components/messages/membershipAuditMembershipRevoked'
+      membershipAuditTenantMembershipsPurged:
+        $ref: '#/components/messages/membershipAuditTenantMembershipsPurged'
+      membershipAuditTenderAssigneeOverridden:
+        $ref: '#/components/messages/membershipAuditTenderAssigneeOverridden'
+      membershipAuditMfaReset:
+        $ref: '#/components/messages/membershipAuditMfaReset'
+      membershipAuditTenantStateChanged:
+        $ref: '#/components/messages/membershipAuditTenantStateChanged'
+      membershipAuditTenantSeatOverageStarted:
+        $ref: '#/components/messages/membershipAuditTenantSeatOverageStarted'
+      membershipAuditTenantSeatOverageResolved:
+        $ref: '#/components/messages/membershipAuditTenantSeatOverageResolved'
   tenantAudit:
     address: tenant-audit-q
     title: iam-tenant-events → tenant-audit-q
@@ -195,28 +195,28 @@ channels:
           name: tenant-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      tenantAudit_TenantCreated:
-        $ref: '#/components/messages/tenantAudit_TenantCreated'
-      tenantAudit_TrialStarted:
-        $ref: '#/components/messages/tenantAudit_TrialStarted'
-      tenantAudit_TrialTenantProvisioned:
-        $ref: '#/components/messages/tenantAudit_TrialTenantProvisioned'
-      tenantAudit_TenantRealmReady:
-        $ref: '#/components/messages/tenantAudit_TenantRealmReady'
-      tenantAudit_TenantConverted:
-        $ref: '#/components/messages/tenantAudit_TenantConverted'
-      tenantAudit_DirectPaidSignup:
-        $ref: '#/components/messages/tenantAudit_DirectPaidSignup'
-      tenantAudit_TrialExpired:
-        $ref: '#/components/messages/tenantAudit_TrialExpired'
-      tenantAudit_TrialReactivated:
-        $ref: '#/components/messages/tenantAudit_TrialReactivated'
-      tenantAudit_TenantSuspended:
-        $ref: '#/components/messages/tenantAudit_TenantSuspended'
-      tenantAudit_TenantOffboarded:
-        $ref: '#/components/messages/tenantAudit_TenantOffboarded'
-      tenantAudit_TenantReactivated:
-        $ref: '#/components/messages/tenantAudit_TenantReactivated'
+      tenantAuditTenantCreated:
+        $ref: '#/components/messages/tenantAuditTenantCreated'
+      tenantAuditTrialStarted:
+        $ref: '#/components/messages/tenantAuditTrialStarted'
+      tenantAuditTrialTenantProvisioned:
+        $ref: '#/components/messages/tenantAuditTrialTenantProvisioned'
+      tenantAuditTenantRealmReady:
+        $ref: '#/components/messages/tenantAuditTenantRealmReady'
+      tenantAuditTenantConverted:
+        $ref: '#/components/messages/tenantAuditTenantConverted'
+      tenantAuditDirectPaidSignup:
+        $ref: '#/components/messages/tenantAuditDirectPaidSignup'
+      tenantAuditTrialExpired:
+        $ref: '#/components/messages/tenantAuditTrialExpired'
+      tenantAuditTrialReactivated:
+        $ref: '#/components/messages/tenantAuditTrialReactivated'
+      tenantAuditTenantSuspended:
+        $ref: '#/components/messages/tenantAuditTenantSuspended'
+      tenantAuditTenantOffboarded:
+        $ref: '#/components/messages/tenantAuditTenantOffboarded'
+      tenantAuditTenantReactivated:
+        $ref: '#/components/messages/tenantAuditTenantReactivated'
   delegationAudit:
     address: delegation-audit-q
     title: iam.delegation.events → delegation-audit-q
@@ -232,14 +232,14 @@ channels:
           name: delegation-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      delegationAudit_DelegationStarted:
-        $ref: '#/components/messages/delegationAudit_DelegationStarted'
-      delegationAudit_DelegationEnded:
-        $ref: '#/components/messages/delegationAudit_DelegationEnded'
-      delegationAudit_DelegationReviewRequested:
-        $ref: '#/components/messages/delegationAudit_DelegationReviewRequested'
-      delegationAudit_DelegationEscalationRequested:
-        $ref: '#/components/messages/delegationAudit_DelegationEscalationRequested'
+      delegationAuditDelegationStarted:
+        $ref: '#/components/messages/delegationAuditDelegationStarted'
+      delegationAuditDelegationEnded:
+        $ref: '#/components/messages/delegationAuditDelegationEnded'
+      delegationAuditDelegationReviewRequested:
+        $ref: '#/components/messages/delegationAuditDelegationReviewRequested'
+      delegationAuditDelegationEscalationRequested:
+        $ref: '#/components/messages/delegationAuditDelegationEscalationRequested'
   serviceaccountAudit:
     address: serviceaccount-audit-q
     title: iam-serviceaccount-events → serviceaccount-audit-q
@@ -255,16 +255,16 @@ channels:
           name: serviceaccount-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      serviceaccountAudit_ServiceAccountRegistered:
-        $ref: '#/components/messages/serviceaccountAudit_ServiceAccountRegistered'
-      serviceaccountAudit_ServiceAccountCredentialIssued:
-        $ref: '#/components/messages/serviceaccountAudit_ServiceAccountCredentialIssued'
-      serviceaccountAudit_ServiceAccountCredentialRotated:
-        $ref: '#/components/messages/serviceaccountAudit_ServiceAccountCredentialRotated'
-      serviceaccountAudit_ServiceAccountCredentialRevoked:
-        $ref: '#/components/messages/serviceaccountAudit_ServiceAccountCredentialRevoked'
-      serviceaccountAudit_ServiceAccountRevoked:
-        $ref: '#/components/messages/serviceaccountAudit_ServiceAccountRevoked'
+      serviceaccountAuditServiceAccountRegistered:
+        $ref: '#/components/messages/serviceaccountAuditServiceAccountRegistered'
+      serviceaccountAuditServiceAccountCredentialIssued:
+        $ref: '#/components/messages/serviceaccountAuditServiceAccountCredentialIssued'
+      serviceaccountAuditServiceAccountCredentialRotated:
+        $ref: '#/components/messages/serviceaccountAuditServiceAccountCredentialRotated'
+      serviceaccountAuditServiceAccountCredentialRevoked:
+        $ref: '#/components/messages/serviceaccountAuditServiceAccountCredentialRevoked'
+      serviceaccountAuditServiceAccountRevoked:
+        $ref: '#/components/messages/serviceaccountAuditServiceAccountRevoked'
   tenderAudit:
     address: tender-audit-q
     title: tender.events → tender-audit-q
@@ -280,12 +280,12 @@ channels:
           name: tender-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      tenderAudit_TenderSectionApproved:
-        $ref: '#/components/messages/tenderAudit_TenderSectionApproved'
-      tenderAudit_TenderAccessGranted:
-        $ref: '#/components/messages/tenderAudit_TenderAccessGranted'
-      tenderAudit_TenderRestricted:
-        $ref: '#/components/messages/tenderAudit_TenderRestricted'
+      tenderAuditTenderSectionApproved:
+        $ref: '#/components/messages/tenderAuditTenderSectionApproved'
+      tenderAuditTenderAccessGranted:
+        $ref: '#/components/messages/tenderAuditTenderAccessGranted'
+      tenderAuditTenderRestricted:
+        $ref: '#/components/messages/tenderAuditTenderRestricted'
   billingAudit:
     address: billing-audit-q
     title: billing.events → billing-audit-q
@@ -301,16 +301,16 @@ channels:
           name: billing-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      billingAudit_TenantPlanChanged:
-        $ref: '#/components/messages/billingAudit_TenantPlanChanged'
-      billingAudit_TenantPaymentPastDue:
-        $ref: '#/components/messages/billingAudit_TenantPaymentPastDue'
-      billingAudit_TenantSubscriptionCancelled:
-        $ref: '#/components/messages/billingAudit_TenantSubscriptionCancelled'
-      billingAudit_TenantReactivated:
-        $ref: '#/components/messages/billingAudit_TenantReactivated'
-      billingAudit_TenantSeatsChanged:
-        $ref: '#/components/messages/billingAudit_TenantSeatsChanged'
+      billingAuditTenantPlanChanged:
+        $ref: '#/components/messages/billingAuditTenantPlanChanged'
+      billingAuditTenantPaymentPastDue:
+        $ref: '#/components/messages/billingAuditTenantPaymentPastDue'
+      billingAuditTenantSubscriptionCancelled:
+        $ref: '#/components/messages/billingAuditTenantSubscriptionCancelled'
+      billingAuditTenantReactivated:
+        $ref: '#/components/messages/billingAuditTenantReactivated'
+      billingAuditTenantSeatsChanged:
+        $ref: '#/components/messages/billingAuditTenantSeatsChanged'
   usageAudit:
     address: usage-audit-q
     title: usage.events → usage-audit-q
@@ -326,12 +326,12 @@ channels:
           name: usage-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      usageAudit_TenantQuotaWarning:
-        $ref: '#/components/messages/usageAudit_TenantQuotaWarning'
-      usageAudit_TenantQuotaExceeded:
-        $ref: '#/components/messages/usageAudit_TenantQuotaExceeded'
-      usageAudit_TenantQuotaRestored:
-        $ref: '#/components/messages/usageAudit_TenantQuotaRestored'
+      usageAuditTenantQuotaWarning:
+        $ref: '#/components/messages/usageAuditTenantQuotaWarning'
+      usageAuditTenantQuotaExceeded:
+        $ref: '#/components/messages/usageAuditTenantQuotaExceeded'
+      usageAuditTenantQuotaRestored:
+        $ref: '#/components/messages/usageAuditTenantQuotaRestored'
   entitlementAudit:
     address: entitlement-audit-q
     title: entitlement.events → entitlement-audit-q
@@ -347,8 +347,8 @@ channels:
           name: entitlement-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      entitlementAudit_TenantEntitlementsChanged:
-        $ref: '#/components/messages/entitlementAudit_TenantEntitlementsChanged'
+      entitlementAuditTenantEntitlementsChanged:
+        $ref: '#/components/messages/entitlementAuditTenantEntitlementsChanged'
   wfWorkflowAudit:
     address: wf-workflow-audit-q
     title: wf.workflow.events → wf-workflow-audit-q
@@ -364,30 +364,30 @@ channels:
           name: wf-workflow-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      wfWorkflowAudit_TaskCreated:
-        $ref: '#/components/messages/wfWorkflowAudit_TaskCreated'
-      wfWorkflowAudit_TaskSLAWarning:
-        $ref: '#/components/messages/wfWorkflowAudit_TaskSLAWarning'
-      wfWorkflowAudit_TaskSLABreached:
-        $ref: '#/components/messages/wfWorkflowAudit_TaskSLABreached'
-      wfWorkflowAudit_TaskDeferred:
-        $ref: '#/components/messages/wfWorkflowAudit_TaskDeferred'
-      wfWorkflowAudit_TaskReassigned:
-        $ref: '#/components/messages/wfWorkflowAudit_TaskReassigned'
-      wfWorkflowAudit_WorkflowFinished:
-        $ref: '#/components/messages/wfWorkflowAudit_WorkflowFinished'
-      wfWorkflowAudit_workflow_task_created:
-        $ref: '#/components/messages/wfWorkflowAudit_workflow_task_created'
-      wfWorkflowAudit_workflow_task_sla_warning:
-        $ref: '#/components/messages/wfWorkflowAudit_workflow_task_sla_warning'
-      wfWorkflowAudit_workflow_task_sla_breached:
-        $ref: '#/components/messages/wfWorkflowAudit_workflow_task_sla_breached'
-      wfWorkflowAudit_workflow_task_deferred:
-        $ref: '#/components/messages/wfWorkflowAudit_workflow_task_deferred'
-      wfWorkflowAudit_workflow_task_reassigned:
-        $ref: '#/components/messages/wfWorkflowAudit_workflow_task_reassigned'
-      wfWorkflowAudit_workflow_instance_finished:
-        $ref: '#/components/messages/wfWorkflowAudit_workflow_instance_finished'
+      wfWorkflowAuditTaskCreated:
+        $ref: '#/components/messages/wfWorkflowAuditTaskCreated'
+      wfWorkflowAuditTaskSlaWarning:
+        $ref: '#/components/messages/wfWorkflowAuditTaskSlaWarning'
+      wfWorkflowAuditTaskSlaBreached:
+        $ref: '#/components/messages/wfWorkflowAuditTaskSlaBreached'
+      wfWorkflowAuditTaskDeferred:
+        $ref: '#/components/messages/wfWorkflowAuditTaskDeferred'
+      wfWorkflowAuditTaskReassigned:
+        $ref: '#/components/messages/wfWorkflowAuditTaskReassigned'
+      wfWorkflowAuditWorkflowFinished:
+        $ref: '#/components/messages/wfWorkflowAuditWorkflowFinished'
+      wfWorkflowAuditWorkflowTaskCreated:
+        $ref: '#/components/messages/wfWorkflowAuditWorkflowTaskCreated'
+      wfWorkflowAuditWorkflowTaskSlaWarning:
+        $ref: '#/components/messages/wfWorkflowAuditWorkflowTaskSlaWarning'
+      wfWorkflowAuditWorkflowTaskSlaBreached:
+        $ref: '#/components/messages/wfWorkflowAuditWorkflowTaskSlaBreached'
+      wfWorkflowAuditWorkflowTaskDeferred:
+        $ref: '#/components/messages/wfWorkflowAuditWorkflowTaskDeferred'
+      wfWorkflowAuditWorkflowTaskReassigned:
+        $ref: '#/components/messages/wfWorkflowAuditWorkflowTaskReassigned'
+      wfWorkflowAuditWorkflowInstanceFinished:
+        $ref: '#/components/messages/wfWorkflowAuditWorkflowInstanceFinished'
   wfTemplateAudit:
     address: wf-template-audit-q
     title: wf.template.events → wf-template-audit-q
@@ -403,10 +403,10 @@ channels:
           name: wf-template-audit-q-dlq
           maxReceiveCount: 5
     messages:
-      wfTemplateAudit_TemplatePublished:
-        $ref: '#/components/messages/wfTemplateAudit_TemplatePublished'
-      wfTemplateAudit_workflow_template_published:
-        $ref: '#/components/messages/wfTemplateAudit_workflow_template_published'
+      wfTemplateAuditTemplatePublished:
+        $ref: '#/components/messages/wfTemplateAuditTemplatePublished'
+      wfTemplateAuditWorkflowTemplatePublished:
+        $ref: '#/components/messages/wfTemplateAuditWorkflowTemplatePublished'
 operations:
   receiveAuthAudit:
     action: receive
@@ -414,147 +414,149 @@ operations:
       $ref: '#/channels/authAudit'
     summary: Persist every iam.auth.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/authAudit/messages/authAudit_LoginSuccess'
-    - $ref: '#/channels/authAudit/messages/authAudit_LoginFailure'
-    - $ref: '#/channels/authAudit/messages/authAudit_PasswordReset'
-    - $ref: '#/channels/authAudit/messages/authAudit_MFAEnrolled'
-    - $ref: '#/channels/authAudit/messages/authAudit_MFAReset'
-    - $ref: '#/channels/authAudit/messages/authAudit_EmailVerified'
+    - $ref: '#/channels/authAudit/messages/authAuditLoginSuccess'
+    - $ref: '#/channels/authAudit/messages/authAuditLoginFailure'
+    - $ref: '#/channels/authAudit/messages/authAuditPasswordReset'
+    - $ref: '#/channels/authAudit/messages/authAuditMfaEnrolled'
+    - $ref: '#/channels/authAudit/messages/authAuditMfaReset'
+    - $ref: '#/channels/authAudit/messages/authAuditEmailVerified'
   receiveUserAudit:
     action: receive
     channel:
       $ref: '#/channels/userAudit'
     summary: Persist every iam.user.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/userAudit/messages/userAudit_UserProvisioned'
-    - $ref: '#/channels/userAudit/messages/userAudit_UserUpdated'
-    - $ref: '#/channels/userAudit/messages/userAudit_UserAvailabilityChanged'
-    - $ref: '#/channels/userAudit/messages/userAudit_UserDeleted'
+    - $ref: '#/channels/userAudit/messages/userAuditUserProvisioned'
+    - $ref: '#/channels/userAudit/messages/userAuditUserUpdated'
+    - $ref: '#/channels/userAudit/messages/userAuditUserAvailabilityChanged'
+    - $ref: '#/channels/userAudit/messages/userAuditUserDeleted'
   receiveMembershipAudit:
     action: receive
     channel:
       $ref: '#/channels/membershipAudit'
     summary: Persist every iam.membership.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_DepartmentMembershipGranted'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_DepartmentMembershipRevoked'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_DepartmentMembershipLevelChanged'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_TenantRoleGranted'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_TenantRoleRevoked'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_MembershipRevoked'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_TenantMembershipsPurged'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_TenderAssigneeOverridden'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_MFAReset'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_TenantStateChanged'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_TenantSeatOverageStarted'
-    - $ref: '#/channels/membershipAudit/messages/membershipAudit_TenantSeatOverageResolved'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditDepartmentMembershipGranted'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditDepartmentMembershipRevoked'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditDepartmentMembershipLevelChanged'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditTenantRoleGranted'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditTenantRoleRevoked'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditMembershipRevoked'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditTenantMembershipsPurged'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditTenderAssigneeOverridden'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditMfaReset'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditTenantStateChanged'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditTenantSeatOverageStarted'
+    - $ref: '#/channels/membershipAudit/messages/membershipAuditTenantSeatOverageResolved'
   receiveTenantAudit:
     action: receive
     channel:
       $ref: '#/channels/tenantAudit'
     summary: Persist every iam.tenant.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TenantCreated'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TrialStarted'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TrialTenantProvisioned'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TenantRealmReady'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TenantConverted'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_DirectPaidSignup'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TrialExpired'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TrialReactivated'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TenantSuspended'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TenantOffboarded'
-    - $ref: '#/channels/tenantAudit/messages/tenantAudit_TenantReactivated'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantCreated'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTrialStarted'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTrialTenantProvisioned'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantRealmReady'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantConverted'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditDirectPaidSignup'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTrialExpired'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTrialReactivated'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantSuspended'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantOffboarded'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantReactivated'
   receiveDelegationAudit:
     action: receive
     channel:
       $ref: '#/channels/delegationAudit'
     summary: Persist every iam.delegation.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/delegationAudit/messages/delegationAudit_DelegationStarted'
-    - $ref: '#/channels/delegationAudit/messages/delegationAudit_DelegationEnded'
-    - $ref: '#/channels/delegationAudit/messages/delegationAudit_DelegationReviewRequested'
-    - $ref: '#/channels/delegationAudit/messages/delegationAudit_DelegationEscalationRequested'
+    - $ref: '#/channels/delegationAudit/messages/delegationAuditDelegationStarted'
+    - $ref: '#/channels/delegationAudit/messages/delegationAuditDelegationEnded'
+    - $ref: '#/channels/delegationAudit/messages/delegationAuditDelegationReviewRequested'
+    - $ref: '#/channels/delegationAudit/messages/delegationAuditDelegationEscalationRequested'
   receiveServiceaccountAudit:
     action: receive
     channel:
       $ref: '#/channels/serviceaccountAudit'
     summary: Persist every iam.serviceaccount.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAudit_ServiceAccountRegistered'
-    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAudit_ServiceAccountCredentialIssued'
-    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAudit_ServiceAccountCredentialRotated'
-    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAudit_ServiceAccountCredentialRevoked'
-    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAudit_ServiceAccountRevoked'
+    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAuditServiceAccountRegistered'
+    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAuditServiceAccountCredentialIssued'
+    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAuditServiceAccountCredentialRotated'
+    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAuditServiceAccountCredentialRevoked'
+    - $ref: '#/channels/serviceaccountAudit/messages/serviceaccountAuditServiceAccountRevoked'
   receiveTenderAudit:
     action: receive
     channel:
       $ref: '#/channels/tenderAudit'
     summary: Persist every tender.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/tenderAudit/messages/tenderAudit_TenderSectionApproved'
-    - $ref: '#/channels/tenderAudit/messages/tenderAudit_TenderAccessGranted'
-    - $ref: '#/channels/tenderAudit/messages/tenderAudit_TenderRestricted'
+    - $ref: '#/channels/tenderAudit/messages/tenderAuditTenderSectionApproved'
+    - $ref: '#/channels/tenderAudit/messages/tenderAuditTenderAccessGranted'
+    - $ref: '#/channels/tenderAudit/messages/tenderAuditTenderRestricted'
   receiveBillingAudit:
     action: receive
     channel:
       $ref: '#/channels/billingAudit'
     summary: Persist every billing.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/billingAudit/messages/billingAudit_TenantPlanChanged'
-    - $ref: '#/channels/billingAudit/messages/billingAudit_TenantPaymentPastDue'
-    - $ref: '#/channels/billingAudit/messages/billingAudit_TenantSubscriptionCancelled'
-    - $ref: '#/channels/billingAudit/messages/billingAudit_TenantReactivated'
-    - $ref: '#/channels/billingAudit/messages/billingAudit_TenantSeatsChanged'
+    - $ref: '#/channels/billingAudit/messages/billingAuditTenantPlanChanged'
+    - $ref: '#/channels/billingAudit/messages/billingAuditTenantPaymentPastDue'
+    - $ref: '#/channels/billingAudit/messages/billingAuditTenantSubscriptionCancelled'
+    - $ref: '#/channels/billingAudit/messages/billingAuditTenantReactivated'
+    - $ref: '#/channels/billingAudit/messages/billingAuditTenantSeatsChanged'
   receiveUsageAudit:
     action: receive
     channel:
       $ref: '#/channels/usageAudit'
     summary: Persist every usage.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/usageAudit/messages/usageAudit_TenantQuotaWarning'
-    - $ref: '#/channels/usageAudit/messages/usageAudit_TenantQuotaExceeded'
-    - $ref: '#/channels/usageAudit/messages/usageAudit_TenantQuotaRestored'
+    - $ref: '#/channels/usageAudit/messages/usageAuditTenantQuotaWarning'
+    - $ref: '#/channels/usageAudit/messages/usageAuditTenantQuotaExceeded'
+    - $ref: '#/channels/usageAudit/messages/usageAuditTenantQuotaRestored'
   receiveEntitlementAudit:
     action: receive
     channel:
       $ref: '#/channels/entitlementAudit'
     summary: Persist every entitlement.events event as one immutable audit_events row (CD-21).
     messages:
-    - $ref: '#/channels/entitlementAudit/messages/entitlementAudit_TenantEntitlementsChanged'
+    - $ref: '#/channels/entitlementAudit/messages/entitlementAuditTenantEntitlementsChanged'
   receiveWfWorkflowAudit:
     action: receive
     channel:
       $ref: '#/channels/wfWorkflowAudit'
     summary: Persist every wf.workflow.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_TaskCreated'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_TaskSLAWarning'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_TaskSLABreached'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_TaskDeferred'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_TaskReassigned'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_WorkflowFinished'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_workflow_task_created'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_workflow_task_sla_warning'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_workflow_task_sla_breached'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_workflow_task_deferred'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_workflow_task_reassigned'
-    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAudit_workflow_instance_finished'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditTaskCreated'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditTaskSlaWarning'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditTaskSlaBreached'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditTaskDeferred'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditTaskReassigned'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditWorkflowFinished'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditWorkflowTaskCreated'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditWorkflowTaskSlaWarning'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditWorkflowTaskSlaBreached'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditWorkflowTaskDeferred'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditWorkflowTaskReassigned'
+    - $ref: '#/channels/wfWorkflowAudit/messages/wfWorkflowAuditWorkflowInstanceFinished'
   receiveWfTemplateAudit:
     action: receive
     channel:
       $ref: '#/channels/wfTemplateAudit'
     summary: Persist every wf.template.events event as one immutable audit_events row.
     messages:
-    - $ref: '#/channels/wfTemplateAudit/messages/wfTemplateAudit_TemplatePublished'
-    - $ref: '#/channels/wfTemplateAudit/messages/wfTemplateAudit_workflow_template_published'
+    - $ref: '#/channels/wfTemplateAudit/messages/wfTemplateAuditTemplatePublished'
+    - $ref: '#/channels/wfTemplateAudit/messages/wfTemplateAuditWorkflowTemplatePublished'
 components:
   tags:
     consumed:
       name: consumed
       description: Messages this service receives.
   messages:
-    authAudit_LoginSuccess:
+    authAuditLoginSuccess:
+      x-lifecycle:
+        status: active
       name: LoginSuccess
       title: LoginSuccess
       summary: LoginSuccess on iam.auth.events → entry_type auth.login.success (access_90d).
@@ -562,11 +564,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/AuthAuditLoginSuccessPayload'
       x-audit-topic: iam.auth.events
       x-audit-entry-type: auth.login.success
       x-audit-retention-tier: access_90d
-    authAudit_LoginFailure:
+    authAuditLoginFailure:
+      x-lifecycle:
+        status: active
       name: LoginFailure
       title: LoginFailure
       summary: LoginFailure on iam.auth.events → entry_type auth.login.failure (compliance_7y).
@@ -574,11 +578,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/AuthAuditLoginFailurePayload'
       x-audit-topic: iam.auth.events
       x-audit-entry-type: auth.login.failure
       x-audit-retention-tier: compliance_7y
-    authAudit_PasswordReset:
+    authAuditPasswordReset:
+      x-lifecycle:
+        status: active
       name: PasswordReset
       title: PasswordReset
       summary: PasswordReset on iam.auth.events → entry_type auth.password.reset (compliance_7y).
@@ -586,11 +592,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/AuthAuditPasswordResetPayload'
       x-audit-topic: iam.auth.events
       x-audit-entry-type: auth.password.reset
       x-audit-retention-tier: compliance_7y
-    authAudit_MFAEnrolled:
+    authAuditMfaEnrolled:
+      x-lifecycle:
+        status: active
       name: MFAEnrolled
       title: MFAEnrolled
       summary: MFAEnrolled on iam.auth.events → entry_type auth.mfa.enrolled (compliance_7y).
@@ -598,11 +606,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/AuthAuditMfaEnrolledPayload'
       x-audit-topic: iam.auth.events
       x-audit-entry-type: auth.mfa.enrolled
       x-audit-retention-tier: compliance_7y
-    authAudit_MFAReset:
+    authAuditMfaReset:
+      x-lifecycle:
+        status: active
       name: MFAReset
       title: MFAReset
       summary: MFAReset on iam.auth.events → entry_type auth.mfa.reset (compliance_7y).
@@ -610,11 +620,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/AuthAuditMfaResetPayload'
       x-audit-topic: iam.auth.events
       x-audit-entry-type: auth.mfa.reset
       x-audit-retention-tier: compliance_7y
-    authAudit_EmailVerified:
+    authAuditEmailVerified:
+      x-lifecycle:
+        status: active
       name: EmailVerified
       title: EmailVerified
       summary: EmailVerified on iam.auth.events → entry_type auth.email.verified (access_90d).
@@ -622,11 +634,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/AuthAuditEmailVerifiedPayload'
       x-audit-topic: iam.auth.events
       x-audit-entry-type: auth.email.verified
       x-audit-retention-tier: access_90d
-    userAudit_UserProvisioned:
+    userAuditUserProvisioned:
+      x-lifecycle:
+        status: active
       name: UserProvisioned
       title: UserProvisioned
       summary: UserProvisioned on iam.user.events → entry_type user.provisioned (security_3y).
@@ -634,11 +648,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UserAuditUserProvisionedPayload'
       x-audit-topic: iam.user.events
       x-audit-entry-type: user.provisioned
       x-audit-retention-tier: security_3y
-    userAudit_UserUpdated:
+    userAuditUserUpdated:
+      x-lifecycle:
+        status: active
       name: UserUpdated
       title: UserUpdated
       summary: UserUpdated on iam.user.events → entry_type user.updated (security_3y).
@@ -646,11 +662,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UserAuditUserUpdatedPayload'
       x-audit-topic: iam.user.events
       x-audit-entry-type: user.updated
       x-audit-retention-tier: security_3y
-    userAudit_UserStatusChanged:
+    userAuditUserStatusChanged:
+      x-lifecycle:
+        status: active
       name: UserStatusChanged
       title: UserStatusChanged
       summary: UserStatusChanged on iam.user.events → entry_type user.status.changed (security_3y).
@@ -658,11 +676,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UserAuditUserStatusChangedPayload'
       x-audit-topic: iam.user.events
       x-audit-entry-type: user.status.changed
       x-audit-retention-tier: security_3y
-    userAudit_UserAvailabilityChanged:
+    userAuditUserAvailabilityChanged:
+      x-lifecycle:
+        status: active
       name: UserAvailabilityChanged
       title: UserAvailabilityChanged
       summary: UserAvailabilityChanged on iam.user.events → entry_type user.availability.changed (access_90d).
@@ -670,11 +690,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UserAuditUserAvailabilityChangedPayload'
       x-audit-topic: iam.user.events
       x-audit-entry-type: user.availability.changed
       x-audit-retention-tier: access_90d
-    userAudit_UserDeleted:
+    userAuditUserDeleted:
+      x-lifecycle:
+        status: active
       name: UserDeleted
       title: UserDeleted
       summary: UserDeleted on iam.user.events → entry_type user.deleted (security_3y).
@@ -682,11 +704,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UserAuditUserDeletedPayload'
       x-audit-topic: iam.user.events
       x-audit-entry-type: user.deleted
       x-audit-retention-tier: security_3y
-    membershipAudit_DepartmentMembershipGranted:
+    membershipAuditDepartmentMembershipGranted:
+      x-lifecycle:
+        status: active
       name: DepartmentMembershipGranted
       title: DepartmentMembershipGranted
       summary: DepartmentMembershipGranted on iam.membership.events → entry_type membership.department.granted
@@ -695,11 +719,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditDepartmentMembershipGrantedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: membership.department.granted
       x-audit-retention-tier: compliance_7y
-    membershipAudit_DepartmentMembershipRevoked:
+    membershipAuditDepartmentMembershipRevoked:
+      x-lifecycle:
+        status: active
       name: DepartmentMembershipRevoked
       title: DepartmentMembershipRevoked
       summary: DepartmentMembershipRevoked on iam.membership.events → entry_type membership.department.revoked
@@ -708,11 +734,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditDepartmentMembershipRevokedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: membership.department.revoked
       x-audit-retention-tier: compliance_7y
-    membershipAudit_DepartmentMembershipLevelChanged:
+    membershipAuditDepartmentMembershipLevelChanged:
+      x-lifecycle:
+        status: active
       name: DepartmentMembershipLevelChanged
       title: DepartmentMembershipLevelChanged
       summary: DepartmentMembershipLevelChanged on iam.membership.events → entry_type membership.department.level_changed
@@ -721,11 +749,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditDepartmentMembershipLevelChangedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: membership.department.level_changed
       x-audit-retention-tier: compliance_7y
-    membershipAudit_TenantRoleGranted:
+    membershipAuditTenantRoleGranted:
+      x-lifecycle:
+        status: active
       name: TenantRoleGranted
       title: TenantRoleGranted
       summary: TenantRoleGranted on iam.membership.events → entry_type membership.role.granted (compliance_7y).
@@ -733,11 +763,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditTenantRoleGrantedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: membership.role.granted
       x-audit-retention-tier: compliance_7y
-    membershipAudit_TenantRoleRevoked:
+    membershipAuditTenantRoleRevoked:
+      x-lifecycle:
+        status: active
       name: TenantRoleRevoked
       title: TenantRoleRevoked
       summary: TenantRoleRevoked on iam.membership.events → entry_type membership.role.revoked (compliance_7y).
@@ -745,11 +777,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditTenantRoleRevokedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: membership.role.revoked
       x-audit-retention-tier: compliance_7y
-    membershipAudit_MembershipRevoked:
+    membershipAuditMembershipRevoked:
+      x-lifecycle:
+        status: active
       name: MembershipRevoked
       title: MembershipRevoked
       summary: MembershipRevoked on iam.membership.events → entry_type membership.revoked (compliance_7y).
@@ -757,11 +791,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditMembershipRevokedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: membership.revoked
       x-audit-retention-tier: compliance_7y
-    membershipAudit_TenantMembershipsPurged:
+    membershipAuditTenantMembershipsPurged:
+      x-lifecycle:
+        status: active
       name: TenantMembershipsPurged
       title: TenantMembershipsPurged
       summary: TenantMembershipsPurged on iam.membership.events → entry_type membership.purged (compliance_7y).
@@ -769,11 +805,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditTenantMembershipsPurgedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: membership.purged
       x-audit-retention-tier: compliance_7y
-    membershipAudit_TenderAssigneeOverridden:
+    membershipAuditTenderAssigneeOverridden:
+      x-lifecycle:
+        status: active
       name: TenderAssigneeOverridden
       title: TenderAssigneeOverridden
       summary: TenderAssigneeOverridden on iam.membership.events → entry_type tender.assignee.overridden
@@ -782,11 +820,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditTenderAssigneeOverriddenPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: tender.assignee.overridden
       x-audit-retention-tier: compliance_7y
-    membershipAudit_MFAReset:
+    membershipAuditMfaReset:
+      x-lifecycle:
+        status: active
       name: MFAReset
       title: MFAReset
       summary: MFAReset on iam.membership.events → entry_type auth.mfa.reset (compliance_7y).
@@ -794,11 +834,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditMfaResetPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: auth.mfa.reset
       x-audit-retention-tier: compliance_7y
-    membershipAudit_TenantStateChanged:
+    membershipAuditTenantStateChanged:
+      x-lifecycle:
+        status: active
       name: TenantStateChanged
       title: TenantStateChanged
       summary: TenantStateChanged on iam.membership.events → entry_type tenant.state.changed (security_3y).
@@ -806,11 +848,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditTenantStateChangedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: tenant.state.changed
       x-audit-retention-tier: security_3y
-    membershipAudit_TenantSeatOverageStarted:
+    membershipAuditTenantSeatOverageStarted:
+      x-lifecycle:
+        status: active
       name: TenantSeatOverageStarted
       title: TenantSeatOverageStarted
       summary: TenantSeatOverageStarted on iam.membership.events → entry_type tenant.seat_overage.started
@@ -819,11 +863,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditTenantSeatOverageStartedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: tenant.seat_overage.started
       x-audit-retention-tier: security_3y
-    membershipAudit_TenantSeatOverageResolved:
+    membershipAuditTenantSeatOverageResolved:
+      x-lifecycle:
+        status: active
       name: TenantSeatOverageResolved
       title: TenantSeatOverageResolved
       summary: TenantSeatOverageResolved on iam.membership.events → entry_type tenant.seat_overage.resolved
@@ -832,11 +878,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/MembershipAuditTenantSeatOverageResolvedPayload'
       x-audit-topic: iam.membership.events
       x-audit-entry-type: tenant.seat_overage.resolved
       x-audit-retention-tier: security_3y
-    tenantAudit_TenantCreated:
+    tenantAuditTenantCreated:
+      x-lifecycle:
+        status: active
       name: TenantCreated
       title: TenantCreated
       summary: TenantCreated on iam.tenant.events → entry_type tenant.created (security_3y).
@@ -844,11 +892,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTenantCreatedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.created
       x-audit-retention-tier: security_3y
-    tenantAudit_TrialStarted:
+    tenantAuditTrialStarted:
+      x-lifecycle:
+        status: active
       name: TrialStarted
       title: TrialStarted
       summary: TrialStarted on iam.tenant.events → entry_type tenant.trial_started (security_3y).
@@ -856,11 +906,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTrialStartedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.trial_started
       x-audit-retention-tier: security_3y
-    tenantAudit_TrialTenantProvisioned:
+    tenantAuditTrialTenantProvisioned:
+      x-lifecycle:
+        status: active
       name: TrialTenantProvisioned
       title: TrialTenantProvisioned
       summary: TrialTenantProvisioned on iam.tenant.events → entry_type tenant.trial_provisioned (security_3y).
@@ -868,11 +920,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTrialTenantProvisionedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.trial_provisioned
       x-audit-retention-tier: security_3y
-    tenantAudit_TenantRealmReady:
+    tenantAuditTenantRealmReady:
+      x-lifecycle:
+        status: active
       name: TenantRealmReady
       title: TenantRealmReady
       summary: TenantRealmReady on iam.tenant.events → entry_type tenant.realm_ready (security_3y).
@@ -880,11 +934,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTenantRealmReadyPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.realm_ready
       x-audit-retention-tier: security_3y
-    tenantAudit_TenantConverted:
+    tenantAuditTenantConverted:
+      x-lifecycle:
+        status: active
       name: TenantConverted
       title: TenantConverted
       summary: TenantConverted on iam.tenant.events → entry_type tenant.converted (security_3y).
@@ -892,11 +948,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTenantConvertedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.converted
       x-audit-retention-tier: security_3y
-    tenantAudit_DirectPaidSignup:
+    tenantAuditDirectPaidSignup:
+      x-lifecycle:
+        status: active
       name: DirectPaidSignup
       title: DirectPaidSignup
       summary: DirectPaidSignup on iam.tenant.events → entry_type tenant.direct_paid_signup (security_3y).
@@ -904,11 +962,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditDirectPaidSignupPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.direct_paid_signup
       x-audit-retention-tier: security_3y
-    tenantAudit_TrialExpired:
+    tenantAuditTrialExpired:
+      x-lifecycle:
+        status: active
       name: TrialExpired
       title: TrialExpired
       summary: TrialExpired on iam.tenant.events → entry_type tenant.trial_expired (security_3y).
@@ -916,11 +976,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTrialExpiredPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.trial_expired
       x-audit-retention-tier: security_3y
-    tenantAudit_TrialReactivated:
+    tenantAuditTrialReactivated:
+      x-lifecycle:
+        status: active
       name: TrialReactivated
       title: TrialReactivated
       summary: TrialReactivated on iam.tenant.events → entry_type tenant.trial_reactivated (security_3y).
@@ -928,11 +990,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTrialReactivatedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.trial_reactivated
       x-audit-retention-tier: security_3y
-    tenantAudit_TenantSuspended:
+    tenantAuditTenantSuspended:
+      x-lifecycle:
+        status: active
       name: TenantSuspended
       title: TenantSuspended
       summary: TenantSuspended on iam.tenant.events → entry_type tenant.suspended (security_3y).
@@ -940,11 +1004,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTenantSuspendedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.suspended
       x-audit-retention-tier: security_3y
-    tenantAudit_TenantOffboarded:
+    tenantAuditTenantOffboarded:
+      x-lifecycle:
+        status: active
       name: TenantOffboarded
       title: TenantOffboarded
       summary: TenantOffboarded on iam.tenant.events → entry_type tenant.offboarded (security_3y).
@@ -952,11 +1018,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTenantOffboardedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.offboarded
       x-audit-retention-tier: security_3y
-    tenantAudit_TenantReactivated:
+    tenantAuditTenantReactivated:
+      x-lifecycle:
+        status: active
       name: TenantReactivated
       title: TenantReactivated
       summary: TenantReactivated on iam.tenant.events → entry_type tenant.reactivated (security_3y).
@@ -964,11 +1032,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenantAuditTenantReactivatedPayload'
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.reactivated
       x-audit-retention-tier: security_3y
-    delegationAudit_DelegationStarted:
+    delegationAuditDelegationStarted:
+      x-lifecycle:
+        status: active
       name: DelegationStarted
       title: DelegationStarted
       summary: DelegationStarted on iam.delegation.events → entry_type delegation.started (security_3y).
@@ -976,11 +1046,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/DelegationAuditDelegationStartedPayload'
       x-audit-topic: iam.delegation.events
       x-audit-entry-type: delegation.started
       x-audit-retention-tier: security_3y
-    delegationAudit_DelegationEnded:
+    delegationAuditDelegationEnded:
+      x-lifecycle:
+        status: active
       name: DelegationEnded
       title: DelegationEnded
       summary: DelegationEnded on iam.delegation.events → entry_type delegation.ended (security_3y).
@@ -988,11 +1060,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/DelegationAuditDelegationEndedPayload'
       x-audit-topic: iam.delegation.events
       x-audit-entry-type: delegation.ended
       x-audit-retention-tier: security_3y
-    delegationAudit_DelegationReviewRequested:
+    delegationAuditDelegationReviewRequested:
+      x-lifecycle:
+        status: active
       name: DelegationReviewRequested
       title: DelegationReviewRequested
       summary: DelegationReviewRequested on iam.delegation.events → entry_type delegation.review_requested
@@ -1001,11 +1075,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/DelegationAuditDelegationReviewRequestedPayload'
       x-audit-topic: iam.delegation.events
       x-audit-entry-type: delegation.review_requested
       x-audit-retention-tier: security_3y
-    delegationAudit_DelegationEscalationRequested:
+    delegationAuditDelegationEscalationRequested:
+      x-lifecycle:
+        status: active
       name: DelegationEscalationRequested
       title: DelegationEscalationRequested
       summary: DelegationEscalationRequested on iam.delegation.events → entry_type delegation.escalation_requested
@@ -1014,11 +1090,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/DelegationAuditDelegationEscalationRequestedPayload'
       x-audit-topic: iam.delegation.events
       x-audit-entry-type: delegation.escalation_requested
       x-audit-retention-tier: security_3y
-    serviceaccountAudit_ServiceAccountRegistered:
+    serviceaccountAuditServiceAccountRegistered:
+      x-lifecycle:
+        status: active
       name: ServiceAccountRegistered
       title: ServiceAccountRegistered
       summary: ServiceAccountRegistered on iam.serviceaccount.events → entry_type serviceaccount.registered
@@ -1027,11 +1105,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/ServiceaccountAuditServiceAccountRegisteredPayload'
       x-audit-topic: iam.serviceaccount.events
       x-audit-entry-type: serviceaccount.registered
       x-audit-retention-tier: compliance_7y
-    serviceaccountAudit_ServiceAccountCredentialIssued:
+    serviceaccountAuditServiceAccountCredentialIssued:
+      x-lifecycle:
+        status: active
       name: ServiceAccountCredentialIssued
       title: ServiceAccountCredentialIssued
       summary: ServiceAccountCredentialIssued on iam.serviceaccount.events → entry_type serviceaccount.credential.issued
@@ -1040,11 +1120,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/ServiceaccountAuditServiceAccountCredentialIssuedPayload'
       x-audit-topic: iam.serviceaccount.events
       x-audit-entry-type: serviceaccount.credential.issued
       x-audit-retention-tier: compliance_7y
-    serviceaccountAudit_ServiceAccountCredentialRotated:
+    serviceaccountAuditServiceAccountCredentialRotated:
+      x-lifecycle:
+        status: active
       name: ServiceAccountCredentialRotated
       title: ServiceAccountCredentialRotated
       summary: ServiceAccountCredentialRotated on iam.serviceaccount.events → entry_type serviceaccount.credential.rotated
@@ -1053,11 +1135,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/ServiceaccountAuditServiceAccountCredentialRotatedPayload'
       x-audit-topic: iam.serviceaccount.events
       x-audit-entry-type: serviceaccount.credential.rotated
       x-audit-retention-tier: compliance_7y
-    serviceaccountAudit_ServiceAccountCredentialRevoked:
+    serviceaccountAuditServiceAccountCredentialRevoked:
+      x-lifecycle:
+        status: active
       name: ServiceAccountCredentialRevoked
       title: ServiceAccountCredentialRevoked
       summary: ServiceAccountCredentialRevoked on iam.serviceaccount.events → entry_type serviceaccount.credential.revoked
@@ -1066,11 +1150,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/ServiceaccountAuditServiceAccountCredentialRevokedPayload'
       x-audit-topic: iam.serviceaccount.events
       x-audit-entry-type: serviceaccount.credential.revoked
       x-audit-retention-tier: compliance_7y
-    serviceaccountAudit_ServiceAccountRevoked:
+    serviceaccountAuditServiceAccountRevoked:
+      x-lifecycle:
+        status: active
       name: ServiceAccountRevoked
       title: ServiceAccountRevoked
       summary: ServiceAccountRevoked on iam.serviceaccount.events → entry_type serviceaccount.revoked
@@ -1079,11 +1165,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/ServiceaccountAuditServiceAccountRevokedPayload'
       x-audit-topic: iam.serviceaccount.events
       x-audit-entry-type: serviceaccount.revoked
       x-audit-retention-tier: compliance_7y
-    tenderAudit_TenderSectionApproved:
+    tenderAuditTenderSectionApproved:
+      x-lifecycle:
+        status: active
       name: TenderSectionApproved
       title: TenderSectionApproved
       summary: TenderSectionApproved on tender.events → entry_type tender.section.approved (compliance_7y).
@@ -1091,11 +1179,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenderAuditTenderSectionApprovedPayload'
       x-audit-topic: tender.events
       x-audit-entry-type: tender.section.approved
       x-audit-retention-tier: compliance_7y
-    tenderAudit_TenderAccessGranted:
+    tenderAuditTenderAccessGranted:
+      x-lifecycle:
+        status: active
       name: TenderAccessGranted
       title: TenderAccessGranted
       summary: TenderAccessGranted on tender.events → entry_type tender.access.granted (compliance_7y).
@@ -1103,11 +1193,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenderAuditTenderAccessGrantedPayload'
       x-audit-topic: tender.events
       x-audit-entry-type: tender.access.granted
       x-audit-retention-tier: compliance_7y
-    tenderAudit_TenderRestricted:
+    tenderAuditTenderRestricted:
+      x-lifecycle:
+        status: active
       name: TenderRestricted
       title: TenderRestricted
       summary: TenderRestricted on tender.events → entry_type tender.restricted (compliance_7y).
@@ -1115,11 +1207,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/TenderAuditTenderRestrictedPayload'
       x-audit-topic: tender.events
       x-audit-entry-type: tender.restricted
       x-audit-retention-tier: compliance_7y
-    billingAudit_TenantPlanChanged:
+    billingAuditTenantPlanChanged:
+      x-lifecycle:
+        status: active
       name: TenantPlanChanged
       title: TenantPlanChanged
       summary: TenantPlanChanged on billing.events → entry_type tenant.plan_changed (security_3y).
@@ -1127,11 +1221,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/BillingAuditTenantPlanChangedPayload'
       x-audit-topic: billing.events
       x-audit-entry-type: tenant.plan_changed
       x-audit-retention-tier: security_3y
-    billingAudit_TenantPaymentPastDue:
+    billingAuditTenantPaymentPastDue:
+      x-lifecycle:
+        status: active
       name: TenantPaymentPastDue
       title: TenantPaymentPastDue
       summary: TenantPaymentPastDue on billing.events → entry_type tenant.payment_past_due (security_3y).
@@ -1139,11 +1235,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/BillingAuditTenantPaymentPastDuePayload'
       x-audit-topic: billing.events
       x-audit-entry-type: tenant.payment_past_due
       x-audit-retention-tier: security_3y
-    billingAudit_TenantSubscriptionCancelled:
+    billingAuditTenantSubscriptionCancelled:
+      x-lifecycle:
+        status: active
       name: TenantSubscriptionCancelled
       title: TenantSubscriptionCancelled
       summary: TenantSubscriptionCancelled on billing.events → entry_type tenant.subscription_cancelled
@@ -1152,11 +1250,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/BillingAuditTenantSubscriptionCancelledPayload'
       x-audit-topic: billing.events
       x-audit-entry-type: tenant.subscription_cancelled
       x-audit-retention-tier: security_3y
-    billingAudit_TenantReactivated:
+    billingAuditTenantReactivated:
+      x-lifecycle:
+        status: active
       name: TenantReactivated
       title: TenantReactivated
       summary: TenantReactivated on billing.events → entry_type tenant.reactivated (security_3y).
@@ -1164,11 +1264,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/BillingAuditTenantReactivatedPayload'
       x-audit-topic: billing.events
       x-audit-entry-type: tenant.reactivated
       x-audit-retention-tier: security_3y
-    billingAudit_TenantSeatsChanged:
+    billingAuditTenantSeatsChanged:
+      x-lifecycle:
+        status: active
       name: TenantSeatsChanged
       title: TenantSeatsChanged
       summary: TenantSeatsChanged on billing.events → entry_type tenant.seats_changed (security_3y; CD-21).
@@ -1176,11 +1278,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/BillingAuditTenantSeatsChangedPayload'
       x-audit-topic: billing.events
       x-audit-entry-type: tenant.seats_changed
       x-audit-retention-tier: security_3y
-    usageAudit_TenantQuotaWarning:
+    usageAuditTenantQuotaWarning:
+      x-lifecycle:
+        status: active
       name: TenantQuotaWarning
       title: TenantQuotaWarning
       summary: TenantQuotaWarning on usage.events → entry_type usage.quota.warning (access_90d).
@@ -1188,11 +1292,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UsageAuditTenantQuotaWarningPayload'
       x-audit-topic: usage.events
       x-audit-entry-type: usage.quota.warning
       x-audit-retention-tier: access_90d
-    usageAudit_TenantQuotaExceeded:
+    usageAuditTenantQuotaExceeded:
+      x-lifecycle:
+        status: active
       name: TenantQuotaExceeded
       title: TenantQuotaExceeded
       summary: TenantQuotaExceeded on usage.events → entry_type usage.quota.exceeded (access_90d).
@@ -1200,11 +1306,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UsageAuditTenantQuotaExceededPayload'
       x-audit-topic: usage.events
       x-audit-entry-type: usage.quota.exceeded
       x-audit-retention-tier: access_90d
-    usageAudit_TenantQuotaRestored:
+    usageAuditTenantQuotaRestored:
+      x-lifecycle:
+        status: active
       name: TenantQuotaRestored
       title: TenantQuotaRestored
       summary: TenantQuotaRestored on usage.events → entry_type usage.quota.restored (access_90d; CD-21 v0.7).
@@ -1212,11 +1320,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/UsageAuditTenantQuotaRestoredPayload'
       x-audit-topic: usage.events
       x-audit-entry-type: usage.quota.restored
       x-audit-retention-tier: access_90d
-    entitlementAudit_TenantEntitlementsChanged:
+    entitlementAuditTenantEntitlementsChanged:
+      x-lifecycle:
+        status: active
       name: TenantEntitlementsChanged
       title: TenantEntitlementsChanged
       summary: TenantEntitlementsChanged on entitlement.events → entry_type entitlement.tenant_changed (security_3y; CD-21).
@@ -1224,11 +1334,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/EntitlementAuditTenantEntitlementsChangedPayload'
       x-audit-topic: entitlement.events
       x-audit-entry-type: entitlement.tenant_changed
       x-audit-retention-tier: security_3y
-    wfWorkflowAudit_TaskCreated:
+    wfWorkflowAuditTaskCreated:
+      x-lifecycle:
+        status: active
       name: TaskCreated
       title: TaskCreated
       summary: TaskCreated on wf.workflow.events → entry_type workflow.task.created (access_90d).
@@ -1236,11 +1348,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditTaskCreatedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.created
       x-audit-retention-tier: access_90d
-    wfWorkflowAudit_TaskSLAWarning:
+    wfWorkflowAuditTaskSlaWarning:
+      x-lifecycle:
+        status: active
       name: TaskSLAWarning
       title: TaskSLAWarning
       summary: TaskSLAWarning on wf.workflow.events → entry_type workflow.task.sla_warning (access_90d).
@@ -1248,11 +1362,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditTaskSlaWarningPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.sla_warning
       x-audit-retention-tier: access_90d
-    wfWorkflowAudit_TaskSLABreached:
+    wfWorkflowAuditTaskSlaBreached:
+      x-lifecycle:
+        status: active
       name: TaskSLABreached
       title: TaskSLABreached
       summary: TaskSLABreached on wf.workflow.events → entry_type workflow.task.sla_breached (access_90d).
@@ -1260,11 +1376,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditTaskSlaBreachedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.sla_breached
       x-audit-retention-tier: access_90d
-    wfWorkflowAudit_TaskDeferred:
+    wfWorkflowAuditTaskDeferred:
+      x-lifecycle:
+        status: active
       name: TaskDeferred
       title: TaskDeferred
       summary: TaskDeferred on wf.workflow.events → entry_type workflow.task.deferred (access_90d).
@@ -1272,11 +1390,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditTaskDeferredPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.deferred
       x-audit-retention-tier: access_90d
-    wfWorkflowAudit_TaskReassigned:
+    wfWorkflowAuditTaskReassigned:
+      x-lifecycle:
+        status: active
       name: TaskReassigned
       title: TaskReassigned
       summary: TaskReassigned on wf.workflow.events → entry_type workflow.task.reassigned (security_3y).
@@ -1284,11 +1404,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditTaskReassignedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.reassigned
       x-audit-retention-tier: security_3y
-    wfWorkflowAudit_WorkflowFinished:
+    wfWorkflowAuditWorkflowFinished:
+      x-lifecycle:
+        status: active
       name: WorkflowFinished
       title: WorkflowFinished
       summary: WorkflowFinished on wf.workflow.events → entry_type workflow.finished (access_90d).
@@ -1296,11 +1418,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditWorkflowFinishedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.finished
       x-audit-retention-tier: access_90d
-    wfTemplateAudit_TemplatePublished:
+    wfTemplateAuditTemplatePublished:
+      x-lifecycle:
+        status: active
       name: TemplatePublished
       title: TemplatePublished
       summary: TemplatePublished on wf.template.events → entry_type workflow.template.published (security_3y).
@@ -1308,11 +1432,13 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfTemplateAuditTemplatePublishedPayload'
       x-audit-topic: wf.template.events
       x-audit-entry-type: workflow.template.published
       x-audit-retention-tier: security_3y
-    wfWorkflowAudit_workflow_task_created:
+    wfWorkflowAuditWorkflowTaskCreated:
+      x-lifecycle:
+        status: active
       name: workflow.task.created
       title: workflow.task.created
       summary: workflow.task.created on wf.workflow.events → entry_type workflow.task.created (access_90d).
@@ -1320,12 +1446,14 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditWorkflowTaskCreatedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.created
       x-audit-retention-tier: access_90d
       x-wire-alias: decision D-7 (Workflow Engine wire spelling)
-    wfWorkflowAudit_workflow_task_sla_warning:
+    wfWorkflowAuditWorkflowTaskSlaWarning:
+      x-lifecycle:
+        status: active
       name: workflow.task.sla-warning
       title: workflow.task.sla-warning
       summary: workflow.task.sla-warning on wf.workflow.events → entry_type workflow.task.sla_warning
@@ -1334,12 +1462,14 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditWorkflowTaskSlaWarningPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.sla_warning
       x-audit-retention-tier: access_90d
       x-wire-alias: decision D-7 (Workflow Engine wire spelling)
-    wfWorkflowAudit_workflow_task_sla_breached:
+    wfWorkflowAuditWorkflowTaskSlaBreached:
+      x-lifecycle:
+        status: active
       name: workflow.task.sla-breached
       title: workflow.task.sla-breached
       summary: workflow.task.sla-breached on wf.workflow.events → entry_type workflow.task.sla_breached
@@ -1348,12 +1478,14 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditWorkflowTaskSlaBreachedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.sla_breached
       x-audit-retention-tier: access_90d
       x-wire-alias: decision D-7 (Workflow Engine wire spelling)
-    wfWorkflowAudit_workflow_task_deferred:
+    wfWorkflowAuditWorkflowTaskDeferred:
+      x-lifecycle:
+        status: active
       name: workflow.task.deferred
       title: workflow.task.deferred
       summary: workflow.task.deferred on wf.workflow.events → entry_type workflow.task.deferred (access_90d).
@@ -1361,12 +1493,14 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditWorkflowTaskDeferredPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.deferred
       x-audit-retention-tier: access_90d
       x-wire-alias: decision D-7 (Workflow Engine wire spelling)
-    wfWorkflowAudit_workflow_task_reassigned:
+    wfWorkflowAuditWorkflowTaskReassigned:
+      x-lifecycle:
+        status: active
       name: workflow.task.reassigned
       title: workflow.task.reassigned
       summary: workflow.task.reassigned on wf.workflow.events → entry_type workflow.task.reassigned (security_3y).
@@ -1374,12 +1508,14 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditWorkflowTaskReassignedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.task.reassigned
       x-audit-retention-tier: security_3y
       x-wire-alias: decision D-7 (Workflow Engine wire spelling)
-    wfWorkflowAudit_workflow_instance_finished:
+    wfWorkflowAuditWorkflowInstanceFinished:
+      x-lifecycle:
+        status: active
       name: workflow.instance.finished
       title: workflow.instance.finished
       summary: workflow.instance.finished on wf.workflow.events → entry_type workflow.finished (access_90d).
@@ -1387,12 +1523,14 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfWorkflowAuditWorkflowInstanceFinishedPayload'
       x-audit-topic: wf.workflow.events
       x-audit-entry-type: workflow.finished
       x-audit-retention-tier: access_90d
       x-wire-alias: decision D-7 (Workflow Engine wire spelling)
-    wfTemplateAudit_workflow_template_published:
+    wfTemplateAuditWorkflowTemplatePublished:
+      x-lifecycle:
+        status: active
       name: workflow.template.published
       title: workflow.template.published
       summary: workflow.template.published on wf.template.events → entry_type workflow.template.published
@@ -1401,15 +1539,221 @@ components:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/ProducerPayload'
+        $ref: '#/components/schemas/WfTemplateAuditWorkflowTemplatePublishedPayload'
       x-audit-topic: wf.template.events
       x-audit-entry-type: workflow.template.published
       x-audit-retention-tier: security_3y
       x-wire-alias: decision D-7 (Workflow Engine wire spelling)
   schemas:
-    ProducerPayload:
+    # One open schema per consumed message (D-24), so schema-gov extract writes
+    # internal/eventschema/<stem>.json and validate's Pass 7 finds it. The payload is
+    # producer-owned, carried verbatim into audit_events.metadata (bounded, D-9) and
+    # validated on decode against the producer's Glue schema version (§7.3.1); this
+    # service defines no payload contract of its own.
+    AuthAuditLoginSuccessPayload:
       type: object
       additionalProperties: true
-      description: The producer-owned payload, carried verbatim into audit_events.metadata (bounded, D-9).
-        Validated on decode against the producer's registered Glue schema version (§7.3.1); this service
-        defines no payload contract of its own.
+    AuthAuditLoginFailurePayload:
+      type: object
+      additionalProperties: true
+    AuthAuditPasswordResetPayload:
+      type: object
+      additionalProperties: true
+    AuthAuditMfaEnrolledPayload:
+      type: object
+      additionalProperties: true
+    AuthAuditMfaResetPayload:
+      type: object
+      additionalProperties: true
+    AuthAuditEmailVerifiedPayload:
+      type: object
+      additionalProperties: true
+    UserAuditUserProvisionedPayload:
+      type: object
+      additionalProperties: true
+    UserAuditUserUpdatedPayload:
+      type: object
+      additionalProperties: true
+    UserAuditUserStatusChangedPayload:
+      type: object
+      additionalProperties: true
+    UserAuditUserAvailabilityChangedPayload:
+      type: object
+      additionalProperties: true
+    UserAuditUserDeletedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditDepartmentMembershipGrantedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditDepartmentMembershipRevokedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditDepartmentMembershipLevelChangedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditTenantRoleGrantedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditTenantRoleRevokedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditMembershipRevokedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditTenantMembershipsPurgedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditTenderAssigneeOverriddenPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditMfaResetPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditTenantStateChangedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditTenantSeatOverageStartedPayload:
+      type: object
+      additionalProperties: true
+    MembershipAuditTenantSeatOverageResolvedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTenantCreatedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTrialStartedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTrialTenantProvisionedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTenantRealmReadyPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTenantConvertedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditDirectPaidSignupPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTrialExpiredPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTrialReactivatedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTenantSuspendedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTenantOffboardedPayload:
+      type: object
+      additionalProperties: true
+    TenantAuditTenantReactivatedPayload:
+      type: object
+      additionalProperties: true
+    DelegationAuditDelegationStartedPayload:
+      type: object
+      additionalProperties: true
+    DelegationAuditDelegationEndedPayload:
+      type: object
+      additionalProperties: true
+    DelegationAuditDelegationReviewRequestedPayload:
+      type: object
+      additionalProperties: true
+    DelegationAuditDelegationEscalationRequestedPayload:
+      type: object
+      additionalProperties: true
+    ServiceaccountAuditServiceAccountRegisteredPayload:
+      type: object
+      additionalProperties: true
+    ServiceaccountAuditServiceAccountCredentialIssuedPayload:
+      type: object
+      additionalProperties: true
+    ServiceaccountAuditServiceAccountCredentialRotatedPayload:
+      type: object
+      additionalProperties: true
+    ServiceaccountAuditServiceAccountCredentialRevokedPayload:
+      type: object
+      additionalProperties: true
+    ServiceaccountAuditServiceAccountRevokedPayload:
+      type: object
+      additionalProperties: true
+    TenderAuditTenderSectionApprovedPayload:
+      type: object
+      additionalProperties: true
+    TenderAuditTenderAccessGrantedPayload:
+      type: object
+      additionalProperties: true
+    TenderAuditTenderRestrictedPayload:
+      type: object
+      additionalProperties: true
+    BillingAuditTenantPlanChangedPayload:
+      type: object
+      additionalProperties: true
+    BillingAuditTenantPaymentPastDuePayload:
+      type: object
+      additionalProperties: true
+    BillingAuditTenantSubscriptionCancelledPayload:
+      type: object
+      additionalProperties: true
+    BillingAuditTenantReactivatedPayload:
+      type: object
+      additionalProperties: true
+    BillingAuditTenantSeatsChangedPayload:
+      type: object
+      additionalProperties: true
+    UsageAuditTenantQuotaWarningPayload:
+      type: object
+      additionalProperties: true
+    UsageAuditTenantQuotaExceededPayload:
+      type: object
+      additionalProperties: true
+    UsageAuditTenantQuotaRestoredPayload:
+      type: object
+      additionalProperties: true
+    EntitlementAuditTenantEntitlementsChangedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditTaskCreatedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditTaskSlaWarningPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditTaskSlaBreachedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditTaskDeferredPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditTaskReassignedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditWorkflowFinishedPayload:
+      type: object
+      additionalProperties: true
+    WfTemplateAuditTemplatePublishedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditWorkflowTaskCreatedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditWorkflowTaskSlaWarningPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditWorkflowTaskSlaBreachedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditWorkflowTaskDeferredPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditWorkflowTaskReassignedPayload:
+      type: object
+      additionalProperties: true
+    WfWorkflowAuditWorkflowInstanceFinishedPayload:
+      type: object
+      additionalProperties: true
+    WfTemplateAuditWorkflowTemplatePublishedPayload:
+      type: object
+      additionalProperties: true
