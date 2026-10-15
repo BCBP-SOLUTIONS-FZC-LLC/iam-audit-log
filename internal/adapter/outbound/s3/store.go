@@ -64,10 +64,21 @@ func (s *Store) WithObjectLock(l ObjectLock) *Store {
 // Bucket implements port.ArchiveStore.
 func (s *Store) Bucket() string { return s.bucket }
 
+// putArchiveMaxAttempts is the number of times PutArchive retries on
+// transient S3 errors (503, throttle, network reset) before giving up and
+// leaving the tier in ArchiveFailed state. The AWS SDK v2 default retry
+// policy also retries at the SDK level; these attempts are on top of that.
+const putArchiveMaxAttempts = 3
+
 // PutArchive implements port.ArchiveStore: an SSE-KMS object with Object
 // Lock retained until retainUntil. The bucket is versioned (Object Lock
 // requires it), so re-archiving a key adds a version and never replaces a
 // locked one (D-20).
+//
+// Transient errors (dependency_unavailable from classify()) are retried up to
+// putArchiveMaxAttempts times with exponential backoff (1 s, 2 s) before the
+// error is returned to the caller.  Permanent errors (missing key, permission
+// denied) are returned immediately.
 func (s *Store) PutArchive(ctx context.Context, key string, body io.ReadSeeker, size int64, retainUntil time.Time) error {
 	in := &awss3.PutObjectInput{
 		Bucket:          aws.String(s.bucket),
@@ -85,10 +96,36 @@ func (s *Store) PutArchive(ctx context.Context, key string, body io.ReadSeeker, 
 		in.ObjectLockMode = types.ObjectLockMode(s.lock.Mode)
 		in.ObjectLockRetainUntilDate = aws.Time(retainUntil.UTC())
 	}
-	if _, err := s.api.PutObject(ctx, in); err != nil {
-		return classify(err)
+
+	var lastErr error
+	for attempt := range putArchiveMaxAttempts {
+		if attempt > 0 {
+			// Exponential backoff: 1 s, 2 s.  Body must be rewound because
+			// the previous attempt may have consumed part of the reader.
+			if _, err := body.Seek(0, io.SeekStart); err != nil {
+				return fmt.Errorf("s3: rewind archive body for retry: %w", err)
+			}
+			wait := time.Duration(1<<(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+		_, err := s.api.PutObject(ctx, in)
+		if err == nil {
+			return nil
+		}
+		classified := classify(err)
+		// Only retry on transient/dependency-unavailable errors.
+		// Permanent errors (permission denied, invalid KMS key, etc.) return immediately.
+		var de *domain.Error
+		if !errors.As(classified, &de) || de.Code != domain.ErrDependencyUnavailable {
+			return classified
+		}
+		lastErr = classified
 	}
-	return nil
+	return fmt.Errorf("s3: PutArchive %s failed after %d attempts: %w", key, putArchiveMaxAttempts, lastErr)
 }
 
 // ArchiveChecksum implements port.ArchiveStore: it GETs the object's

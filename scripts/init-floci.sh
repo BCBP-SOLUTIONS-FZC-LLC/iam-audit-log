@@ -56,6 +56,7 @@ iam-serviceaccount-events:serviceaccount-audit-q:SERVICEACCOUNT_AUDIT_QUEUE_URL
 tender-events:tender-audit-q:TENDER_AUDIT_QUEUE_URL
 billing-events:billing-audit-q:BILLING_AUDIT_QUEUE_URL
 usage-events:usage-audit-q:USAGE_AUDIT_QUEUE_URL
+entitlement-events:entitlement-audit-q:ENTITLEMENT_AUDIT_QUEUE_URL
 wf-workflow-events:wf-workflow-audit-q:WF_WORKFLOW_AUDIT_QUEUE_URL
 wf-template-events:wf-template-audit-q:WF_TEMPLATE_AUDIT_QUEUE_URL
 "

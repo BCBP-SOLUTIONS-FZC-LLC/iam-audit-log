@@ -115,6 +115,7 @@ serverEnv:
   TENDER_AUDIT_QUEUE_URL: ""
   BILLING_AUDIT_QUEUE_URL: ""
   USAGE_AUDIT_QUEUE_URL: ""
+  ENTITLEMENT_AUDIT_QUEUE_URL: ""
   WF_WORKFLOW_AUDIT_QUEUE_URL: ""
   WF_TEMPLATE_AUDIT_QUEUE_URL: ""
   AUDIT_DEFAULT_QUERY_WINDOW_DAYS: "365"
@@ -176,7 +177,7 @@ secrets:
 
 rotationEpoch: "0"
 
-terminationGracePeriodSeconds: 45
+terminationGracePeriodSeconds: 80  # > liveness failure deadline (3×15=45s) + 30s shutdown drain; was 45s (no margin)
 
 podDisruptionBudget:
   enabled: true

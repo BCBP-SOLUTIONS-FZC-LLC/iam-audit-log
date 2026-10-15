@@ -207,6 +207,22 @@ groups:
             next reconcile run (D-19); anything else needs RB-3.
           runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-3--rows-in-audit_events_default
 
+      - alert: IAMAuditLogArchiveTierFailed
+        expr: >-
+          increase(iam_audit_log_archive_partitions_total{domain="iam",service="iam-audit-log",result="failed"}[30m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: Archive tier upload failed
+          description: >-
+            At least one partition tier failed to upload to S3 in the last 30 min.
+            The tier is marked ArchiveFailed and will be retried on the next reconcile
+            run (every 5 min). Persistent failures indicate an S3/KMS access problem.
+            See RB-2 for diagnosis steps.
+          runbook_url: https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/blob/main/docs/runbook.md#rb-2--archival-stalled
+
       - alert: IAMAuditLogArchiveStalled
         expr: max(iam_audit_log_archive_stalled_partitions{domain="iam", service="iam-audit-log"}) > 0
         for: 30m

@@ -126,3 +126,44 @@ func TestIngestBus_Errors(t *testing.T) {
 		t.Error("projection failure must surface so the redelivery heals it")
 	}
 }
+
+// TestIngestBus_CommercialSources_CD17 verifies that IngestBus accepts events
+// carrying each of the three agreed Commercial envelope sources (CD-17,
+// Commercial HLD §9.3) and stores the source name verbatim in SourceService.
+// The service does not allow-list sources: it stores whatever arrives and
+// never rejects or rewrites based on source alone.
+func TestIngestBus_CommercialSources_CD17(t *testing.T) {
+	cases := []struct {
+		source   string
+		topic    string
+		consumer string
+		typ      string
+	}{
+		{domain.CommercialSourceBilling, domain.TopicBilling, "billing", "TenantPlanChanged"},
+		{domain.CommercialSourceUsageMetering, domain.TopicUsage, "usage", "TenantQuotaWarning"},
+		{domain.CommercialSourceEntitlements, domain.TopicEntitlement, "entitlement", "TenantEntitlementsChanged"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.source, func(t *testing.T) {
+			store := &fakeStore{}
+			svc := NewIngestService(store, seqIDs(), 8192, 500, nil).WithBus(BusIngestConfig{})
+			ev := busEv(tc.topic, tc.typ, `{}`)
+			ev.Source = tc.source // set the agreed CD-17 source name
+			res, err := svc.IngestBus(context.Background(), ev, tc.consumer)
+			if err != nil {
+				t.Fatalf("IngestBus: %v", err)
+			}
+			if len(store.appended) != 1 {
+				t.Fatalf("expected 1 row, got %d", len(store.appended))
+			}
+			// SourceService must carry the agreed name verbatim.
+			if got := store.appended[0].SourceService; got != tc.source {
+				t.Errorf("SourceService = %q, want %q", got, tc.source)
+			}
+			// Entry type is classified by topic+type, not source.
+			if res.Entry.SourceService != tc.source {
+				t.Errorf("res.Entry.SourceService = %q, want %q", res.Entry.SourceService, tc.source)
+			}
+		})
+	}
+}

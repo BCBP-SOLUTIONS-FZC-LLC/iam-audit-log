@@ -25,6 +25,7 @@ const (
 	TopicTender         = "tender.events"
 	TopicBilling        = "billing.events"
 	TopicUsage          = "usage.events"
+	TopicEntitlement    = "entitlement.events" // Commercial domain Entitlements service (CD-21)
 	TopicWFWorkflow     = "wf.workflow.events"
 	TopicWFTemplate     = "wf.template.events"
 )
@@ -58,6 +59,7 @@ var entryTypes = map[string]taxonomyEntry{
 	// iam.user.events
 	"user.provisioned":          {tier: TierSecurity3y},
 	"user.updated":              {tier: TierSecurity3y},
+	"user.status.changed":       {tier: TierSecurity3y},
 	"user.availability.changed": {tier: TierAccess90d},
 	"user.deleted":              {tier: TierSecurity3y},
 	// iam.membership.events
@@ -103,9 +105,13 @@ var entryTypes = map[string]taxonomyEntry{
 	"tenant.plan_changed":           {tier: TierSecurity3y},
 	"tenant.payment_past_due":       {tier: TierSecurity3y},
 	"tenant.subscription_cancelled": {tier: TierSecurity3y},
+	"tenant.seats_changed":          {tier: TierSecurity3y}, // CD-21: Billing TenantSeatsChanged (Commercial HLD §9.1)
 	// usage.events
 	"usage.quota.warning":  {tier: TierAccess90d},
 	"usage.quota.exceeded": {tier: TierAccess90d},
+	"usage.quota.restored": {tier: TierAccess90d}, // CD-21: new v0.7 event; headroom restored after exhaustion
+	// entitlement.events (CD-21: Commercial domain Entitlements service)
+	"entitlement.tenant_changed": {tier: TierSecurity3y},
 	// wf.workflow.events / wf.template.events
 	"workflow.task.created":       {tier: TierAccess90d},
 	"workflow.task.sla_warning":   {tier: TierAccess90d},
@@ -131,6 +137,15 @@ var entryTypes = map[string]taxonomyEntry{
 	"invitation.created":                            {tier: TierSecurity3y, directWrite: true},
 	"invitation.revoked":                            {tier: TierSecurity3y, directWrite: true},
 	"invitation.expired":                            {tier: TierSecurity3y, directWrite: true},
+	// Commercial domain direct-write entries (CD-21; Entitlements and Billing operator actions)
+	"config.entitlement_override.set":     {tier: TierSecurity3y, directWrite: true},
+	"config.entitlement_override.removed": {tier: TierSecurity3y, directWrite: true},
+	"config.entitlement_override.expired": {tier: TierSecurity3y, directWrite: true},
+	"billing.adjustment.issued":           {tier: TierSecurity3y, directWrite: true},
+	"billing.refund.issued":               {tier: TierSecurity3y, directWrite: true},
+	// Cross-tenant bulk jobs (period rollover, limit sync, reconciliation) audit one entry
+	// per run, not per tenant, using the platform_tenant sentinel UUID (CD-21; HLD §7.2).
+	"commercial.cross_tenant_job.ran": {tier: TierSecurity3y, directWrite: true},
 }
 
 type busKey struct{ topic, sourceType string }
@@ -148,6 +163,7 @@ var busTypes = map[busKey]string{
 
 	{TopicUser, "UserProvisioned"}:         "user.provisioned",
 	{TopicUser, "UserUpdated"}:             "user.updated",
+	{TopicUser, "UserStatusChanged"}:       "user.status.changed",
 	{TopicUser, "UserAvailabilityChanged"}: "user.availability.changed",
 	{TopicUser, "UserDeleted"}:             "user.deleted",
 
@@ -195,9 +211,13 @@ var busTypes = map[busKey]string{
 	{TopicBilling, "TenantPaymentPastDue"}:        "tenant.payment_past_due",
 	{TopicBilling, "TenantSubscriptionCancelled"}: "tenant.subscription_cancelled",
 	{TopicBilling, "TenantReactivated"}:           "tenant.reactivated",
+	{TopicBilling, "TenantSeatsChanged"}:          "tenant.seats_changed", // CD-21: Commercial HLD §9.1
 
 	{TopicUsage, "TenantQuotaWarning"}:  "usage.quota.warning",
 	{TopicUsage, "TenantQuotaExceeded"}: "usage.quota.exceeded",
+	{TopicUsage, "TenantQuotaRestored"}: "usage.quota.restored", // CD-21: new v0.7 event
+
+	{TopicEntitlement, "TenantEntitlementsChanged"}: "entitlement.tenant_changed", // CD-21
 
 	{TopicWFWorkflow, "TaskCreated"}:      "workflow.task.created",
 	{TopicWFWorkflow, "TaskSLAWarning"}:   "workflow.task.sla_warning",
@@ -227,7 +247,8 @@ const busAliasCount = 7
 var topicDomains = map[string]string{
 	TopicAuth: "auth", TopicUser: "user", TopicMembership: "membership", TopicTenant: "tenant",
 	TopicDelegation: "delegation", TopicServiceAccount: "serviceaccount", TopicTender: "tender",
-	TopicBilling: "billing", TopicUsage: "usage", TopicWFWorkflow: "workflow", TopicWFTemplate: "workflow",
+	TopicBilling: "billing", TopicUsage: "usage", TopicEntitlement: "entitlement",
+	TopicWFWorkflow: "workflow", TopicWFTemplate: "workflow",
 }
 
 // TierFor returns the retention tier of a known entry_type.

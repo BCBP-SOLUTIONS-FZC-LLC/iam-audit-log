@@ -1,12 +1,12 @@
 # iam-audit-log
 
-The Audit Log Service is the **compliance system of record** for the Tender Management SaaS platform. It keeps one append-only, tenant-scoped store that answers *"who did what, to what, when, and from where"* for every IAM and domain service. It is a **pure sink**: it consumes every audit-bearing SNS topic through 11 SQS queues and accepts a small set of non-bus "direct audit writes" over the mesh. It publishes nothing and has no outbox (AL-INV-10). Tenant admins read their trail through a plan-window-clamped query and export API. Compliance callers read it through a mesh-only provenance endpoint.
+The Audit Log Service is the **compliance system of record** for the Tender Management SaaS platform. It keeps one append-only, tenant-scoped store that answers *"who did what, to what, when, and from where"* for every IAM and domain service. It is a **pure sink**: it consumes every audit-bearing SNS topic through 12 SQS queues and accepts a small set of non-bus "direct audit writes" over the mesh. It publishes nothing and has no outbox (AL-INV-10). Tenant admins read their trail through a plan-window-clamped query and export API. Compliance callers read it through a mesh-only provenance endpoint.
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`
 **Module:** Go 1.26.9 · private module · deployed as two binaries from one image (`cmd/server`, `cmd/reconciler`)
 **Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.28** (as-built through Phase 8, the platform-library / observability-standard alignment, and the production-readiness hardening). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-23) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
 
-**Status:** shared libraries at their latest releases (platform-gincommon v1.6.0, platform-events/v2 v2.0.0, platform-pgcommon/v2 v2.0.0); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
+**Status:** shared libraries at their latest releases (platform-gincommon v1.6.0, platform-events/v2 v2.1.0, platform-pgcommon/v2 v2.0.1); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
 
 ---
 
@@ -25,7 +25,7 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 
 The trail has two ingest paths that produce **the same row shape** (AL-INV-2):
 
-- **Bus** (`ingest_mode='bus'`): the 11-queue consumer fleet.
+- **Bus** (`ingest_mode='bus'`): the 12-queue consumer fleet.
 - **Direct-write** (`ingest_mode='direct_write'`): AL-5/AL-6, for the 16 taxonomy types that have no bus event (AL-D1, D-6).
 
 Neither path can mutate or delete a row. The only ways data leaves the hot store are:
@@ -132,7 +132,7 @@ The error body is a superset of `gincommon.ErrorResponse`: `error` and `code` bo
 | Rule | Enforcement |
 |---|---|
 | Identity comes only from headers. The body is never trusted for *authorization*. | `x-user-id` must be a UUID or the `iam-system` principal (`…0000000000a1` or the literal `iam-system`), and `x-tenant-id` must be a UUID, else `401`. AL-5 records the body's `tenant_id` and AL-7 reads the query's `tenant_id`: both routes are mesh-only and rebind the GUC to that tenant (`BindTenantGUC`). |
-| Direct-write accepts only the 16 direct-write taxonomy types | Any other `entry_type` returns `422 unknown_entry_type` (D-6). Bus types cannot be forged through AL-5/AL-6. |
+| Direct-write accepts only the 22 direct-write taxonomy types | Any other `entry_type` returns `422 unknown_entry_type` (D-6). Bus types cannot be forged through AL-5/AL-6. |
 | The retention tier is never caller-supplied | A `retention_tier` in the body is ignored. The tier is derived from `entry_type` (AL-INV-6, AL-INV-11). |
 | The actor model is strict | `anonymous` must carry no `id` (AL-D11). Every other type needs a UUID `id`. `iam_system` must use the reserved `00000000-0000-0000-0000-0000000000a1`. A violation returns `422 invalid_actor`. |
 | Metadata is bounded | It must be a JSON object and is compacted, then capped at `MAX_METADATA_BYTES` (8192), else `422 metadata_too_large` with `details`. |
@@ -150,7 +150,7 @@ Ports and adapters: dependencies point inward, and outer layers are never import
 ```
 iam-audit-log/
 ├── cmd/
-│   ├── server/                        # Composition root: pgcommon pool (audit_app) + migrations, 11-queue consumer fleet,
+│   ├── server/                        # Composition root: pgcommon pool (audit_app) + migrations, 12-queue consumer fleet,
 │   │                                  #   CAT-I2 plan poller, export worker, OpsMonitor gauges (D-21), API :8080 + /metrics :9090;
 │   │                                  #   background loops run under supervise.go (panic → logged restart)
 │   └── reconciler/                    # One binary, --job=<name>; jobs/ holds reconcile, redaction-retry, redaction-sweep,
@@ -175,7 +175,7 @@ iam-audit-log/
 │           ├── metrics/               # Three-tier Prometheus collectors + registry.go ledger
 │           └── telemetry/             # Thin wrappers over gincommon tracing / /metrics (gap 43)
 ├── pkg/requestctx/                    # Typed RequestContext{UserID, TenantID, Roles, ClientIP, UserAgent}
-├── api/asyncapi.yaml                  # 11 consumed channels, receive-only
+├── api/asyncapi.yaml                  # 12 consumed channels, receive-only
 ├── docs/
 │   ├── lld/                           # The spec: §17 error taxonomy, §16 open questions, §22 decisions
 │   ├── implementation/                # BUILD_PLAN.md (phases, D-1..D-23, gaps), RELEASE_CHECKLIST.md
@@ -218,7 +218,7 @@ iam-audit-log/
 | **Primary store** | PostgreSQL 15, database `audit` (PgBouncer transaction pooling in production) | `audit_events` is partitioned monthly on `occurred_at`, with a DEFAULT partition as a safety net. `FORCE ROW LEVEL SECURITY` and GUC `app.tenant_id`. Three roles: `audit_app` (server, INSERT+SELECT on `audit_events`, RLS-bound), `audit_reconciler` (BYPASSRLS, jobs only) and `audit_migrator` (DDL). |
 | **Cache** | None | No cache means no invalidation cost. Every read hits Postgres or S3, which is the right posture for a compliance store (LLD §6, §21). |
 | **Events (outbound)** | **None** | No SNS publisher, no outbox (AL-INV-10). The server warns and ignores `SNS_TOPIC_ARN`/`OUTBOX_DATABASE_URL` if they are set. |
-| **Events (inbound)** | AWS SQS, 11 queues | `<topic>-audit-q`, each with a `-dlq` and `maxReceiveCount=5`. Each is subscribed catch-all (no filter policy, AL-EVT-2) with `RawMessageDelivery=true`. Consumed through `platform-events`. Dedup is on `Envelope.ID` in the same transaction as the insert. |
+| **Events (inbound)** | AWS SQS, 12 queues | `<topic>-audit-q`, each with a `-dlq` and `maxReceiveCount=5`. Each is subscribed catch-all (no filter policy, AL-EVT-2) with `RawMessageDelivery=true`. Consumed through `platform-events`. Dedup is on `Envelope.ID` in the same transaction as the insert. |
 | **Schema registry** | AWS Glue, 6 IAM registries (read-only) | The codec is invoked only when the envelope's `dataschema` is set. A plain-JSON envelope skips it (AL-D12). This service registers no schemas. |
 | **Archive / exports** | AWS S3 `iam-audit-archive`, SSE-KMS `alias/iam-audit-archive`, Object Lock `COMPLIANCE` | Per-tenant, per-tier parts (`ARCHIVE_PART_MAX_ROWS`) go into a sealed manifest (D-12/D-20). Exports are written to the same bucket and read back through presigned URLs. |
 
@@ -227,8 +227,8 @@ iam-audit-log/
 | Library | Version | Purpose | Confinement rule (CI) |
 |---|---|---|---|
 | `platform-gincommon` | v1.6.0 | HTTP middleware, Zap logger, tracing API (`InitTracingWithConfig`, `NewSpanTracer`, `SpanTraceID`), the Prometheus registry, `MetricsHandler`, registry-built `NewShared*Vec` and validating Tier-3 constructors | **All logs, metrics and traces go through gincommon only**. Nothing imports OpenTelemetry or promhttp (gap 43, `check-observability-confinement.sh`). |
-| `platform-pgcommon/v2` | v2.0.0 | pgx/v5 pools, `ConfigFromEnv`, GUC injection, transactions, error classification, migrations | **Every DB connection, config value and operation goes through pgcommon only** (gap 44, `arch-lint.sh`) |
-| `platform-events/v2` | v2.0.0 | SQS consumer, envelope, `config.LoadSQS`, dedup | **Events, SQS config and dedup go through platform-events only**, with no publisher or outbox APIs (gap 45, `check-forbidden-events-bypass.sh`, `check-outbox-access.sh`) |
+| `platform-pgcommon/v2` | v2.0.1 | pgx/v5 pools, `ConfigFromEnv`, GUC injection, transactions, error classification, migrations | **Every DB connection, config value and operation goes through pgcommon only** (gap 44, `arch-lint.sh`) |
+| `platform-events/v2` | v2.1.0 | SQS consumer, envelope, `config.LoadSQS`, dedup | **Events, SQS config and dedup go through platform-events only**, with no publisher or outbox APIs (gap 45, `check-forbidden-events-bypass.sh`, `check-outbox-access.sh`) |
 
 ---
 
@@ -254,6 +254,7 @@ Every producer below publishes to its own topic as usual. This service owns the 
 | Billing | `billing.events` | `billing-audit-q` (also drives `tenant_plan_window`) |
 | Usage & Metering | `usage.events` | `usage-audit-q` |
 | Workflow Engine | `wf.workflow.events`, `wf.template.events` | `wf-workflow-audit-q`, `wf-template-audit-q` |
+| Commercial Entitlements | `entitlement.events` | `entitlement-audit-q` |
 
 **Contract for producers:**
 
@@ -275,6 +276,8 @@ This path is for audit facts that have no bus event (AL-D1). The **caller invari
 | Realm Provisioner | `config.idp.changed` |
 | Signup / onboarding | `tenant.owner_signed_up` |
 | Operator tooling | `security.cross_tenant_access` on every `admin_readonly` session |
+| Commercial operators (Billing, Entitlements) | `config.entitlement_override.set`, `.removed`, `.expired`; `billing.adjustment.issued`; `billing.refund.issued` |
+| Platform cross-tenant jobs | `commercial.cross_tenant_job.ran` under the `platform_tenant` sentinel UUID (AL-D14) |
 
 **Being allowed to call AL-5/AL-6 (D-23).** `/api/v1/internal/*` admits only listed callers: the producer's pods in `networkPolicy.internalCallers` and its SPIFFE principal (`cluster.local/ns/<ns>/sa/<serviceaccount>`) in `mesh.authorizationPolicy.internalCallerPrincipals`. The defaults cover Catalog Admin, Realm Provisioner, Org & Membership, Group Mapping and Tender ACL in the `iam` namespace. A new producer (Signup, operator tooling) is added per environment; until then its calls get `403 RBAC: access denied` from the sidecar and wait in its own retry queue (AUDIT-CALLER-1).
 
@@ -477,8 +480,8 @@ make docker-up
 
 `scripts/init-floci.sh` runs automatically as floci's ready hook. It provisions:
 
-- 11 SNS topics
-- 11 `*-audit-q` queues, each with a `-dlq` and `maxReceiveCount=5`, subscribed catch-all with `RawMessageDelivery=true`
+- 12 SNS topics
+- 12 `*-audit-q` queues, each with a `-dlq` and `maxReceiveCount=5`, subscribed catch-all with `RawMessageDelivery=true`
 - the `iam-audit-archive` S3 bucket with Object Lock enabled
 - 6 Glue registries (`iam-auth-events` … `iam-serviceaccount-events`), created last
 
@@ -598,7 +601,7 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 | `PG_BOUNCER_MODE` | read by pgcommon | **Overridden to `true`** for both pools regardless (AL-INV-3) |
 | `AWS_REGION` / `AWS_ENDPOINT_URL` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `ap-south-1` / — | floci override in dev (`http://localhost:4573`); IRSA in production |
 | `GLUE_REGISTRY_REGION` | `ap-south-1` | Region for the decode-only Glue codec |
-| `AUTH_AUDIT_QUEUE_URL` … `WF_TEMPLATE_AUDIT_QUEUE_URL` (11) | — | **Required outside dev**, one per inbound queue (LLD §7.1) |
+| `AUTH_AUDIT_QUEUE_URL` … `ENTITLEMENT_AUDIT_QUEUE_URL` … `WF_TEMPLATE_AUDIT_QUEUE_URL` (12) | — | **Required outside dev**, one per inbound queue (LLD §7.1) |
 | `SQS_MAX_RECEIVE_COUNT` / `SQS_VISIBILITY_TIMEOUT` / `SQS_CONCURRENCY` / `SQS_HANDLER_TIMEOUT` / `SQS_DRAIN_TIMEOUT` / `SQS_MAX_MESSAGES` / `SQS_WAIT_SECONDS` | Helm: `5` / `30s` / `4` / `20s` / `15s` / library `10` / `20` | **platform-events** `config.LoadSQS`. `SQS_MAX_RECEIVE_COUNT` also sets the dead-letter observe point (one short). The fleet stops every queue concurrently, so `SQS_DRAIN_TIMEOUT` (+5 s) bounds the whole SIGTERM drain. `SQS_QUEUE_DEPTH_INTERVAL` stays unset: `OpsMonitor` publishes the queue-depth gauges. |
 | `AUDIT_ARCHIVE_BUCKET` / `AUDIT_ARCHIVE_KMS_KEY` | `iam-audit-archive` / `alias/iam-audit-archive` | Archive and export bucket, SSE-KMS key |
 | `AUDIT_ARCHIVE_OBJECT_LOCK_MODE` | `COMPLIANCE` | `COMPLIANCE` or `GOVERNANCE`. Must be `COMPLIANCE` outside dev. |
@@ -705,7 +708,7 @@ The Helm `PrometheusRule` (30 alerts) is **generated** from the three rule files
 
 | Binary | Path in image | Purpose |
 |---|---|---|
-| `iam-audit-log-server` | `/iam-audit-log-server` | `cmd/server`, the image's `ENTRYPOINT`. Serves AL-1..AL-7 and runs the 11-queue consumer fleet, the CAT-I2 poller, the export worker and `OpsMonitor`. Self-migrates at startup. |
+| `iam-audit-log-server` | `/iam-audit-log-server` | `cmd/server`, the image's `ENTRYPOINT`. Serves AL-1..AL-7 and runs the 12-queue consumer fleet, the CAT-I2 poller, the export worker and `OpsMonitor`. Self-migrates at startup. |
 | `iam-audit-log-reconciler` | `/iam-audit-log-reconciler` | `cmd/reconciler`, dispatched with `--job=<name>` by the 4 CronJobs. No listener. |
 
 The `Dockerfile` has two stages:
@@ -725,7 +728,7 @@ The image has `EXPOSE 8080 9090`.
 | HPA | Off by default (`autoscaling.enabled: false`). When enabled: 3–6 replicas, CPU 70% / memory 80%, optionally scaling on `targetQueueDepthPerReplica` via `platform_queue_depth`. |
 | PDB | `minAvailable: 2` |
 | Resources | CPU `250m`/`1`, memory `256Mi`/`512Mi` |
-| `terminationGracePeriodSeconds` | `45`: HTTP shutdown, then the consumer fleet drains concurrently within `SQS_DRAIN_TIMEOUT` (15 s), then the pool |
+| `terminationGracePeriodSeconds` | `80`: per-stage shutdown — HTTP 20 s, metrics 5 s, pool 30 s; total exceeds the liveness failure deadline (3×15 s = 45 s) with headroom for pool drain |
 | Database timeouts | server `PG_STATEMENT_TIMEOUT=30s` / `PG_LOCK_TIMEOUT=5s`; reconciler `25m` / `10s` |
 | Service mesh | `mesh.*`: Istio `AuthorizationPolicy` + `PeerAuthentication`, sidecar injection on the server (`holdApplicationUntilProxyStarts`, 40 s drain), opted out on CronJobs |
 | Probes | `startupProbe` on `/healthz` with a 120 s budget for migrations. Liveness on `/healthz`, readiness on `/readyz`. |
@@ -813,10 +816,10 @@ DATABASE_URL=postgres://audit_app:...@pgbouncer:6432/audit?sslmode=require
 MIGRATION_DATABASE_URL=postgres://audit_migrator:...@audit-db:5432/audit?sslmode=require
 RECONCILER_DATABASE_URL=postgres://audit_reconciler:...@pgbouncer:6432/audit?sslmode=require   # cmd/reconciler only
 
-# Inbound queues (all 11 required outside dev)
+# Inbound queues (all 12 required outside dev)
 AUTH_AUDIT_QUEUE_URL=https://sqs.ap-south-1.amazonaws.com/<acct>/auth-audit-q
 # … USER_ / MEMBERSHIP_ / TENANT_ / DELEGATION_ / SERVICEACCOUNT_ / TENDER_ / BILLING_ / USAGE_ /
-#   WF_WORKFLOW_ / WF_TEMPLATE_AUDIT_QUEUE_URL
+#   ENTITLEMENT_ / WF_WORKFLOW_ / WF_TEMPLATE_AUDIT_QUEUE_URL
 
 # Archive
 AUDIT_ARCHIVE_BUCKET=iam-audit-archive
@@ -853,12 +856,15 @@ Hot-path writes (AL-5/AL-6 and bus ingest) depend on **Postgres only**.
 | **Org & Membership** | AL-5 | `config.tenant_setting.changed`, `invitation.*` |
 | **Realm Provisioner** | AL-5 | `config.idp.changed` |
 | **Operator tooling** | AL-5 | `security.cross_tenant_access` |
+| **Commercial Entitlements** | AL-5 | `config.entitlement_override.set/removed/expired` |
+| **Commercial Billing** | AL-5 | `billing.adjustment.issued`, `billing.refund.issued` |
+| **Platform cross-tenant jobs** | AL-5 | `commercial.cross_tenant_job.ran` (platform_tenant sentinel) |
 | **Product UI (via gateway)** | AL-1..AL-4 | The tenant admin's "View audit log" and exports |
 | **Compliance / verification services** | AL-7 | Provenance reads beyond the plan window |
 
 ### 3. Async event dependencies
 
-**Events this service consumes:** all 11 queues in [Integrating §2](#2-bus-producers-publish-to-your-own-topic-and-nothing-else-is-needed). Each is catch-all, so every type on the topic is recorded. Two event families also drive side effects beyond the audit row:
+**Events this service consumes:** all 12 queues in [Integrating §2](#2-bus-producers-publish-to-your-own-topic-and-nothing-else-is-needed). Each is catch-all, so every type on the topic is recorded. Two event families also drive side effects beyond the audit row:
 
 | Event | Queue | Side effect |
 |---|---|---|
@@ -872,7 +878,7 @@ Hot-path writes (AL-5/AL-6 and bus ingest) depend on **Postgres only**.
 | System | Role |
 |---|---|
 | **PostgreSQL** (`audit` DB) | The trail, the ledger, the archive state, export jobs and redaction tasks. RLS, monthly partitions, three roles. |
-| **AWS SQS** | 11 `*-audit-q` queues, each with a `-dlq` (`maxReceiveCount=5`) |
+| **AWS SQS** | 12 `*-audit-q` queues, each with a `-dlq` (`maxReceiveCount=5`) |
 | **AWS SNS** | Producer-owned topics. This service only holds the catch-all subscriptions. |
 | **AWS S3 + KMS** | `iam-audit-archive`: Object Lock COMPLIANCE archive and export objects, SSE-KMS `alias/iam-audit-archive` |
 | **AWS Glue Schema Registry** | 6 IAM registries, read-only, used only for envelopes that carry `dataschema` |

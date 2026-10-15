@@ -17,6 +17,7 @@ var lldTable = []struct {
 	{TopicAuth, "EmailVerified", "auth.email.verified", TierAccess90d},
 	{TopicUser, "UserProvisioned", "user.provisioned", TierSecurity3y},
 	{TopicUser, "UserUpdated", "user.updated", TierSecurity3y},
+	{TopicUser, "UserStatusChanged", "user.status.changed", TierSecurity3y},
 	{TopicUser, "UserAvailabilityChanged", "user.availability.changed", TierAccess90d},
 	{TopicUser, "UserDeleted", "user.deleted", TierSecurity3y},
 	{TopicMembership, "DepartmentMembershipGranted", "membership.department.granted", TierCompliance7y},
@@ -58,8 +59,11 @@ var lldTable = []struct {
 	{TopicBilling, "TenantPaymentPastDue", "tenant.payment_past_due", TierSecurity3y},
 	{TopicBilling, "TenantSubscriptionCancelled", "tenant.subscription_cancelled", TierSecurity3y},
 	{TopicBilling, "TenantReactivated", "tenant.reactivated", TierSecurity3y},
+	{TopicBilling, "TenantSeatsChanged", "tenant.seats_changed", TierSecurity3y},
 	{TopicUsage, "TenantQuotaWarning", "usage.quota.warning", TierAccess90d},
 	{TopicUsage, "TenantQuotaExceeded", "usage.quota.exceeded", TierAccess90d},
+	{TopicUsage, "TenantQuotaRestored", "usage.quota.restored", TierAccess90d},
+	{TopicEntitlement, "TenantEntitlementsChanged", "entitlement.tenant_changed", TierSecurity3y},
 	{TopicWFWorkflow, "TaskCreated", "workflow.task.created", TierAccess90d},
 	{TopicWFWorkflow, "TaskSLAWarning", "workflow.task.sla_warning", TierAccess90d},
 	{TopicWFWorkflow, "TaskSLABreached", "workflow.task.sla_breached", TierAccess90d},
@@ -87,6 +91,12 @@ var lldDirectWrite = map[string]RetentionTier{
 	"invitation.created":                            TierSecurity3y,
 	"invitation.revoked":                            TierSecurity3y,
 	"invitation.expired":                            TierSecurity3y,
+	"config.entitlement_override.set":               TierSecurity3y,
+	"config.entitlement_override.removed":           TierSecurity3y,
+	"config.entitlement_override.expired":           TierSecurity3y,
+	"billing.adjustment.issued":                     TierSecurity3y,
+	"billing.refund.issued":                         TierSecurity3y,
+	"commercial.cross_tenant_job.ran":               TierSecurity3y,
 }
 
 func TestTaxonomy_EveryLLDBusRowMaps_ALD3(t *testing.T) {
@@ -142,8 +152,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 72 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 72 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 82 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 82 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 

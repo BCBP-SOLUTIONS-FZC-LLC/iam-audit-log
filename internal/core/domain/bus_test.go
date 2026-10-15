@@ -230,3 +230,70 @@ func TestBuildBusEntry_EdgeCases(t *testing.T) {
 		t.Error("actionFor")
 	}
 }
+
+// TestBuildBusEntry_CommercialSources_CD17 verifies that events from the
+// three agreed Commercial envelope sources (CD-17, Commercial HLD §9.3) are:
+//   - accepted without error
+//   - stored verbatim as SourceService (no allow-list rewrite)
+//   - classified by topic+type, not by source
+//   - actor-derived by the envelope actor field, not by source
+func TestBuildBusEntry_CommercialSources_CD17(t *testing.T) {
+	cases := []struct {
+		source    string
+		topic     string
+		typ       string
+		actor     string
+		wantEntry string
+		wantActor ActorType
+	}{
+		{
+			source:    CommercialSourceBilling,
+			topic:     TopicBilling,
+			typ:       "TenantPlanChanged",
+			actor:     IAMSystemActorID,
+			wantEntry: "tenant.plan_changed",
+			wantActor: ActorIAMSystem,
+		},
+		{
+			source:    CommercialSourceUsageMetering,
+			topic:     TopicUsage,
+			typ:       "TenantQuotaWarning",
+			actor:     IAMSystemActorID,
+			wantEntry: "usage.quota.warning",
+			wantActor: ActorIAMSystem,
+		},
+		{
+			source:    CommercialSourceEntitlements,
+			topic:     TopicEntitlement,
+			typ:       "TenantEntitlementsChanged",
+			actor:     IAMSystemActorID,
+			wantEntry: "entitlement.tenant_changed",
+			wantActor: ActorIAMSystem,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.source, func(t *testing.T) {
+			b := ev(tc.topic, tc.typ, tc.actor, `{}`)
+			b.Source = tc.source
+			e, known, err := BuildBusEntry(b, 8192, t0)
+			if err != nil {
+				t.Fatalf("BuildBusEntry: %v", err)
+			}
+			if !known {
+				t.Errorf("event type %s should be known in taxonomy", tc.typ)
+			}
+			// SourceService stored verbatim — CD-17 agreed name must survive.
+			if e.SourceService != tc.source {
+				t.Errorf("SourceService = %q, want %q", e.SourceService, tc.source)
+			}
+			// Classification is by topic+type, not source.
+			if e.EntryType != tc.wantEntry {
+				t.Errorf("EntryType = %q, want %q", e.EntryType, tc.wantEntry)
+			}
+			// Actor derivation is by envelope actor field, not source.
+			if e.Actor.Type != tc.wantActor {
+				t.Errorf("Actor.Type = %q, want %q", e.Actor.Type, tc.wantActor)
+			}
+		})
+	}
+}

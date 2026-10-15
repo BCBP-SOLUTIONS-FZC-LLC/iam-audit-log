@@ -1,0 +1,359 @@
+# Schema Registry — Glue Schema Registry lifecycle management.
+#
+# Three jobs:
+#   staging    — runs on push to main; registers/updates consumed-event schemas
+#                in the staging Glue registry. Skipped when vars.AWS_REGION is unset.
+#   production — runs on published releases; registers in the production registry.
+#                Skipped when vars.AWS_REGION is unset.
+#   pr-check   — runs on every PR; validates AsyncAPI + diffs vs staging registry.
+#
+# NOTE: iam-audit-log is a pure consumer service (AL-INV-10): it registers NO
+# produced schemas. The staging/production jobs validate the asyncapi.yaml and
+# diff any consumed-schema changes against the registry. stage-produced-event-schemas.sh
+# produces no output (no produced schemas), which is correct by design.
+#
+name: Schema Registry
+
+"on":
+  push:
+    branches: [main, master]
+    paths:
+      - 'api/asyncapi.yaml'
+      - 'internal/eventschema/**'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'api/asyncapi.yaml'
+      - 'internal/eventschema/**'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force schema registration even if SCHEMA_FREEZE is set'
+        type: boolean
+        required: false
+        default: false
+      environment:
+        description: 'Target environment (staging or production)'
+        type: choice
+        required: false
+        default: staging
+        options: [staging, production]
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  # ── staging: push to main ─────────────────────────────────────────────────
+  staging:
+    name: Staging schema registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Skip when AWS credentials are not configured (e.g. forks, early repos).
+    if: |
+      vars.AWS_REGION != '' && (
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+      )
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Python (schema-gov)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install schema-gov (platform-schemagov v0.4.0)
+        run: |
+          pip install --no-cache-dir "git+https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com/BCBP-SOLUTIONS-FZC-LLC/platform-schemagov.git@v0.4.0"
+
+      - name: Validate schemas
+        run: |
+          schema-gov validate \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir internal/eventschema
+
+      - name: Check schema freeze
+        env:
+          SCHEMA_FREEZE: ${{ vars.SCHEMA_FREEZE }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+        run: |
+          if [ "${SCHEMA_FREEZE:-}" = 'true' ] && [ "${FORCE}" != 'true' ]; then
+            echo "::error::SCHEMA_FREEZE is set — schema registration is blocked. Use workflow_dispatch with force=true to override."
+            exit 1
+          fi
+          echo "Schema freeze check passed."
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Stage produced event schemas
+        run: bash .github/scripts/stage-produced-event-schemas.sh .tmp/glue-schemas
+
+      - name: Detect orphaned schemas (dry-run)
+        continue-on-error: true
+        run: |
+          schema-gov prune \
+            --asyncapi   api/asyncapi.yaml \
+            --registry   ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }} \
+            --dry-run
+
+      - name: Assess event usage
+        continue-on-error: true
+        run: |
+          schema-gov usage-check \
+            --asyncapi api/asyncapi.yaml \
+            ${{ vars.PROMETHEUS_URL != '' && format('--source {0}', vars.PROMETHEUS_URL) || '--source disabled' }}
+
+      - name: Enforce usage lifecycle
+        run: |
+          schema-gov enforce-lifecycle \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }}
+
+      - name: Diff schemas against registry
+        run: |
+          schema-gov diff \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir .tmp/glue-schemas \
+            --registry   ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }} \
+            --fail-on-breaking
+
+      - name: Register schemas
+        run: |
+          schema-gov register \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir .tmp/glue-schemas \
+            --registry   ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }}
+
+      - name: Update schema changelog
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          schema-gov changelog \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }} \
+            --output   docs/schema-changelog.md || true
+          if git diff --quiet docs/schema-changelog.md 2>/dev/null; then
+            echo "No schema changelog changes."
+          else
+            git add docs/schema-changelog.md
+            for i in 1 2 3; do
+              git pull --rebase origin "${GITHUB_REF_NAME}" && \
+              git commit -m "chore: update schema changelog (staging) [skip ci]" && \
+              git push && break
+              sleep $((i * 5))
+            done
+          fi
+
+      - name: Emit metrics
+        if: always()
+        continue-on-error: true
+        run: |
+          schema-gov metrics \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }} \
+            ${{ vars.PUSHGATEWAY_URL != '' && format('--pushgateway {0}', vars.PUSHGATEWAY_URL) || '' }}
+
+  # ── production: published releases ───────────────────────────────────────
+  production:
+    name: Production schema registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      vars.AWS_REGION != '' && (
+        github.event_name == 'release' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+      )
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Python (schema-gov)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install schema-gov (platform-schemagov v0.4.0)
+        run: |
+          pip install --no-cache-dir "git+https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com/BCBP-SOLUTIONS-FZC-LLC/platform-schemagov.git@v0.4.0"
+
+      - name: Validate schemas
+        run: |
+          schema-gov validate \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir internal/eventschema
+
+      - name: Check schema freeze
+        env:
+          SCHEMA_FREEZE: ${{ vars.SCHEMA_FREEZE }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+        run: |
+          if [ "${SCHEMA_FREEZE:-}" = 'true' ] && [ "${FORCE}" != 'true' ]; then
+            echo "::error::SCHEMA_FREEZE is set — schema registration is blocked. Use workflow_dispatch with force=true to override."
+            exit 1
+          fi
+          echo "Schema freeze check passed."
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Stage produced event schemas
+        run: bash .github/scripts/stage-produced-event-schemas.sh .tmp/glue-schemas
+
+      - name: Detect orphaned schemas (dry-run)
+        continue-on-error: true
+        run: |
+          schema-gov prune \
+            --asyncapi   api/asyncapi.yaml \
+            --registry   ${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }} \
+            --dry-run
+
+      - name: Assess event usage
+        continue-on-error: true
+        run: |
+          schema-gov usage-check \
+            --asyncapi api/asyncapi.yaml \
+            ${{ vars.PROMETHEUS_URL != '' && format('--source {0}', vars.PROMETHEUS_URL) || '--source disabled' }}
+
+      - name: Enforce usage lifecycle
+        run: |
+          schema-gov enforce-lifecycle \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }}
+
+      - name: Diff schemas against registry
+        run: |
+          schema-gov diff \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir .tmp/glue-schemas \
+            --registry   ${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }} \
+            --fail-on-breaking
+
+      - name: Register schemas
+        run: |
+          schema-gov register \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir .tmp/glue-schemas \
+            --registry   ${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }}
+
+      - name: Update schema changelog
+        env:
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
+        run: |
+          schema-gov changelog \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }} \
+            --output   docs/schema-changelog.md || true
+          if git diff --quiet docs/schema-changelog.md 2>/dev/null; then
+            echo "No schema changelog changes."
+          else
+            git add docs/schema-changelog.md
+            for i in 1 2 3; do
+              git pull --rebase origin "${GITHUB_REF_NAME}" && \
+              git commit -m "chore: update schema changelog (production) [skip ci]" && \
+              git push && break
+              sleep $((i * 5))
+            done
+          fi
+
+      - name: Emit metrics
+        if: always()
+        continue-on-error: true
+        run: |
+          schema-gov metrics \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }} \
+            ${{ vars.PUSHGATEWAY_URL != '' && format('--pushgateway {0}', vars.PUSHGATEWAY_URL) || '' }}
+
+  # ── pr-check: every PR touching schemas ──────────────────────────────────
+  pr-check:
+    name: Schema PR check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Python (schema-gov)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install schema-gov (platform-schemagov v0.4.0)
+        run: |
+          pip install --no-cache-dir "git+https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com/BCBP-SOLUTIONS-FZC-LLC/platform-schemagov.git@v0.4.0"
+
+      - name: Validate schemas
+        run: |
+          schema-gov validate \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir internal/eventschema
+
+      - name: Check AWS credentials available
+        id: aws-check
+        run: |
+          if [ -z "${{ vars.AWS_REGION }}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "AWS_REGION not configured — skipping registry diff."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        if: steps.aws-check.outputs.available == 'true'
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Stage produced event schemas
+        if: steps.aws-check.outputs.available == 'true'
+        run: bash .github/scripts/stage-produced-event-schemas.sh .tmp/glue-schemas
+
+      - name: Diff schemas vs staging registry
+        if: steps.aws-check.outputs.available == 'true'
+        run: |
+          schema-gov diff \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir .tmp/glue-schemas \
+            --registry   ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }} \
+            --fail-on-breaking
+
+      - name: Emit metrics
+        if: always()
+        continue-on-error: true
+        run: |
+          schema-gov metrics \
+            --asyncapi api/asyncapi.yaml \
+            ${{ vars.PUSHGATEWAY_URL != '' && format('--pushgateway {0}', vars.PUSHGATEWAY_URL) || '' }} || true

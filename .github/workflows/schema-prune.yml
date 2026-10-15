@@ -1,0 +1,79 @@
+# Schema Prune — manual operator cleanup of orphaned Glue schema versions.
+# Triggered manually (workflow_dispatch) only. Never runs automatically so
+# that a bad PR cannot accidentally remove a schema version that a downstream
+# consumer is still pinned to.
+#
+# Skipped (not failed) when vars.AWS_REGION is not set.
+name: Schema Prune
+
+"on":
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Registry environment to prune'
+        type: choice
+        required: true
+        default: staging
+        options: [staging, production]
+      dry_run:
+        description: 'Dry-run only — list orphans but do not delete'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  prune:
+    name: Prune orphaned schemas (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: vars.AWS_REGION != ''
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Python (schema-gov)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install schema-gov (platform-schemagov v0.4.0)
+        run: |
+          pip install --no-cache-dir "git+https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com/BCBP-SOLUTIONS-FZC-LLC/platform-schemagov.git@v0.4.0"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Resolve registry name
+        id: registry
+        run: |
+          if [ "${{ github.event.inputs.environment }}" = 'production' ]; then
+            echo "name=${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prune orphaned schema versions
+        run: |
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = 'true' ]; then
+            DRY_RUN_FLAG="--dry-run"
+            echo "Running in DRY-RUN mode — no schemas will be deleted."
+          fi
+          schema-gov prune \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ steps.registry.outputs.name }} \
+            ${DRY_RUN_FLAG}

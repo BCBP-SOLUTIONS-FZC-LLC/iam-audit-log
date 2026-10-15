@@ -28,12 +28,12 @@ func assertSameSet(t *testing.T, where string, got []string) {
 	}
 }
 
-// LLD §7.1 / §25: the frozen 11-queue catalog, consumer discriminators, and
+// LLD §7.1 / §25: the frozen 12-queue catalog, consumer discriminators, and
 // env var names.
 func TestQueueCatalog_FrozenLLDValues(t *testing.T) {
 	qs := config.InboundQueues()
-	if len(qs) != 11 {
-		t.Fatalf("got %d queues, LLD §7.1 has 11", len(qs))
+	if len(qs) != 12 {
+		t.Fatalf("got %d queues, LLD §7.1 has 12", len(qs))
 	}
 	seen := map[string]bool{}
 	for _, q := range qs {

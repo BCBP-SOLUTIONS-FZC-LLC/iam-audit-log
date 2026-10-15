@@ -32,7 +32,7 @@ func TestAsyncAPI_NoSendOperations_ALINV10(t *testing.T) {
 	want := []string{
 		"auth-audit-q", "user-audit-q", "membership-audit-q", "tenant-audit-q",
 		"delegation-audit-q", "serviceaccount-audit-q", "tender-audit-q",
-		"billing-audit-q", "usage-audit-q", "wf-workflow-audit-q", "wf-template-audit-q",
+		"billing-audit-q", "usage-audit-q", "entitlement-audit-q", "wf-workflow-audit-q", "wf-template-audit-q",
 	}
 	got := map[string]bool{}
 	for _, ch := range spec.Channels {

@@ -233,13 +233,42 @@ func (s *ArchiveService) archiveTier(ctx context.Context, p string, month time.T
 		if cur == nil {
 			return nil
 		}
-		o, err := s.upload(ctx, cur)
+		w := cur
 		cur = nil
+
+		// Step 1 — finalize the part: close gzip, compute SHA-256, rewind.
+		// SHA-256 is in hand before any network I/O, so we can write the
+		// manifest row first (step 2) and upload second (step 3).
+		o, size, err := w.finish(s.store.Bucket())
 		if err != nil {
+			w.discard()
 			return err
 		}
+
+		// Step 2 — write the manifest row BEFORE uploading to S3.
+		// Crash ordering guarantee: a crash between here and PutArchive
+		// leaves an unsealed manifest row with no corresponding S3 object.
+		// The next successful reconcile run calls FinishArchive, whose
+		// DELETE removes every unsealed row not in the keep list — so the
+		// orphaned row is cleaned automatically and the part slot is
+		// retired.  The prior ordering (S3 first) left an Object-Lock-held
+		// S3 version with no manifest row, untrackable for 3–7 years.
+		if err := s.repo.UpsertObject(ctx, p, o); err != nil {
+			w.discard()
+			return err
+		}
+
+		// Step 3 — upload the part to S3.
+		if err := s.store.PutArchive(ctx, o.Key, w.file, size, domain.RetainUntil(o.Tier, o.MaxOccurredAt)); err != nil {
+			w.discard()
+			// The manifest row stays; FinishArchive's DELETE will remove it
+			// on the next successful reconcile run (not in the keep list).
+			return err
+		}
+		w.discard()
+
 		written = append(written, o)
-		return s.repo.UpsertObject(ctx, p, o)
+		return nil
 	}
 	err = s.repo.StreamTier(ctx, p, tier, func(e domain.AuditEntry) error {
 		if cur != nil && (cur.tenant != e.TenantID || cur.rows >= s.cfg.PartMaxRows) {
@@ -272,19 +301,6 @@ func (s *ArchiveService) archiveTier(ctx context.Context, p string, month time.T
 		keep[i] = o.Key
 	}
 	return s.repo.FinishArchive(ctx, p, tier, keep, rows, domain.ManifestSHA256(written), string(tier)+"/")
-}
-
-// upload closes a part and puts it in S3.
-func (s *ArchiveService) upload(ctx context.Context, w *partWriter) (domain.ArchiveObject, error) {
-	defer w.discard()
-	o, size, err := w.finish(s.store.Bucket())
-	if err != nil {
-		return o, err
-	}
-	if err := s.store.PutArchive(ctx, o.Key, w.file, size, domain.RetainUntil(o.Tier, o.MaxOccurredAt)); err != nil {
-		return o, err
-	}
-	return o, nil
 }
 
 // verifyTier re-reads every unsealed object: its body SHA-256 must match

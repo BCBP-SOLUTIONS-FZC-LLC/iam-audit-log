@@ -62,7 +62,7 @@ injected_labels:
 # governance"). Shared (platform/domain) metrics may use only keys listed
 # here; enumerated keys may take only their listed values.
 label_vocabulary:
-  queue:          { meaning: "inbound SQS queue name (*-audit-q)", cardinality: 11, values: [auth-audit-q, user-audit-q, membership-audit-q, tenant-audit-q, delegation-audit-q, serviceaccount-audit-q, tender-audit-q, billing-audit-q, usage-audit-q, wf-workflow-audit-q, wf-template-audit-q] }
+  queue:          { meaning: "inbound SQS queue name (*-audit-q)", cardinality: 12, values: [auth-audit-q, user-audit-q, membership-audit-q, tenant-audit-q, delegation-audit-q, serviceaccount-audit-q, tender-audit-q, billing-audit-q, usage-audit-q, entitlement-audit-q, wf-workflow-audit-q, wf-template-audit-q] }
   event_type:     { meaning: "producer event type, bounded to the §7.1 taxonomy for its topic; anything else is \"unknown\"", cardinality: "≤ 70" }
   reason:         { meaning: "why a message was dead-lettered (platform-events' value for the same case)", cardinality: 1, values: [max_receive_count] }
   dependency:     { meaning: "synchronous dependency called", cardinality: 2, values: [catalog-admin, s3] }
