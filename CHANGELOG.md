@@ -4,6 +4,43 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — Commercial domain support: CD-17 source constants + CD-21 entitlement queue (2026-10-15)
+- **CD-17: `CommercialSource*` constants** in new `internal/core/domain/commercial_sources.go` — canonical envelope source names for `commercial-billing`, `commercial-entitlements` and `commercial-usage-metering` (Commercial HLD §9.3). Tests `TestBuildBusEntry_CommercialSources_CD17` and `TestIngestBus_CommercialSources_CD17` verify each agreed name is stored verbatim as `source_service` and triggers correct entry-type classification.
+- **CD-21: 12th inbound queue `entitlement-audit-q`** for `entitlement.events` (Commercial Entitlements service):
+  - `internal/config/config.go`: `ENTITLEMENT_AUDIT_QUEUE_URL` added as 12th queue.
+  - `api/asyncapi.yaml`: `entitlementAudit` channel + `entitlementAuditQueue` server added; `TenantSeatsChanged` (billing), `TenantQuotaRestored` (usage) and `TenantEntitlementsChanged` (entitlement) messages added. Total receive operations 11 → **12**; total messages 65 → **69**.
+  - `internal/core/domain/taxonomy.go`: 10 new entry types — `entitlement.tenant_changed` (security_3y), `tenant.seats_changed` (security_3y), `usage.quota.restored` (access_90d), `config.entitlement_override.{set,removed,expired}` (security_3y direct-write), `billing.adjustment.issued`, `billing.refund.issued` (security_3y direct-write), `commercial.cross_tenant_job.ran` (security_3y direct-write). Vocabulary 73 → **82**.
+  - `deploy/helm/values.yaml`, `deploy/iam/policy.json`, `.env-example`: entitlement queue wired and the IRSA ARN added.
+  - `test/unit/queue_catalog_test.go`: queue count 11 → 12; `taxonomy_test.go`: new bus and direct-write entries; vocabulary assertion 72 → 82.
+- **Integration test `TestBus_CommercialEntitlementSource_CD17`** pins the `commercial-entitlements` source name on `entitlement-audit-q`.
+
+### Fixed — production hardening (2026-10-15)
+- **Archive crash ordering:** `archive_service.go` now writes the manifest row (`UpsertObject`) **before** the S3 `PutArchive` call. A crash between the two previously left an Object-Lock-held S3 version with no manifest row — permanently untrackable for 3–7 years. The reversed order leaves an orphaned unsealed manifest row, which `FinishArchive` removes on the next successful reconcile run.
+- **S3 `PutArchive` retry:** up to 3 attempts with exponential backoff (1 s, 2 s) on `ErrDependencyUnavailable`; body rewound with `Seek(0)` on each retry; permanent errors returned immediately without retry.
+- **Export max-rows cap:** `ExportService` enforces `DefaultExportMaxRows` (5 000 000). An unbounded export query could previously exhaust ephemeral storage; it now returns an error and marks the job failed.
+- **Per-stage graceful shutdown:** `cmd/server/main.go` uses separate `context.WithTimeout` calls — HTTP 20 s, metrics 5 s, pool 30 s — instead of a single shared 30 s context. `terminationGracePeriodSeconds` bumped 45 → **80** in `deploy/helm/values.yaml`.
+- **Plan poller startup jitter:** `PlanPoller.Run` waits a random `[0, Interval/2)` delay before the first poll, derived from `UnixNano`. Prevents all replicas from stampeding `iam-catalog-admin` (CAT-I2) simultaneously on a rolling restart.
+- **Deterministic validation error field order:** `BuildDirectWriteEntry` iterates required-field checks as an ordered struct array instead of a `map[string]string`. When multiple fields are missing, the first error returned is now always `entry_type → action → source_service → source_event_type`, not random.
+
+### Changed — dependency update (2026-10-15)
+- **`github.com/klauspost/compress` v1.20.1 → v1.20.3** (patch; used transitively by AWS SDK v2 and platform-events SQS client).
+- **govulncheck:** 0 vulnerabilities found across all production packages. One transitive module has a vulnerability in code this service does not call (reported as informational).
+
+### Added — user.status.changed entry type (2026-10-13)
+- **New `user.status.changed` (security_3y) entry type added to taxonomy** (compatibility fix UP-AL-GAP-004 — iam-user-profile bilateral check).
+  - `internal/core/domain/taxonomy.go`: `user.status.changed` added to `entryTypes` and `{TopicUser,"UserStatusChanged"}` added to `busTypes`.
+  - `internal/core/domain/taxonomy_test.go`: `UserStatusChanged` row added to `lldTable`; vocabulary count bumped 72 → 73.
+  - `api/asyncapi.yaml`: `userAudit_UserStatusChanged` message added to `userAudit` channel and `components/messages`.
+  - `docs/lld/iam-lld-audit-log-service.md`: §7.1 table row and §25 frozen vocabulary entry added.
+
+### Changed — library upgrades (2026-10-13)
+- **`platform-events/v2` bumped v2.0.0 → v2.1.0** (compatibility fix UP-AL-GAP-005 / DLG-AL-GAP-004 / EC-AL-GAP-001): aligns with all IAM producer services now on v2.1.0.
+- **`platform-pgcommon/v2` bumped v2.0.0 → v2.0.1** (compatibility fix OM-AL-GAP-007 / RP-GAP-021): patch-level alignment with iam-org-membership, iam-realm-provisioner, and iam-delegation.
+
+### Changed — asyncapi.yaml topic name documentation (2026-10-13)
+- **`membership-audit-q` and `tenant-audit-q` channel titles and descriptions corrected** to use the actual SNS topic naming convention (`iam-membership-events`, `iam-tenant-events` — hyphen, owned by iam-org-membership and iam-realm-provisioner). Infrastructure verification note added. `TopicMembership`/`TopicTenant` taxonomy constants (internal lookup keys) unchanged. Tracked as OM-AL-GAP-005 (Infra Gap).
+- **`auth-audit-q` channel title and description corrected** to use actual SNS topic name `iam-auth-events` (hyphen, owned by iam-event-consumer). Tracked as EC-AL-GAP-004 Infra note.
+
 ### Changed — e2e runs as its own CI job (2026-10-04)
 - **`validate-test.yml` has two parallel jobs, `test` and `e2e`, as in iam-authz-enrichment.**
   - Before, e2e was a step after `make test-ci` inside the 40-minute `test` job.

@@ -43,6 +43,7 @@ func InboundQueues() []Queue {
 		{EnvVar: "TENDER_AUDIT_QUEUE_URL", Name: "tender-audit-q", Topic: "tender.events", Consumer: "tender"},
 		{EnvVar: "BILLING_AUDIT_QUEUE_URL", Name: "billing-audit-q", Topic: "billing.events", Consumer: "billing"},
 		{EnvVar: "USAGE_AUDIT_QUEUE_URL", Name: "usage-audit-q", Topic: "usage.events", Consumer: "usage"},
+		{EnvVar: "ENTITLEMENT_AUDIT_QUEUE_URL", Name: "entitlement-audit-q", Topic: "entitlement.events", Consumer: "entitlement"},
 		{EnvVar: "WF_WORKFLOW_AUDIT_QUEUE_URL", Name: "wf-workflow-audit-q", Topic: "wf.workflow.events", Consumer: "wf_workflow"},
 		{EnvVar: "WF_TEMPLATE_AUDIT_QUEUE_URL", Name: "wf-template-audit-q", Topic: "wf.template.events", Consumer: "wf_template"},
 	}

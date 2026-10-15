@@ -13,6 +13,12 @@ import (
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/port"
 )
 
+// DefaultExportMaxRows is the maximum rows a single export job may produce
+// when the caller does not configure MaxRows.  It is intentionally generous
+// (5 M rows × ~8 KiB metadata ≈ 40 GiB uncompressed) but still finite so a
+// runaway export cannot exhaust ephemeral storage.
+const DefaultExportMaxRows = 5_000_000
+
 // ExportConfig tunes ExportService.
 type ExportConfig struct {
 	SignedURLTTL   time.Duration // EXPORT_SIGNED_URL_TTL — retrieval window (7 d)
@@ -20,8 +26,11 @@ type ExportConfig struct {
 	PollInterval   time.Duration // EXPORT_POLL_INTERVAL
 	Lease          time.Duration // EXPORT_JOB_LEASE
 	WorkDir        string        // EXPORT_WORK_DIR ("" → os.TempDir())
-	Now            port.Clock
-	Metrics        port.QueryMetrics // export_jobs_total; may be nil
+	// MaxRows caps the total rows written to a single export temp file.
+	// Zero or negative means DefaultExportMaxRows.
+	MaxRows int64
+	Now     port.Clock
+	Metrics port.QueryMetrics // export_jobs_total; may be nil
 }
 
 // ExportService serves AL-3/AL-4 and runs the export worker (decision D-2:
@@ -49,6 +58,9 @@ func NewExportService(jobs port.ExportJobs, reader port.AuditReader, archive por
 	}
 	if cfg.Lease <= 0 {
 		cfg.Lease = 15 * time.Minute
+	}
+	if cfg.MaxRows <= 0 {
+		cfg.MaxRows = DefaultExportMaxRows
 	}
 	return &ExportService{jobs: jobs, reader: reader, archive: archive, store: store, query: query, newID: newID, cfg: cfg, log: log}
 }
@@ -235,6 +247,9 @@ func (s *ExportService) produce(ctx context.Context, job domain.ExportJob) (key 
 	enc := json.NewEncoder(zw)
 	write := func(e domain.AuditEntry) error {
 		rows++
+		if rows > s.cfg.MaxRows {
+			return fmt.Errorf("export exceeded maximum row limit (%d rows); reduce the query window or contact support", s.cfg.MaxRows)
+		}
 		return enc.Encode(domain.ToRecord(e))
 	}
 

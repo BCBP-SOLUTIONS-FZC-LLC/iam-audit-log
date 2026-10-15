@@ -342,14 +342,27 @@ func run() int {
 	// Order (mirrors iam-realm-provisioner): stop accepting HTTP → metrics →
 	// consumers → background work → drain pool; tracing + logger flush run
 	// from the defers above.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	//
+	// Each stage gets its OWN deadline so that a slow HTTP drain (e.g. 20 s
+	// worth of in-flight requests) does not steal the pool-drain budget and
+	// kill in-flight DB transactions mid-write.  The total wall-clock is still
+	// bounded by terminationGracePeriodSeconds (80 s in Helm values).
+	newCtx := func(d time.Duration) (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.Background(), d)
+	}
+
+	httpCtx, httpCancel := newCtx(20 * time.Second)
+	defer httpCancel()
+	if err := srv.Shutdown(httpCtx); err != nil {
 		log.Error("HTTP server shutdown error", map[string]any{"error": err.Error()})
 	}
-	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+
+	metricsCtx, metricsCancel := newCtx(5 * time.Second)
+	defer metricsCancel()
+	if err := metricsServer.Shutdown(metricsCtx); err != nil {
 		log.Error("metrics server shutdown error", map[string]any{"error": err.Error()})
 	}
+
 	// In-flight handlers finish their DB writes before the pool drains; an
 	// unfinished message is simply redelivered (AL-INV-4).
 	if err := fleet.Stop(); err != nil {
@@ -359,7 +372,10 @@ func run() int {
 	<-workerDone // an interrupted export records its failure before the pool drains
 	<-pollerDone
 	<-opsDone
-	if err := pool.DrainAndClose(shutdownCtx); err != nil {
+
+	poolCtx, poolCancel := newCtx(30 * time.Second)
+	defer poolCancel()
+	if err := pool.DrainAndClose(poolCtx); err != nil {
 		log.Error("pool drain error", map[string]any{"error": err.Error()})
 	}
 	return 0

@@ -1,0 +1,108 @@
+# Schema Freeze Watchdog — alerts when SCHEMA_FREEZE has been set too long.
+# Runs daily and warns when the freeze variable has been active for more than
+# 7 days, preventing forgotten freezes from blocking schema deployments silently.
+name: Schema Freeze Watchdog
+
+"on":
+  schedule:
+    # 08:00 UTC daily
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Maximum number of days a schema freeze is expected to stay active.
+  # A freeze active longer than this opens a tracking issue.
+  FREEZE_WARN_DAYS: '7'
+
+jobs:
+  watchdog:
+    name: Schema freeze watchdog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Check SCHEMA_FREEZE expiry
+        id: check
+        uses: actions/github-script@v9.0.0
+        env:
+          SCHEMA_FREEZE: ${{ vars.SCHEMA_FREEZE }}
+          FREEZE_SET_AT: ${{ vars.SCHEMA_FREEZE_SET_AT }}
+          WARN_DAYS: ${{ env.FREEZE_WARN_DAYS }}
+        with:
+          script: |
+            const freeze = process.env.SCHEMA_FREEZE === 'true'
+            if (!freeze) {
+              core.info('SCHEMA_FREEZE is not set — nothing to do.')
+              core.setOutput('frozen', 'false')
+              return
+            }
+
+            core.setOutput('frozen', 'true')
+
+            const setAt = process.env.FREEZE_SET_AT
+            if (!setAt) {
+              core.warning('SCHEMA_FREEZE is set but SCHEMA_FREEZE_SET_AT is not — cannot determine how long the freeze has been active. Set SCHEMA_FREEZE_SET_AT to an ISO date (e.g. 2026-10-15) when enabling the freeze.')
+              core.setOutput('expired', 'true')
+              return
+            }
+
+            const freezeDate = new Date(setAt)
+            const now = new Date()
+            const daysDiff = Math.floor((now - freezeDate) / (1000 * 60 * 60 * 24))
+            const warnDays = parseInt(process.env.WARN_DAYS, 10)
+
+            core.info(`SCHEMA_FREEZE active since ${setAt} (${daysDiff} days ago; warn threshold: ${warnDays} days)`)
+
+            if (daysDiff >= warnDays) {
+              core.warning(`Schema freeze has been active for ${daysDiff} days (threshold: ${warnDays}). Consider removing SCHEMA_FREEZE if the freeze period is over.`)
+              core.setOutput('expired', 'true')
+            } else {
+              core.setOutput('expired', 'false')
+            }
+
+      - name: Open issue for long-running freeze
+        if: steps.check.outputs.frozen == 'true' && steps.check.outputs.expired == 'true'
+        uses: actions/github-script@v9.0.0
+        with:
+          script: |
+            // Search for an existing open issue to avoid duplicates.
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              labels: 'schema-freeze',
+              state: 'open',
+            })
+
+            if (issues.length > 0) {
+              core.info(`Existing schema-freeze issue found (#${issues[0].number}) — skipping duplicate creation.`)
+              return
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `[Schema Freeze] SCHEMA_FREEZE has been active for more than ${process.env.FREEZE_WARN_DAYS} days`,
+              body: [
+                `The \`SCHEMA_FREEZE\` repository variable has been \`true\` for more than **${process.env.FREEZE_WARN_DAYS} days**.`,
+                '',
+                'This blocks schema registration in all environments. If the freeze period is over:',
+                '',
+                '1. Remove or set `SCHEMA_FREEZE=false` in the repo/environment variables.',
+                '2. Remove or update `SCHEMA_FREEZE_SET_AT`.',
+                '3. Close this issue.',
+                '',
+                `Triggered by: [schema-freeze-watchdog workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              ].join('\n'),
+              labels: ['schema-freeze'],
+            })
+        env:
+          FREEZE_WARN_DAYS: ${{ env.FREEZE_WARN_DAYS }}

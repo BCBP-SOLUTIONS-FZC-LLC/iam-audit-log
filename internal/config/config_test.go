@@ -67,6 +67,7 @@ func TestInboundQueues_Frozen(t *testing.T) {
 		"tenant-audit-q": "tenant", "delegation-audit-q": "delegation",
 		"serviceaccount-audit-q": "serviceaccount", "tender-audit-q": "tender",
 		"billing-audit-q": "billing", "usage-audit-q": "usage",
+		"entitlement-audit-q": "entitlement",
 		"wf-workflow-audit-q": "wf_workflow", "wf-template-audit-q": "wf_template",
 	}
 	qs := InboundQueues()

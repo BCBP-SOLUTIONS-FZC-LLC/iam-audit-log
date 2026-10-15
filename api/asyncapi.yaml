@@ -42,7 +42,7 @@ servers:
   authAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
-    description: auth-audit-q (subscribed to iam.auth.events)
+    description: auth-audit-q (subscribed to iam-auth-events; publisher uses hyphen convention — verify infra matches)
   userAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
@@ -50,11 +50,11 @@ servers:
   membershipAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
-    description: membership-audit-q (subscribed to iam.membership.events)
+    description: membership-audit-q (subscribed to iam-membership-events; publisher uses hyphen convention)
   tenantAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
-    description: tenant-audit-q (subscribed to iam.tenant.events)
+    description: tenant-audit-q (subscribed to iam-tenant-events; publisher uses hyphen convention — verify infra matches)
   delegationAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
@@ -62,7 +62,7 @@ servers:
   serviceaccountAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
-    description: serviceaccount-audit-q (subscribed to iam.serviceaccount.events)
+    description: serviceaccount-audit-q (subscribed to iam-serviceaccount-events; publisher uses hyphen convention — verify infra matches)
   tenderAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
@@ -75,6 +75,10 @@ servers:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
     description: usage-audit-q (subscribed to usage.events)
+  entitlementAuditQueue:
+    host: sqs.ap-south-1.amazonaws.com
+    protocol: sqs
+    description: entitlement-audit-q (subscribed to entitlement.events; producer — Commercial Entitlements service)
   wfWorkflowAuditQueue:
     host: sqs.ap-south-1.amazonaws.com
     protocol: sqs
@@ -86,8 +90,8 @@ servers:
 channels:
   authAudit:
     address: auth-audit-q
-    title: iam.auth.events → auth-audit-q
-    description: Catch-all audit subscription to iam.auth.events (producer — Event Consumer).
+    title: iam-auth-events → auth-audit-q
+    description: Catch-all audit subscription to iam-auth-events (producer — Event Consumer; SNS topic uses hyphen convention — verify infra matches).
     servers:
     - $ref: '#/servers/authAuditQueue'
     bindings:
@@ -130,14 +134,16 @@ channels:
         $ref: '#/components/messages/userAudit_UserProvisioned'
       userAudit_UserUpdated:
         $ref: '#/components/messages/userAudit_UserUpdated'
+      userAudit_UserStatusChanged:
+        $ref: '#/components/messages/userAudit_UserStatusChanged'
       userAudit_UserAvailabilityChanged:
         $ref: '#/components/messages/userAudit_UserAvailabilityChanged'
       userAudit_UserDeleted:
         $ref: '#/components/messages/userAudit_UserDeleted'
   membershipAudit:
     address: membership-audit-q
-    title: iam.membership.events → membership-audit-q
-    description: Catch-all audit subscription to iam.membership.events (producer — Org & Membership).
+    title: iam-membership-events → membership-audit-q
+    description: Catch-all audit subscription to iam-membership-events (producer — Org & Membership; SNS topic uses hyphen convention).
     servers:
     - $ref: '#/servers/membershipAuditQueue'
     bindings:
@@ -175,9 +181,9 @@ channels:
         $ref: '#/components/messages/membershipAudit_TenantSeatOverageResolved'
   tenantAudit:
     address: tenant-audit-q
-    title: iam.tenant.events → tenant-audit-q
-    description: Catch-all audit subscription to iam.tenant.events (producer — Realm Provisioner, Org
-      & Membership).
+    title: iam-tenant-events → tenant-audit-q
+    description: Catch-all audit subscription to iam-tenant-events (producers — Realm Provisioner, Org
+      & Membership; SNS topic uses hyphen convention — verify infra matches).
     servers:
     - $ref: '#/servers/tenantAuditQueue'
     bindings:
@@ -236,8 +242,8 @@ channels:
         $ref: '#/components/messages/delegationAudit_DelegationEscalationRequested'
   serviceaccountAudit:
     address: serviceaccount-audit-q
-    title: iam.serviceaccount.events → serviceaccount-audit-q
-    description: Catch-all audit subscription to iam.serviceaccount.events (producer — Token Service).
+    title: iam-serviceaccount-events → serviceaccount-audit-q
+    description: Catch-all audit subscription to iam-serviceaccount-events (producer — Token Service; SNS topic uses hyphen convention — verify infra matches).
     servers:
     - $ref: '#/servers/serviceaccountAuditQueue'
     bindings:
@@ -303,6 +309,8 @@ channels:
         $ref: '#/components/messages/billingAudit_TenantSubscriptionCancelled'
       billingAudit_TenantReactivated:
         $ref: '#/components/messages/billingAudit_TenantReactivated'
+      billingAudit_TenantSeatsChanged:
+        $ref: '#/components/messages/billingAudit_TenantSeatsChanged'
   usageAudit:
     address: usage-audit-q
     title: usage.events → usage-audit-q
@@ -322,6 +330,25 @@ channels:
         $ref: '#/components/messages/usageAudit_TenantQuotaWarning'
       usageAudit_TenantQuotaExceeded:
         $ref: '#/components/messages/usageAudit_TenantQuotaExceeded'
+      usageAudit_TenantQuotaRestored:
+        $ref: '#/components/messages/usageAudit_TenantQuotaRestored'
+  entitlementAudit:
+    address: entitlement-audit-q
+    title: entitlement.events → entitlement-audit-q
+    description: Catch-all audit subscription to entitlement.events (producer — Commercial Entitlements service; CD-21).
+    servers:
+    - $ref: '#/servers/entitlementAuditQueue'
+    bindings:
+      sqs:
+        queue:
+          name: entitlement-audit-q
+          fifoQueue: false
+        deadLetterQueue:
+          name: entitlement-audit-q-dlq
+          maxReceiveCount: 5
+    messages:
+      entitlementAudit_TenantEntitlementsChanged:
+        $ref: '#/components/messages/entitlementAudit_TenantEntitlementsChanged'
   wfWorkflowAudit:
     address: wf-workflow-audit-q
     title: wf.workflow.events → wf-workflow-audit-q
@@ -478,6 +505,7 @@ operations:
     - $ref: '#/channels/billingAudit/messages/billingAudit_TenantPaymentPastDue'
     - $ref: '#/channels/billingAudit/messages/billingAudit_TenantSubscriptionCancelled'
     - $ref: '#/channels/billingAudit/messages/billingAudit_TenantReactivated'
+    - $ref: '#/channels/billingAudit/messages/billingAudit_TenantSeatsChanged'
   receiveUsageAudit:
     action: receive
     channel:
@@ -486,6 +514,14 @@ operations:
     messages:
     - $ref: '#/channels/usageAudit/messages/usageAudit_TenantQuotaWarning'
     - $ref: '#/channels/usageAudit/messages/usageAudit_TenantQuotaExceeded'
+    - $ref: '#/channels/usageAudit/messages/usageAudit_TenantQuotaRestored'
+  receiveEntitlementAudit:
+    action: receive
+    channel:
+      $ref: '#/channels/entitlementAudit'
+    summary: Persist every entitlement.events event as one immutable audit_events row (CD-21).
+    messages:
+    - $ref: '#/channels/entitlementAudit/messages/entitlementAudit_TenantEntitlementsChanged'
   receiveWfWorkflowAudit:
     action: receive
     channel:
@@ -613,6 +649,18 @@ components:
         $ref: '#/components/schemas/ProducerPayload'
       x-audit-topic: iam.user.events
       x-audit-entry-type: user.updated
+      x-audit-retention-tier: security_3y
+    userAudit_UserStatusChanged:
+      name: UserStatusChanged
+      title: UserStatusChanged
+      summary: UserStatusChanged on iam.user.events → entry_type user.status.changed (security_3y).
+      tags:
+      - $ref: '#/components/tags/consumed'
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProducerPayload'
+      x-audit-topic: iam.user.events
+      x-audit-entry-type: user.status.changed
       x-audit-retention-tier: security_3y
     userAudit_UserAvailabilityChanged:
       name: UserAvailabilityChanged
@@ -1120,6 +1168,18 @@ components:
       x-audit-topic: billing.events
       x-audit-entry-type: tenant.reactivated
       x-audit-retention-tier: security_3y
+    billingAudit_TenantSeatsChanged:
+      name: TenantSeatsChanged
+      title: TenantSeatsChanged
+      summary: TenantSeatsChanged on billing.events → entry_type tenant.seats_changed (security_3y; CD-21).
+      tags:
+      - $ref: '#/components/tags/consumed'
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProducerPayload'
+      x-audit-topic: billing.events
+      x-audit-entry-type: tenant.seats_changed
+      x-audit-retention-tier: security_3y
     usageAudit_TenantQuotaWarning:
       name: TenantQuotaWarning
       title: TenantQuotaWarning
@@ -1144,6 +1204,30 @@ components:
       x-audit-topic: usage.events
       x-audit-entry-type: usage.quota.exceeded
       x-audit-retention-tier: access_90d
+    usageAudit_TenantQuotaRestored:
+      name: TenantQuotaRestored
+      title: TenantQuotaRestored
+      summary: TenantQuotaRestored on usage.events → entry_type usage.quota.restored (access_90d; CD-21 v0.7).
+      tags:
+      - $ref: '#/components/tags/consumed'
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProducerPayload'
+      x-audit-topic: usage.events
+      x-audit-entry-type: usage.quota.restored
+      x-audit-retention-tier: access_90d
+    entitlementAudit_TenantEntitlementsChanged:
+      name: TenantEntitlementsChanged
+      title: TenantEntitlementsChanged
+      summary: TenantEntitlementsChanged on entitlement.events → entry_type entitlement.tenant_changed (security_3y; CD-21).
+      tags:
+      - $ref: '#/components/tags/consumed'
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProducerPayload'
+      x-audit-topic: entitlement.events
+      x-audit-entry-type: entitlement.tenant_changed
+      x-audit-retention-tier: security_3y
     wfWorkflowAudit_TaskCreated:
       name: TaskCreated
       title: TaskCreated

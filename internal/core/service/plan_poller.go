@@ -63,8 +63,20 @@ func (p *PlanPoller) WindowDays(planCode string) (int, bool) {
 	return d, ok
 }
 
-// Run polls immediately, then every Interval, until ctx is cancelled.
+// Run applies a random startup jitter (0..Interval/2) so all replicas do
+// not stampede Catalog simultaneously on a rolling restart, then polls
+// immediately, then every Interval, until ctx is cancelled.
 func (p *PlanPoller) Run(ctx context.Context) {
+	// Jitter: uniform random in [0, Interval/2).  We derive it from the
+	// current nanosecond timestamp to avoid importing math/rand (which would
+	// need seeding) while still spreading replicas enough in practice.
+	jitter := time.Duration(p.cfg.Now().UnixNano()%int64(p.cfg.Interval/2+1)) * time.Nanosecond
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(jitter):
+	}
+
 	t := time.NewTicker(p.cfg.Interval)
 	defer t.Stop()
 	for {

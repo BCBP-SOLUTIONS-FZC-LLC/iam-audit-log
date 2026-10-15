@@ -2,7 +2,7 @@
 
 This document describes the internal structure, dependency rules, and runtime data flows of `iam-audit-log`.
 
-`iam-audit-log` is a **private Go service** (`github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`, Go 1.26.9) deployed as a containerised microservice (3 replicas by default; HPA 3–6, CPU 70% / memory 80%, off by default in `deploy/helm/values.yaml`). It refines the IAM HLD (`iam-hld-tender-saas-v1.41.md`, header version 1.47) through the LLD at `docs/lld/iam-lld-audit-log-service.md` (**rev 0.26**; where LLD and HLD disagree, HLD is authoritative, and every deviation this build took is recorded in `docs/implementation/BUILD_PLAN.md` §C as a decision `D-n` or `gap n`). It is the platform's **compliance system of record**: a single append-only, tenant-scoped store answering *who did what, to what, when and from where* across every IAM and domain service. It is a **pure sink**: it consumes 11 SNS→SQS queues and a mesh-only direct-write API, and **publishes nothing** (AL-INV-10). It ships as **two binaries from one image**: `cmd/server` (the query/export and ingest HTTP API, the 11-queue platform-events consumer fleet, and four background workers: the CAT-I2 plan poller, the export worker, the ops-gauge monitor and the consumer fleet itself) and `cmd/reconciler` (a single binary dispatched by `--job=<name>`, covering 4 CronJobs: `reconcile`, `redaction-retry`, `redaction-sweep`, `processed-events-prune`).
+`iam-audit-log` is a **private Go service** (`github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`, Go 1.26.9) deployed as a containerised microservice (3 replicas by default; HPA 3–6, CPU 70% / memory 80%, off by default in `deploy/helm/values.yaml`). It refines the IAM HLD (`iam-hld-tender-saas-v1.41.md`, header version 1.47) through the LLD at `docs/lld/iam-lld-audit-log-service.md` (**rev 0.29**; where LLD and HLD disagree, HLD is authoritative, and every deviation this build took is recorded in `docs/implementation/BUILD_PLAN.md` §C as a decision `D-n` or `gap n`). It is the platform's **compliance system of record**: a single append-only, tenant-scoped store answering *who did what, to what, when and from where* across every IAM and domain service. It is a **pure sink**: it consumes 12 SNS→SQS queues and a mesh-only direct-write API, and **publishes nothing** (AL-INV-10). It ships as **two binaries from one image**: `cmd/server` (the query/export and ingest HTTP API, the 12-queue platform-events consumer fleet, and four background workers: the CAT-I2 plan poller, the export worker, the ops-gauge monitor and the consumer fleet itself) and `cmd/reconciler` (a single binary dispatched by `--job=<name>`, covering 4 CronJobs: `reconcile`, `redaction-retry`, `redaction-sweep`, `processed-events-prune`).
 
 All eight build phases (LLD §19) are implemented. Phases 0–8 are committed as `13c96bd`, `9d62133`, `612ccd6`, `c96ad3c` and `b64f932`. The platform-library confinement and the Enterprise Platform Observability Standard alignment (gaps 43–46) sit on top of them; see `CHANGELOG.md` and `git log`.
 
@@ -19,7 +19,7 @@ The service is organised in concentric Clean Architecture layers. Inner layers h
 ```mermaid
 graph TD
     subgraph cmd["Composition Roots  —  cmd/"]
-        main["server/main.go\ngincommon logger first, then config.LoadServer\nmigrations via platform-pgcommon/pkg/migrate (audit_migrator DSN)\npgcommon.NewPool (AppPoolConfig: GUCProvider, PGBouncerMode forced true)\nstartup role check (audit_app, NOBYPASSRLS)\nbackground loops under supervise (panic → logged restart):\nPlanPoller (CAT-I2) · export worker · OpsMonitor (D-21)\nconsumer fleet: 11 × events.NewSQSConsumer (config.LoadSQS)\n+ WithDLQForwarding (D-22) · concurrent Stop\nrouter + /metrics listener (telemetry.MetricsHandler)"]
+        main["server/main.go\ngincommon logger first, then config.LoadServer\nmigrations via platform-pgcommon/pkg/migrate (audit_migrator DSN)\npgcommon.NewPool (AppPoolConfig: GUCProvider, PGBouncerMode forced true)\nstartup role check (audit_app, NOBYPASSRLS)\nbackground loops under supervise (panic → logged restart):\nPlanPoller (CAT-I2) · export worker · OpsMonitor (D-21)\nconsumer fleet: 12 × events.NewSQSConsumer (config.LoadSQS)\n+ WithDLQForwarding (D-22) · concurrent Stop\nrouter + /metrics listener (telemetry.MetricsHandler)"]
         reconciler["reconciler/main.go\nsingle binary, --job=<name> dispatch (audit_reconciler, BYPASSRLS)\nreconcile · redaction-retry · redaction-sweep · processed-events-prune\none run per job: reconciler_job_lease (000011)"]
         jobs["reconciler/jobs/\nReconcile · RedactionRetry · RedactionSweep · ProcessedEventsPrune\nContext = dependency bag (ports only)"]
     end
@@ -589,7 +589,7 @@ Migrations are `000001`–`000011` under `internal/adapter/outbound/postgres/mig
 
 ## Event consumption flow
 
-The service owns its 11 inbound queues (§7.1). It consumes them only through platform-events (gap 45), and it has no publish side at all.
+The service owns its 12 inbound queues (§7.1). It consumes them only through platform-events (gap 45), and it has no publish side at all.
 
 > Source: [`docs/architecture/mermaid/event-consumption-flow.mmd`](docs/architecture/mermaid/event-consumption-flow.mmd)
 
@@ -601,8 +601,8 @@ flowchart LR
     end
     SNS[("SNS topics\n(raw message delivery)")]
     subgraph queues["SQS — owned by this service (§7.1)"]
-        Q["11 × *-audit-q\nredrive maxReceiveCount = 5"]
-        DLQ["11 × *-audit-q-dlq"]
+        Q["12 × *-audit-q\nredrive maxReceiveCount = 5"]
+        DLQ["12 × *-audit-q-dlq"]
     end
     subgraph server["cmd/server — platform-events consumer fleet"]
         C["events.NewSQSConsumer\n(config.LoadSQS: region, endpoint, batch,\nlong-poll, visibility, SQS_CONCURRENCY)"]
@@ -635,7 +635,7 @@ flowchart LR
 - **Codec.** A local, decode-only Glue codec validates every payload against the producer's registered schema version (AL-D12). An unresolvable version or a violation is a decode failure, so the message is redelivered and reaches the DLQ.
 - **Unknown types.** An unrecognized type is persisted as `<domain>.unknown` (AL-EVT-4).
 - **Malformed envelopes (D-22, supersedes D-3).** platform-events v2 forwards a body that is not a valid envelope, or one past the threshold whose decode fails, to the queue's own DLQ (`events.WithDLQForwarding`, wired once in `cmd/server`), and deletes the source copy only once the forward succeeds. It logs only the body's size and SHA-256 (gap 42 closed). `platform_messages_failed_total{reason="malformed"}` still alerts (RB-10), and `IAMAuditLogDLQNotEmpty` follows. `TestWire_MalformedEnvelopeForwardedToDLQ_D22` pins it on floci.
-- **Shutdown.** `Fleet.Stop` stops all 11 consumers concurrently, so the SIGTERM drain is one `SQS_DRAIN_TIMEOUT` (15 s), not one per queue; `SQS_HANDLER_TIMEOUT` (20 s) caps a delivery below the visibility timeout.
+- **Shutdown.** `Fleet.Stop` stops all 12 consumers concurrently, so the SIGTERM drain is one `SQS_DRAIN_TIMEOUT` (15 s), not one per queue; `SQS_HANDLER_TIMEOUT` (20 s) caps a delivery below the visibility timeout.
 
 ---
 
@@ -822,7 +822,7 @@ flowchart LR
     subgraph k8s["Kubernetes namespace iam"]
         subgraph server["cmd/server — 3 replicas, audit_app"]
             API["Gin API\nAL-1..AL-7"]
-            FLEET["platform-events consumer fleet\n11 queues"]
+            FLEET["platform-events consumer fleet\n12 queues"]
             POLL["PlanPoller (CAT-I2)"]
             EXP["Export worker"]
             OPS["OpsMonitor (D-21)"]
@@ -866,7 +866,7 @@ flowchart LR
 
 | Binary | Path in image | Purpose |
 |---|---|---|
-| `iam-audit-log-server` | `/iam-audit-log-server` | HTTP API (`cmd/server`), the image's `ENTRYPOINT`, exposing `8080` (API) and `9090` (metrics). It runs migrations at startup and hosts the 11-queue consumer fleet, the CAT-I2 poller, the export worker and the OpsMonitor |
+| `iam-audit-log-server` | `/iam-audit-log-server` | HTTP API (`cmd/server`), the image's `ENTRYPOINT`, exposing `8080` (API) and `9090` (metrics). It runs migrations at startup and hosts the 12-queue consumer fleet, the CAT-I2 poller, the export worker and the OpsMonitor |
 | `iam-audit-log-reconciler` | `/iam-audit-log-reconciler` | One-shot reconciler (`cmd/reconciler`), dispatched via `--job=<name>` by the 4 CronJobs |
 
 The `Dockerfile` has two stages: a `golang:1.26.9-bookworm` builder (SHA-pinned; private modules fetched through a BuildKit secret, `-trimpath`, `buildVersion` via `-ldflags`), and a `gcr.io/distroless/static-debian12:nonroot` runtime (SHA-pinned, no shell, `nonroot`) that copies only the two binaries. `api/asyncapi.yaml` and the per-source JSON Schemas are compiled in via `//go:embed`.
@@ -942,7 +942,7 @@ This service is the **consumer**. Before a producer publishes to an audited topi
 
 ## Schema lifecycle
 
-The producers own their event schemas in the AWS Glue Schema Registry. This service only **reads** them: `glue:GetSchemaVersion` by the version id in the 18-byte header, compiled once per version and cached (`internal/adapter/outbound/glue`). Because platform-events v1.4.0 has no `GlueCodec` or `ValidatingCodec`, the codec is local (gap 14). It is decode-only, zlib-safe and bomb-bounded, and plugged in through `events.WithConsumerCodec`. `Encode` refuses (AL-INV-10). `api/asyncapi.yaml` declares **only** `receive` operations: 65 messages, each carrying `x-audit-entry-type` / `x-audit-retention-tier`. `check-asyncapi-receive-only.sh`, `TestAsyncAPI_NoSendOperations_ALINV10` and the AsyncAPI ↔ taxonomy contract test keep it in lockstep with the compiled taxonomy.
+The producers own their event schemas in the AWS Glue Schema Registry. This service only **reads** them: `glue:GetSchemaVersion` by the version id in the 18-byte header, compiled once per version and cached (`internal/adapter/outbound/glue`). Because platform-events v1.4.0 has no `GlueCodec` or `ValidatingCodec`, the codec is local (gap 14). It is decode-only, zlib-safe and bomb-bounded, and plugged in through `events.WithConsumerCodec`. `Encode` refuses (AL-INV-10). `api/asyncapi.yaml` declares **only** `receive` operations: 69 messages, each carrying `x-audit-entry-type` / `x-audit-retention-tier`. `check-asyncapi-receive-only.sh`, `TestAsyncAPI_NoSendOperations_ALINV10` and the AsyncAPI ↔ taxonomy contract test keep it in lockstep with the compiled taxonomy.
 
 ---
 
@@ -1014,7 +1014,7 @@ graph LR
         claude[".claude/CLAUDE.md + siblings\narchitecture · database-schema\napi-caching-events · request-flows · operations"]
         readme["README.md\ncapabilities · quick start · gates · docs index"]
         asyncapi_yaml["api/asyncapi.yaml\nreceive-only AsyncAPI (65 messages)"]
-        lld["docs/lld/iam-lld-audit-log-service.md\nLLD rev 0.26"]
+        lld["docs/lld/iam-lld-audit-log-service.md\nLLD rev 0.29"]
         plan["docs/implementation/\nBUILD_PLAN.md · RELEASE_CHECKLIST.md"]
         ops["docs/runbook.md · deploy/monitoring/"]
     end
@@ -1049,7 +1049,7 @@ graph LR
 | [`.claude/request-flows.md`](.claude/request-flows.md) | Ingest, query routing, export, archival/re-open, redaction |
 | [`.claude/operations.md`](.claude/operations.md) | Configuration, CronJobs, metrics and alerts, local dev, troubleshooting |
 | [`docs/architecture/README.md`](docs/architecture/README.md) | Standalone Mermaid diagram index (the 14 `.mmd` files embedded above) |
-| [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | Full LLD (rev 0.26): §16 open questions, §17 error taxonomy, §22 decision register, §25 name inventory |
+| [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | Full LLD (rev 0.29): §16 open questions, §17 error taxonomy, §22 decision register, §25 name inventory |
 | [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → enforcement → test map, decisions D-1..D-23, gaps 1–46 |
 | [`docs/observability/`](docs/observability/README.md) | Observability standard as implemented, generated metric inventory, migration, per-alert runbooks |
 | [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites outside this repo (Terraform role grant, bucket, namespace, CronJob alerting) |

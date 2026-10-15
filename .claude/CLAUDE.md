@@ -12,12 +12,12 @@ Topic files in this directory: [architecture.md](architecture.md), [database-sch
 
 A single append-only, tenant-scoped store answering *who did what, to what, when, from where* across every IAM and domain service.
 
-- **Ingests** 11 SNS topics via SQS (one queue each, catch-all, at-least-once, deduplicated). It also takes non-bus entries via mesh-only direct-write: AL-5/AL-6 `POST /api/v1/internal/audit-entries[:batch]`.
+- **Ingests** 12 SNS topics via SQS (one queue each, catch-all, at-least-once, deduplicated). It also takes non-bus entries via mesh-only direct-write: AL-5/AL-6 `POST /api/v1/internal/audit-entries[:batch]`.
 - **Serves** tenant-admin query and export (AL-1..AL-4) within a plan-gated window, plus a mesh-only provenance read (AL-7).
 - **Archives** months past the hot window to S3 (SSE-KMS, Object Lock COMPLIANCE, per-tenant objects). It drops a partition only when it is provably archived, and it applies GDPR redaction to `security_3y` rows.
 - **Publishes nothing** (AL-INV-10): no SNS publisher, no outbox.
 
-**Status:** build phases 0–8, the platform-library confinement (gaps 43–45) and the observability standard (gap 46) are complete. Since then (LLD rev 0.28): platform-gincommon v1.6.0 adoption, `docs/observability/` + `make metrics-lint`, env/Helm alignment with the libraries, and the production-readiness hardening (D-22 DLQ forwarding, D-23 mesh identity, DB timeouts, bounded archived reads, the reconciler job lease, panic-recovering loops). Merged coverage 96.5%. Some of this may be uncommitted; check `git log` / `git status` rather than assuming. Remaining deploy prerequisites are in `docs/implementation/RELEASE_CHECKLIST.md`.
+**Status:** build phases 0–8, the platform-library confinement (gaps 43–45) and the observability standard (gap 46) are complete. Since then (LLD rev 0.29): platform-gincommon v1.6.0 adoption, `docs/observability/` + `make metrics-lint`, env/Helm alignment with the libraries, the production-readiness hardening (D-22 DLQ forwarding, D-23 mesh identity, DB timeouts, bounded archived reads, the reconciler job lease, panic-recovering loops), library upgrades (platform-events/v2 v2.1.0, platform-pgcommon/v2 v2.0.1, AWS SDK patches), taxonomy additions (user.status.changed, Commercial domain entry types, 12th queue entitlement-audit-q for entitlement.events), and Commercial HLD open items CD-21/CD-17 implemented. Merged coverage 96.5%. Remaining deploy prerequisites are in `docs/implementation/RELEASE_CHECKLIST.md`.
 
 ## Binding rules
 
@@ -40,8 +40,8 @@ Platform-library confinement (each rule is a CI gate in `make ci`):
 | Concern | Only through | Enforced by |
 |---|---|---|
 | Logs, metrics, traces | platform-gincommon v1.6.0. Nothing imports OTel or promhttp; `internal/adapter/outbound/telemetry` only wraps gincommon's `NewSpanTracer` / `SpanTraceID` / `MetricsHandler` (gap 43). Metrics: Tier 1/2 via `NewShared*Vec`, Tier 3 via `gincommon.NewCounterVec`/`NewGauge`/`NewHistogramVec`. | `.github/scripts/check-observability-confinement.sh` |
-| DB connection, config, operations | platform-pgcommon: `NewPool`, `ConfigFromEnv`, `RunInTx*`, `Is*`, `pkg/migrate` (gap 44) | `arch-lint.sh` database invariant |
-| Events, SQS config, dedup | platform-events: `NewSQSConsumer`, `config.LoadSQS`; dedup keyed on `Envelope.ID` (gap 45) | `check-forbidden-events-bypass.sh` |
+| DB connection, config, operations | platform-pgcommon v2.0.1: `NewPool`, `ConfigFromEnv`, `RunInTx*`, `Is*`, `pkg/migrate` (gap 44) | `arch-lint.sh` database invariant |
+| Events, SQS config, dedup | platform-events v2.1.0: `NewSQSConsumer`, `config.LoadSQS`; dedup keyed on `Envelope.ID` (gap 45) | `check-forbidden-events-bypass.sh` |
 
 Other gates: `.go-arch-lint.yml` (the core is vendor-free), `check-grants.sh`, `check-asyncapi-receive-only.sh`, `check-metric-naming.sh`, `metrics-registry-lint.sh`, `metricslint.sh` (`make metrics-lint`), and the contract tests in `test/unit` (Helm: per-root secrets, the mesh `AuthorizationPolicy` + NetworkPolicy caller allow-list; IAM least privilege; alert `runbook_url` anchors).
 

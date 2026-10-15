@@ -86,12 +86,18 @@ func BuildDirectWriteEntry(cmd DirectWriteCommand, maxMetadataBytes int) (AuditE
 	if !IsUUID(cmd.TenantID) {
 		return zero, NewError(ErrInvalidRequest, "tenant_id is required and must be a UUID")
 	}
-	for field, v := range map[string]string{
-		"entry_type": cmd.EntryType, "action": cmd.Action,
-		"source_service": cmd.SourceService, "source_event_type": cmd.SourceEventType,
+	// Validate required string fields in a fixed order so the error returned
+	// for a given invalid request is always the same field, regardless of
+	// Go's randomized map iteration (which would make the first error
+	// non-deterministic when multiple fields are missing).
+	for _, fv := range [...]struct{ field, value string }{
+		{"entry_type", cmd.EntryType},
+		{"action", cmd.Action},
+		{"source_service", cmd.SourceService},
+		{"source_event_type", cmd.SourceEventType},
 	} {
-		if strings.TrimSpace(v) == "" {
-			return zero, NewError(ErrInvalidRequest, field+" is required")
+		if strings.TrimSpace(fv.value) == "" {
+			return zero, NewError(ErrInvalidRequest, fv.field+" is required")
 		}
 	}
 	if cmd.OccurredAt.IsZero() {

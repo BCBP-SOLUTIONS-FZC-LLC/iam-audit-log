@@ -178,7 +178,7 @@ func TestBus_WorkflowWireAlias_D7(t *testing.T) {
 func TestBus_PlanProjection(t *testing.T) {
 	s := newBusStack(t, "billing-audit-q")
 	id := uuid.NewString()
-	s.env.publish(t, "billing-events", rawEnvelope(t, map[string]any{"id": id, "type": "TenantPlanChanged", "source": "billing",
+	s.env.publish(t, "billing-events", rawEnvelope(t, map[string]any{"id": id, "type": "TenantPlanChanged", "source": "commercial-billing", // CD-17
 		"data": map[string]any{"plan": "enterprise"}}))
 	s.waitRow(t, id)
 	var plan string
@@ -246,12 +246,34 @@ func TestBus_SchemaViolationRedrivesToDLQ_ALEVT4(t *testing.T) {
 	assert.Equal(t, 0, s.count(t, id), "a decode failure must never be persisted")
 }
 
+// TestBus_CommercialEntitlementSource_CD17 verifies that an event from the
+// Entitlements service carrying the agreed source "commercial-entitlements"
+// is accepted on entitlement-audit-q, stored with the correct entry_type,
+// and has its source_service preserved verbatim.
+func TestBus_CommercialEntitlementSource_CD17(t *testing.T) {
+	s := newBusStack(t, "entitlement-audit-q")
+	id := uuid.NewString()
+	s.env.publish(t, "entitlement-events", rawEnvelope(t, map[string]any{
+		"id":     id,
+		"type":   "TenantEntitlementsChanged",
+		"source": "commercial-entitlements", // CD-17 agreed name
+		"data":   map[string]any{"cause": "plan_change", "version": 42},
+	}))
+	r := s.waitRow(t, id)
+	assert.Equal(t, "entitlement.tenant_changed", r.EntryType)
+	assert.Equal(t, "security_3y", r.Tier)
+	var srcSvc string
+	require.NoError(t, s.seed.QueryRow(context.Background(),
+		`SELECT source_service FROM audit_events WHERE source_event_id = $1`, id).Scan(&srcSvc))
+	assert.Equal(t, "commercial-entitlements", srcSvc, "CD-17: source_service must carry the agreed name verbatim")
+}
+
 // AL-INV-2: a bus row and a direct-write row share one table, one RLS
 // policy and one shape — only ingest_mode/source_topic differ.
 func TestBus_SameRowShapeAsDirectWrite_ALINV2(t *testing.T) {
 	s := newBusStack(t, "usage-audit-q")
 	id := uuid.NewString()
-	s.env.publish(t, "usage-events", rawEnvelope(t, map[string]any{"id": id, "type": "TenantQuotaWarning", "source": "usage-metering",
+	s.env.publish(t, "usage-events", rawEnvelope(t, map[string]any{"id": id, "type": "TenantQuotaWarning", "source": "commercial-usage-metering", // CD-17
 		"data": map[string]any{"quota": "llm_tokens", "percent": 80}}))
 	r := s.waitRow(t, id)
 	assert.Equal(t, "usage.quota.warning", r.EntryType)

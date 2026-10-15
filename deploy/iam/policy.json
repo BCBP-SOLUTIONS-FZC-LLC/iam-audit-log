@@ -21,6 +21,7 @@
         "arn:aws:sqs:ap-south-1:ACCOUNT_ID:tender-audit-q",
         "arn:aws:sqs:ap-south-1:ACCOUNT_ID:billing-audit-q",
         "arn:aws:sqs:ap-south-1:ACCOUNT_ID:usage-audit-q",
+        "arn:aws:sqs:ap-south-1:ACCOUNT_ID:entitlement-audit-q",
         "arn:aws:sqs:ap-south-1:ACCOUNT_ID:wf-workflow-audit-q",
         "arn:aws:sqs:ap-south-1:ACCOUNT_ID:wf-template-audit-q"
       ]

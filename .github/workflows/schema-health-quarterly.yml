@@ -1,0 +1,103 @@
+# Schema Health Quarterly — scheduled schema health report.
+# Runs on the first day of each quarter (Jan, Apr, Jul, Oct) and on demand.
+# Reports schema usage, drift and lifecycle status for all registries.
+# Skipped when vars.AWS_REGION is not set.
+name: Schema Health Quarterly
+
+"on":
+  schedule:
+    # 09:00 UTC on 1 Jan, 1 Apr, 1 Jul, 1 Oct
+    - cron: '0 9 1 1,4,7,10 *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Registry environment to report on'
+        type: choice
+        required: false
+        default: staging
+        options: [staging, production, both]
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  health-report:
+    name: Quarterly schema health report
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: vars.AWS_REGION != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
+
+      - name: Set up Python (schema-gov)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install schema-gov (platform-schemagov v0.4.0)
+        run: |
+          pip install --no-cache-dir "git+https://x-access-token:${{ secrets.GO_PRIVATE_TOKEN }}@github.com/BCBP-SOLUTIONS-FZC-LLC/platform-schemagov.git@v0.4.0"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Validate schemas (baseline)
+        run: |
+          schema-gov validate \
+            --asyncapi   api/asyncapi.yaml \
+            --schema-dir internal/eventschema
+
+      - name: Health report — staging
+        if: |
+          github.event_name == 'schedule' ||
+          github.event.inputs.environment == 'staging' ||
+          github.event.inputs.environment == 'both'
+        run: |
+          echo "## Staging schema health" >> "$GITHUB_STEP_SUMMARY"
+          schema-gov usage-check \
+            --asyncapi api/asyncapi.yaml \
+            ${{ vars.PROMETHEUS_URL != '' && format('--source {0}', vars.PROMETHEUS_URL) || '--source disabled' }} \
+            >> "$GITHUB_STEP_SUMMARY" || true
+          schema-gov prune \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_STAGING || 'iam-audit-log-staging' }} \
+            --dry-run >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Health report — production
+        if: |
+          github.event.inputs.environment == 'production' ||
+          github.event.inputs.environment == 'both'
+        run: |
+          echo "## Production schema health" >> "$GITHUB_STEP_SUMMARY"
+          schema-gov usage-check \
+            --asyncapi api/asyncapi.yaml \
+            ${{ vars.PROMETHEUS_URL != '' && format('--source {0}', vars.PROMETHEUS_URL) || '--source disabled' }} \
+            >> "$GITHUB_STEP_SUMMARY" || true
+          schema-gov prune \
+            --asyncapi api/asyncapi.yaml \
+            --registry ${{ vars.GLUE_REGISTRY_PRODUCTION || 'iam-audit-log' }} \
+            --dry-run >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Open issue on critical findings
+        if: failure()
+        uses: actions/github-script@v9.0.0
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `[Schema Health] Quarterly check found issues — ${new Date().toISOString().slice(0,10)}`,
+              body:  `The quarterly schema health report detected issues. Check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`,
+              labels: ['schema', 'health-check'],
+            })

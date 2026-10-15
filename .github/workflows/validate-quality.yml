@@ -26,14 +26,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
           token: ${{ secrets.CI_REPO_READ_TOKEN || github.token }}
 
       - name: Set up Go
-        uses: actions/setup-go@v6.5.0
+        uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -167,10 +167,28 @@ jobs:
       # golang:1.26.9-bookworm without @sha256:...) can be silently overwritten by
       # upstream maintainers, breaking supply-chain guarantees. Run
       # `make pin-base-images` (requires docker) to update the pinned digests.
+      # Also verifies that .docker-digests records the same sha256 values so the
+      # digest inventory never drifts from the Dockerfile.
       - name: Dockerfile base image digest check
         run: |
+          # 1. All FROM lines must be digest-pinned.
           if grep -E '^FROM [^ @]+:[^ @]+( AS .+)?$' Dockerfile; then
             echo "::error file=Dockerfile,title=Unpinned base image::Dockerfile FROM lines must use digest-pinned references (e.g. golang:1.26.9-bookworm@sha256:...). Run 'make pin-base-images' to update."
             exit 1
           fi
           echo "Dockerfile base images are digest-pinned."
+
+          # 2. .docker-digests must exist and record the same sha256 values.
+          if [ ! -f .docker-digests ]; then
+            echo "::error file=.docker-digests,title=Missing digest inventory::.docker-digests file is missing. Run 'make pin-base-images' to generate it."
+            exit 1
+          fi
+          # Extract digests from Dockerfile FROM lines and compare with .docker-digests.
+          dockerfile_digests=$(grep -E '^FROM ' Dockerfile | grep -oP 'sha256:[a-f0-9]+' | sort)
+          recorded_digests=$(grep -oP 'sha256:[a-f0-9]+' .docker-digests | sort)
+          if [ "$dockerfile_digests" != "$recorded_digests" ]; then
+            echo "::error file=.docker-digests,title=Digest inventory drift::.docker-digests does not match Dockerfile FROM digests. Run 'make pin-base-images' to sync."
+            diff <(echo "$dockerfile_digests") <(echo "$recorded_digests") || true
+            exit 1
+          fi
+          echo ".docker-digests matches Dockerfile — digest inventory is current."
