@@ -200,7 +200,7 @@ func TestAL6_BatchTooLargeAndRateLimited_D5(t *testing.T) {
 	code, _, body := e.do(t, reqOpts{method: http.MethodPost, path: "/api/v1/internal/audit-entries:batch",
 		body: `{"entries":[` + strings.Join(entries, ",") + `]}`, headers: ingestHeaders(tenantB, "b")})
 	assert.Equal(t, http.StatusUnprocessableEntity, code)
-	assert.Contains(t, body, "batch_too_large")
+	assert.Contains(t, body, "BATCH_TOO_LARGE")
 
 	// The bucket for tenantB has e2eBatchBurst tokens; the call above used one.
 	var last int
