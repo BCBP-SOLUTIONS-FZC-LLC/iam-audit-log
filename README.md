@@ -7,7 +7,6 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 **Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.28** (as-built through Phase 8, the platform-library / observability-standard alignment, and the production-readiness hardening). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-23) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
 
 **Status:** shared libraries at their latest releases (platform-gincommon/v2 v2.0.0, platform-events/v2 v2.1.0, platform-pgcommon/v2 v2.0.2); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
-
 ---
 
 ## Mental model
