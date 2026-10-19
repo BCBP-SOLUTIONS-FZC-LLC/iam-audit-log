@@ -15,7 +15,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 )
 
 type fakeWriter struct {
@@ -99,7 +99,7 @@ func TestCreateEntry_Errors(t *testing.T) {
 	r := ingestRouter(&fakeWriter{err: domain.NewError(domain.ErrUnknownEntryType, "no")}, nil)
 	w := post(t, r, "/api/v1/internal/audit-entries", validBody, map[string]string{"Idempotency-Key": "k"})
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	assert.Contains(t, w.Body.String(), `"code":"unknown_entry_type"`)
+	assert.Contains(t, w.Body.String(), `"errorCode":"UNKNOWN_ENTRY_TYPE"`)
 
 	w = post(t, r, "/api/v1/internal/audit-entries", `{"tenant_id":`, map[string]string{"Idempotency-Key": "k"})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -135,7 +135,7 @@ func TestCreateBatch_WholeBatchErrors(t *testing.T) {
 	r := ingestRouter(&fakeWriter{bErr: domain.NewError(domain.ErrBatchTooLarge, "too many")}, nil)
 	w := post(t, r, "/api/v1/internal/audit-entries:batch", `{"entries":[{}]}`, map[string]string{"Idempotency-Key": "b"})
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	assert.Contains(t, w.Body.String(), "batch_too_large")
+	assert.Contains(t, w.Body.String(), "BATCH_TOO_LARGE")
 
 	w = post(t, r, "/api/v1/internal/audit-entries:batch", `not json`, map[string]string{"Idempotency-Key": "b"})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -151,7 +151,7 @@ func TestCreateBatch_RateLimitedPerTenant_D5(t *testing.T) {
 	}
 	w := post(t, r, "/api/v1/internal/audit-entries:batch", `{"entries":[]}`, h)
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
-	assert.Contains(t, w.Body.String(), `"code":"rate_limited"`)
+	assert.Contains(t, w.Body.String(), `"errorCode":"RATE_LIMITED"`)
 	assert.Equal(t, "1", w.Header().Get("Retry-After"))
 
 	other := map[string]string{"Idempotency-Key": "b", "x-tenant-id": "99999999-9999-9999-9999-999999999999"}

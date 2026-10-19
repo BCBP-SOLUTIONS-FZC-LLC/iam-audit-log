@@ -17,7 +17,7 @@
 set -euo pipefail
 
 ALLOW_PROPOSED_OWNERS="platform-gincommon,platform-events,platform-pgcommon"
-GINCOMMON=github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon
+GINCOMMON=github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

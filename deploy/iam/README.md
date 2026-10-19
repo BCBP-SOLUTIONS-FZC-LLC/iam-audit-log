@@ -3,7 +3,7 @@
 `policy.json` is attached to the `iam-audit-log` IRSA role (LLD §13). No static
 AWS keys are ever used.
 
-- **SQS**: consume-only on the 11 `*-audit-q` queues; `GetQueueAttributes` on
+- **SQS**: consume-only on the 12 `*-audit-q` queues; `GetQueueAttributes` on
   the DLQs for depth alerting; `SendMessage` + `GetQueueUrl` on the DLQs only,
   so platform-events can forward a malformed or undecodable message to its
   queue's own DLQ instead of deleting it (decision D-22). **No `sns:*` at

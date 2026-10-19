@@ -10,7 +10,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 )
 
 // DirectWriter is the ingest use case the AL-5/AL-6 handlers drive
@@ -58,10 +58,10 @@ func decodeJSON(c *gin.Context, dst any) bool {
 //	@Param			body	body		DirectWriteRequest	true	"Audit entry"
 //	@Success		201		{object}	EntryResponse		"created"
 //	@Success		200		{object}	EntryResponse		"idempotent replay"
-//	@Failure		400		{object}	ErrorResponse		"invalid_request"
-//	@Failure		403		{object}	ErrorResponse		"forbidden_peer"
-//	@Failure		422		{object}	ErrorResponse		"unknown_entry_type | invalid_actor | metadata_too_large"
-//	@Failure		503		{object}	ErrorResponse		"dependency_unavailable"
+//	@Failure		400		{object} ProblemResponse		"invalid_request"
+//	@Failure		403		{object} ProblemResponse		"forbidden_peer"
+//	@Failure		422		{object} ProblemResponse		"unknown_entry_type | invalid_actor | metadata_too_large"
+//	@Failure		503		{object} ProblemResponse		"dependency_unavailable"
 //	@Router			/internal/audit-entries [post]
 func (h *IngestHandler) CreateEntry(c *gin.Context) {
 	var req DirectWriteRequest
@@ -94,10 +94,10 @@ func (h *IngestHandler) CreateEntry(c *gin.Context) {
 //	@Security		IdempotencyKey
 //	@Param			body	body		BatchRequest	true	"Entries"
 //	@Success		207		{object}	BatchResponse	"per-entry results"
-//	@Failure		400		{object}	ErrorResponse	"invalid_request"
-//	@Failure		403		{object}	ErrorResponse	"forbidden_peer"
-//	@Failure		422		{object}	ErrorResponse	"batch_too_large"
-//	@Failure		429		{object}	ErrorResponse	"rate_limited"
+//	@Failure		400		{object} ProblemResponse	"invalid_request"
+//	@Failure		403		{object} ProblemResponse	"forbidden_peer"
+//	@Failure		422		{object} ProblemResponse	"batch_too_large"
+//	@Failure		429		{object} ProblemResponse	"rate_limited"
 //	@Router			/internal/audit-entries:batch [post]
 func (h *IngestHandler) CreateBatch(c *gin.Context) {
 	var req BatchRequest

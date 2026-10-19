@@ -14,13 +14,13 @@ import (
 
 func TestHandleError_MapsDomainErrorsAndFallsBackTo500(t *testing.T) {
 	cases := []struct {
-		err    error
-		status int
-		code   string
+		err       error
+		status    int
+		errorCode string
 	}{
-		{domain.NewError(domain.ErrUnknownEntryType, "x"), http.StatusUnprocessableEntity, "unknown_entry_type"},
-		{domain.NewError(domain.ErrDependencyUnavailable, "x"), http.StatusServiceUnavailable, "dependency_unavailable"},
-		{errors.New("boom"), http.StatusInternalServerError, "internal_error"},
+		{domain.NewError(domain.ErrUnknownEntryType, "x"), http.StatusUnprocessableEntity, "UNKNOWN_ENTRY_TYPE"},
+		{domain.NewError(domain.ErrDependencyUnavailable, "x"), http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE"},
+		{errors.New("boom"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
@@ -28,7 +28,6 @@ func TestHandleError_MapsDomainErrorsAndFallsBackTo500(t *testing.T) {
 		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 		HandleError(c, tc.err)
 		assert.Equal(t, tc.status, w.Code)
-		assert.Contains(t, w.Body.String(), `"code":"`+tc.code+`"`)
-		assert.Contains(t, w.Body.String(), `"error":"`+tc.code+`"`)
+		assert.Contains(t, w.Body.String(), `"errorCode":"`+tc.errorCode+`"`)
 	}
 }

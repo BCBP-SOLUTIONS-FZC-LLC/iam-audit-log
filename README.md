@@ -6,7 +6,7 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 **Module:** Go 1.26.9 · private module · deployed as two binaries from one image (`cmd/server`, `cmd/reconciler`)
 **Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.28** (as-built through Phase 8, the platform-library / observability-standard alignment, and the production-readiness hardening). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-23) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
 
-**Status:** shared libraries at their latest releases (platform-gincommon v1.6.0, platform-events/v2 v2.1.0, platform-pgcommon/v2 v2.0.1); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
+**Status:** shared libraries at their latest releases (platform-gincommon/v2 v2.0.0, platform-events/v2 v2.1.0, platform-pgcommon/v2 v2.0.2); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
 
 ---
 
@@ -101,31 +101,33 @@ AL-6's path contains a literal colon. Gin routes it with an escaped segment (`/a
 
 ## Input validation
 
-A domain-rule failure is a `*domain.Error` (`internal/core/domain/errors.go`) carrying one of the frozen §17 codes. `HandleError` (`internal/adapter/inbound/http/errors.go`) maps the code to its fixed HTTP status. A connectivity-class Postgres error that escapes untranslated becomes `503 dependency_unavailable`. Anything else becomes `500 internal_error` and is logged.
+A domain-rule failure is a `*domain.Error` (`internal/core/domain/errors.go`) carrying one of the frozen §17 codes. `HandleError` (`internal/adapter/inbound/http/errors.go`) maps the code to its fixed HTTP status and builds the problem response. A connectivity-class Postgres error that escapes untranslated becomes `503 DEPENDENCY_UNAVAILABLE`. Anything else becomes a detail-free `500 INTERNAL_ERROR` (cause logged by platform, never sent to the client).
 
-The error body is a superset of `gincommon.ErrorResponse`: `error` and `code` both carry the §17 code, and structured details sit under a nested `details` object.
+All error responses are **RFC 9457 Problem Details** (`Content-Type: application/problem+json`), rendered by platform-gincommon v2. The type URI is `https://errors.company.com/iam-audit-log/{name}` and the `errorCode` is UPPER_SNAKE_CASE:
 
 ```json
 {
-  "error": "metadata_too_large",
-  "code": "metadata_too_large",
-  "message": "metadata exceeds the size cap",
+  "type": "https://errors.company.com/iam-audit-log/metadata-too-large",
+  "title": "Unprocessable Entity",
   "status": 422,
-  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "request_id": "0192…",
-  "details": { "limit_bytes": 8192, "size_bytes": 9120 }
+  "detail": "metadata exceeds the size cap",
+  "instance": "/api/v1/internal/audit-entries",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "errorCode": "METADATA_TOO_LARGE",
+  "tenantId": "11111111-1111-1111-1111-111111111111",
+  "timestamp": "2026-10-19T07:47:15Z"
 }
 ```
 
-| Code | Status |
-|---|---|
-| `invalid_request` | 400 |
-| `missing_identity_headers` | 401 |
-| `insufficient_permissions` / `forbidden_peer` | 403 |
-| `audit_entry_not_found` / `export_not_found` | 404 |
-| `unknown_entry_type` / `invalid_actor` / `metadata_too_large` / `batch_too_large` / `range_too_large` | 422 |
-| `rate_limited` | 429 |
-| `dependency_unavailable` | 503 |
+| `errorCode` (RFC 9457) | Status | Type path |
+|---|---|---|
+| `INVALID_REQUEST` | 400 | `iam-audit-log/invalid-request` |
+| `MISSING_IDENTITY_HEADERS` | 401 | `iam-audit-log/missing-identity-headers` |
+| `INSUFFICIENT_PERMISSIONS` / `FORBIDDEN_PEER` | 403 | `iam-audit-log/insufficient-permissions` / `…/forbidden-peer` |
+| `AUDIT_ENTRY_NOT_FOUND` / `EXPORT_NOT_FOUND` | 404 | `iam-audit-log/audit-entry-not-found` / `…/export-not-found` |
+| `UNKNOWN_ENTRY_TYPE` / `INVALID_ACTOR` / `METADATA_TOO_LARGE` / `BATCH_TOO_LARGE` / `RANGE_TOO_LARGE` | 422 | `iam-audit-log/{slug}` |
+| `RATE_LIMITED` | 429 | `iam-audit-log/rate-limited` |
+| `DEPENDENCY_UNAVAILABLE` | 503 | `iam-audit-log/dependency-unavailable` |
 
 ### Notable validation rules
 

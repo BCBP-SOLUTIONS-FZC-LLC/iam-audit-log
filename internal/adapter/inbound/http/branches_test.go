@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/problem"
 )
 
 func testCtx(req *http.Request) (*gin.Context, *httptest.ResponseRecorder) {
@@ -22,20 +22,16 @@ func testCtx(req *http.Request) (*gin.Context, *httptest.ResponseRecorder) {
 	return c, w
 }
 
-// request_id falls back from the gincommon context → the request header →
-// the response header set by RequestIDMiddleware.
-func TestNewErrorResponse_RequestIDFallbacks(t *testing.T) {
-	c, _ := testCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	c.Request.Header.Set(gincommon.HeaderRequestID, "req-from-header")
-	assert.Equal(t, "req-from-header", newErrorResponse(c, domain.ErrInvalidRequest, "m", 400).RequestID)
-
-	c, _ = testCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	c.Writer.Header().Set(gincommon.HeaderRequestIDResponse, "req-from-response")
-	assert.Equal(t, "req-from-response", newErrorResponse(c, domain.ErrInvalidRequest, "m", 400).RequestID)
-
-	er := newErrorResponse(nil, domain.ErrInvalidRequest, "m", 400)
-	assert.Equal(t, "invalid_request", er.Code)
-	assert.Empty(t, er.RequestID)
+// abort() must produce an RFC 9457 problem body (application/problem+json) with
+// the correct HTTP status and UPPER_SNAKE_CASE errorCode.
+func TestAbort_ProducesRFC9457Problem(t *testing.T) {
+	c, w := testCtx(httptest.NewRequest(http.MethodGet, "/", nil))
+	abort(c, domain.ErrInvalidRequest, "something is wrong")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, problem.ContentType, w.Header().Get("Content-Type"))
+	body := decode(t, w)
+	assert.Equal(t, "INVALID_REQUEST", body["errorCode"])
+	assert.Equal(t, "something is wrong", body["detail"])
 }
 
 // A leaked connectivity-class PgError still maps to 503 (§17).
@@ -43,14 +39,19 @@ func TestHandleError_LeakedConnectionPgError_503(t *testing.T) {
 	c, w := testCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	HandleError(c, &pgconn.PgError{Code: "08006", Message: "connection failure"})
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Contains(t, w.Body.String(), `"code":"dependency_unavailable"`)
+	assert.Equal(t, problem.ContentType, w.Header().Get("Content-Type"))
+	assert.Equal(t, "DEPENDENCY_UNAVAILABLE", decode(t, w)["errorCode"])
 }
 
-func TestHandleError_CarriesDetails(t *testing.T) {
+// A domain.Error with extra Details maps to the correct problem status and
+// errorCode; structured details are not echoed in the RFC 9457 body.
+func TestHandleError_DomainError_MapsToCorrectType(t *testing.T) {
 	c, w := testCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	HandleError(c, domain.NewError(domain.ErrMetadataTooLarge, "too big").WithDetails(map[string]any{"limit": 8192}))
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	assert.Contains(t, w.Body.String(), `"limit":8192`)
+	assert.Equal(t, problem.ContentType, w.Header().Get("Content-Type"))
+	assert.Equal(t, "METADATA_TOO_LARGE", decode(t, w)["errorCode"])
+	assert.Equal(t, "too big", decode(t, w)["detail"])
 }
 
 func TestIdentityBridge_WithoutGatewayContext_401(t *testing.T) {
