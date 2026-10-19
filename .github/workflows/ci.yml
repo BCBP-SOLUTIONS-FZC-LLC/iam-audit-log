@@ -35,7 +35,6 @@ name: CI
     branches: [main, master]
     paths-ignore: ['**.md', 'docs/architecture/**']
   pull_request:
-    branches: [main, master]
     paths-ignore: ['**.md', 'docs/architecture/**']
   workflow_dispatch:
 
