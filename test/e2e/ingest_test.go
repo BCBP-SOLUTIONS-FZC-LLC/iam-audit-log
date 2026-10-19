@@ -116,13 +116,13 @@ func TestAL5_Rejections(t *testing.T) {
 		want            int
 		code            string
 	}{
-		{"unknown entry_type", entryBody(tenantA, "config.nope", ""), "k1", nil, 422, "unknown_entry_type"},
-		{"bus type via direct-write (D-6)", entryBody(tenantA, "tender.section.approved", ""), "k2", nil, 422, "unknown_entry_type"},
-		{"anonymous with id", strings.Replace(entryBody(tenantA, "config.idp.changed", ""), `"type":"user"`, `"type":"anonymous"`, 1), "k3", nil, 422, "invalid_actor"},
-		{"metadata too large", strings.Replace(entryBody(tenantA, "config.idp.changed", ""), `"from":900`, `"blob":"`+strings.Repeat("x", 9000)+`"`, 1), "k4", nil, 422, "metadata_too_large"},
-		{"missing Idempotency-Key", entryBody(tenantA, "config.idp.changed", ""), "", nil, 400, "invalid_request"},
-		{"malformed body", `{"tenant_id":`, "k5", nil, 400, "invalid_request"},
-		{"tenant admin is not a mesh peer", entryBody(tenantA, "config.idp.changed", ""), "k6", adminHeaders(tenantA), 403, "forbidden_peer"},
+		{"unknown entry_type", entryBody(tenantA, "config.nope", ""), "k1", nil, 422, "UNKNOWN_ENTRY_TYPE"},
+		{"bus type via direct-write (D-6)", entryBody(tenantA, "tender.section.approved", ""), "k2", nil, 422, "UNKNOWN_ENTRY_TYPE"},
+		{"anonymous with id", strings.Replace(entryBody(tenantA, "config.idp.changed", ""), `"type":"user"`, `"type":"anonymous"`, 1), "k3", nil, 422, "INVALID_ACTOR"},
+		{"metadata too large", strings.Replace(entryBody(tenantA, "config.idp.changed", ""), `"from":900`, `"blob":"`+strings.Repeat("x", 9000)+`"`, 1), "k4", nil, 422, "METADATA_TOO_LARGE"},
+		{"missing Idempotency-Key", entryBody(tenantA, "config.idp.changed", ""), "", nil, 400, "INVALID_REQUEST"},
+		{"malformed body", `{"tenant_id":`, "k5", nil, 400, "INVALID_REQUEST"},
+		{"tenant admin is not a mesh peer", entryBody(tenantA, "config.idp.changed", ""), "k6", adminHeaders(tenantA), 403, "FORBIDDEN_PEER"},
 	}
 	for _, tc := range cases {
 		h := tc.headers
@@ -134,7 +134,7 @@ func TestAL5_Rejections(t *testing.T) {
 		}
 		code, _, body := e.do(t, reqOpts{method: http.MethodPost, path: "/api/v1/internal/audit-entries", body: tc.body, headers: h})
 		assert.Equal(t, tc.want, code, "%s: %s", tc.name, body)
-		assert.Contains(t, body, `"code":"`+tc.code+`"`, tc.name)
+		assert.Contains(t, body, `"errorCode":"`+tc.code+`"`, tc.name)
 	}
 }
 

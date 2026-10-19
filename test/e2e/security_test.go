@@ -46,14 +46,14 @@ func TestAuditRoutesRoleMatrix(t *testing.T) {
 		{"tenant_admin", http.StatusOK, ""},
 		{"tenant_owner", http.StatusOK, ""},
 		{"tenant_admin,member", http.StatusOK, ""},
-		{"member", http.StatusForbidden, "insufficient_permissions"},
-		{"iam-system", http.StatusForbidden, "insufficient_permissions"},
+		{"member", http.StatusForbidden, "INSUFFICIENT_PERMISSIONS"},
+		{"iam-system", http.StatusForbidden, "INSUFFICIENT_PERMISSIONS"},
 	}
 	for _, tc := range cases {
 		code, _, body := e.do(t, reqOpts{path: "/api/v1/audit/probe", headers: gatewayHeaders(adminUser, tenantA, tc.roles)})
 		assert.Equal(t, tc.want, code, tc.roles)
 		if tc.code != "" {
-			assert.Contains(t, body, `"code":"`+tc.code+`"`, tc.roles)
+			assert.Contains(t, body, `"errorCode":"`+tc.code+`"`, tc.roles)
 		}
 	}
 }
@@ -66,7 +66,7 @@ func TestInternalRoutesRequireMeshPeer(t *testing.T) {
 	h["Idempotency-Key"] = "k1"
 	code, _, body := e.do(t, reqOpts{method: http.MethodPost, path: "/api/v1/internal/probe", headers: h})
 	assert.Equal(t, http.StatusForbidden, code)
-	assert.Contains(t, body, `"code":"forbidden_peer"`)
+	assert.Contains(t, body, `"errorCode":"FORBIDDEN_PEER"`)
 
 	// The platform_tenant sentinel is an ordinary tenant to the ingest path
 	// (AL-D14): it is bound as the GUC like any other tenant id.
@@ -83,7 +83,7 @@ func TestInternalWriteRequiresIdempotencyKey(t *testing.T) {
 	e := newE2EEnv(t)
 	code, _, body := e.do(t, reqOpts{method: http.MethodPost, path: "/api/v1/internal/probe", headers: systemHeaders(tenantA)})
 	assert.Equal(t, http.StatusBadRequest, code)
-	assert.Contains(t, body, `"code":"invalid_request"`)
+	assert.Contains(t, body, `"errorCode":"INVALID_REQUEST"`)
 }
 
 func TestMissingOrMalformedIdentity401(t *testing.T) {
