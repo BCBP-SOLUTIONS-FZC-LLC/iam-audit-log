@@ -80,11 +80,11 @@ func (h *QueryHandler) allowExport(c *gin.Context, tenantID string) bool {
 //	@Param			cursor			query		string		false	"opaque keyset cursor"
 //	@Success		200				{object}	EventsResponse
 //	@Success		202				{object}	ExportAcceptedResponse	"large archived range deferred to an export"
-//	@Failure		400				{object}	ErrorResponse			"invalid_request"
-//	@Failure		401				{object}	ErrorResponse			"missing_identity_headers"
-//	@Failure		403				{object}	ErrorResponse			"insufficient_permissions"
-//	@Failure		429				{object}	ErrorResponse			"rate_limited (deferred export)"
-//	@Failure		503				{object}	ErrorResponse			"dependency_unavailable"
+//	@Failure		400				{object} ProblemResponse			"invalid_request"
+//	@Failure		401				{object} ProblemResponse			"missing_identity_headers"
+//	@Failure		403				{object} ProblemResponse			"insufficient_permissions"
+//	@Failure		429				{object} ProblemResponse			"rate_limited (deferred export)"
+//	@Failure		503				{object} ProblemResponse			"dependency_unavailable"
 //	@Router			/audit/events [get]
 func (h *QueryHandler) ListEvents(c *gin.Context) {
 	f, cursor, limit, err := parseQuery(c.Request.URL.Query())
@@ -124,10 +124,10 @@ func (h *QueryHandler) ListEvents(c *gin.Context) {
 //	@Security		UserID
 //	@Param			id	path		string	true	"entry id (UUID)"
 //	@Success		200	{object}	EventDTO
-//	@Failure		400	{object}	ErrorResponse	"invalid_request"
-//	@Failure		403	{object}	ErrorResponse	"insufficient_permissions"
-//	@Failure		404	{object}	ErrorResponse	"audit_entry_not_found"
-//	@Failure		503	{object}	ErrorResponse	"dependency_unavailable"
+//	@Failure		400	{object} ProblemResponse	"invalid_request"
+//	@Failure		403	{object} ProblemResponse	"insufficient_permissions"
+//	@Failure		404	{object} ProblemResponse	"audit_entry_not_found"
+//	@Failure		503	{object} ProblemResponse	"dependency_unavailable"
 //	@Router			/audit/events/{id} [get]
 func (h *QueryHandler) GetEvent(c *gin.Context) {
 	tenantID, _ := identity(c)
@@ -151,10 +151,10 @@ func (h *QueryHandler) GetEvent(c *gin.Context) {
 //	@Security		UserID
 //	@Param			body	body		ExportFilterRequest	false	"filter"
 //	@Success		202		{object}	ExportAcceptedResponse
-//	@Failure		400		{object}	ErrorResponse	"invalid_request"
-//	@Failure		403		{object}	ErrorResponse	"insufficient_permissions"
-//	@Failure		429		{object}	ErrorResponse	"rate_limited"
-//	@Failure		503		{object}	ErrorResponse	"dependency_unavailable"
+//	@Failure		400		{object} ProblemResponse	"invalid_request"
+//	@Failure		403		{object} ProblemResponse	"insufficient_permissions"
+//	@Failure		429		{object} ProblemResponse	"rate_limited"
+//	@Failure		503		{object} ProblemResponse	"dependency_unavailable"
 //	@Router			/audit/exports [post]
 func (h *QueryHandler) CreateExport(c *gin.Context) {
 	var req ExportFilterRequest
@@ -185,10 +185,10 @@ func (h *QueryHandler) CreateExport(c *gin.Context) {
 //	@Security		UserID
 //	@Param			id	path		string	true	"export id (UUID)"
 //	@Success		200	{object}	ExportStatusResponse
-//	@Failure		400	{object}	ErrorResponse	"invalid_request"
-//	@Failure		403	{object}	ErrorResponse	"insufficient_permissions"
-//	@Failure		404	{object}	ErrorResponse	"export_not_found"
-//	@Failure		503	{object}	ErrorResponse	"dependency_unavailable"
+//	@Failure		400	{object} ProblemResponse	"invalid_request"
+//	@Failure		403	{object} ProblemResponse	"insufficient_permissions"
+//	@Failure		404	{object} ProblemResponse	"export_not_found"
+//	@Failure		503	{object} ProblemResponse	"dependency_unavailable"
 //	@Router			/audit/exports/{id} [get]
 func (h *QueryHandler) GetExport(c *gin.Context) {
 	tenantID, _ := identity(c)
@@ -222,11 +222,11 @@ func (h *QueryHandler) GetExport(c *gin.Context) {
 //	@Param			limit			query		int			false	"page size (default 100, max 1000)"
 //	@Param			cursor			query		string		false	"opaque keyset cursor"
 //	@Success		200				{object}	EventsResponse
-//	@Failure		400				{object}	ErrorResponse	"invalid_request"
-//	@Failure		401				{object}	ErrorResponse	"missing_identity_headers"
-//	@Failure		403				{object}	ErrorResponse	"forbidden_peer"
-//	@Failure		422				{object}	ErrorResponse	"range_too_large"
-//	@Failure		503				{object}	ErrorResponse	"dependency_unavailable"
+//	@Failure		400				{object} ProblemResponse	"invalid_request"
+//	@Failure		401				{object} ProblemResponse	"missing_identity_headers"
+//	@Failure		403				{object} ProblemResponse	"forbidden_peer"
+//	@Failure		422				{object} ProblemResponse	"range_too_large"
+//	@Failure		503				{object} ProblemResponse	"dependency_unavailable"
 //	@Router			/internal/audit/events [get]
 func (h *QueryHandler) InternalListEvents(c *gin.Context) {
 	q := c.Request.URL.Query()

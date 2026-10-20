@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/pkg/requestctx"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2/pkg/pgcommon"
 )
 
@@ -107,7 +107,7 @@ func TestProtected_MalformedTenantHeader_401(t *testing.T) {
 		"x-user-id": userA, "x-tenant-id": "not-a-uuid", "x-tenant-roles": "tenant_admin",
 	})
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Equal(t, "missing_identity_headers", decode(t, w)["code"])
+	assert.Equal(t, "MISSING_IDENTITY_HEADERS", decode(t, w)["errorCode"])
 }
 
 // LLD §5.2: only tenant_admin / tenant_owner may read the audit trail.
@@ -123,7 +123,7 @@ func TestAuditRoutes_RequireAuditReader(t *testing.T) {
 		"x-user-id": userA, "x-tenant-id": tenantA, "x-tenant-roles": "member",
 	})
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Equal(t, "insufficient_permissions", decode(t, w)["code"])
+	assert.Equal(t, "INSUFFICIENT_PERMISSIONS", decode(t, w)["errorCode"])
 }
 
 // AL-INV-3: the caller's x-tenant-id is bound as the transaction-local
@@ -145,7 +145,7 @@ func TestInternalRoutes_RequireSystemRole(t *testing.T) {
 		"x-user-id": userA, "x-tenant-id": tenantA, "x-tenant-roles": "tenant_admin",
 	})
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Equal(t, "forbidden_peer", decode(t, w)["code"])
+	assert.Equal(t, "FORBIDDEN_PEER", decode(t, w)["errorCode"])
 
 	// Both sibling spellings of the iam-system principal are accepted.
 	for _, uid := range []string{"00000000-0000-0000-0000-0000000000a1", "iam-system"} {
@@ -163,7 +163,7 @@ func TestRequireIdempotencyKey(t *testing.T) {
 	sys := map[string]string{"x-user-id": "iam-system", "x-tenant-id": tenantA, "x-tenant-roles": "iam-system"}
 	w := do(t, r, http.MethodPost, "/api/v1/internal/idem", sys)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, "invalid_request", decode(t, w)["code"])
+	assert.Equal(t, "INVALID_REQUEST", decode(t, w)["errorCode"])
 
 	sys["Idempotency-Key"] = "k-1"
 	assert.Equal(t, http.StatusOK, do(t, r, http.MethodPost, "/api/v1/internal/idem", sys).Code)

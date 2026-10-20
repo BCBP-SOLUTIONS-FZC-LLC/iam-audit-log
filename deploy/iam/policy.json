@@ -69,7 +69,7 @@
       "Sid": "ArchiveKMS",
       "Effect": "Allow",
       "Action": ["kms:GenerateDataKey", "kms:Decrypt", "kms:DescribeKey"],
-      "Resource": ["arn:aws:kms:ap-south-1:ACCOUNT_ID:alias/iam-audit-archive"]
+      "Resource": ["arn:aws:kms:ap-south-1:ACCOUNT_ID:key/REPLACE_WITH_KMS_KEY_ID"]
     },
     {
       "Sid": "NoObjectDeletionOrLockBypass",

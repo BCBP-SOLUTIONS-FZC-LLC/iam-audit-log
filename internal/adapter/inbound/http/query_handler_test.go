@@ -15,7 +15,7 @@ import (
 
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/domain"
 	"github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log/internal/core/service"
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 )
 
 const (
@@ -114,7 +114,7 @@ func TestQueryRoutes_AuthZ(t *testing.T) {
 
 		w = sendJSON(t, r, rt.method, rt.path, "", adminHeaders("member"))
 		assert.Equal(t, http.StatusForbidden, w.Code, rt.path)
-		assert.Equal(t, "insufficient_permissions", decode(t, w)["code"])
+		assert.Equal(t, "INSUFFICIENT_PERMISSIONS", decode(t, w)["errorCode"])
 
 		w = sendJSON(t, r, rt.method, rt.path, "", adminHeaders("tenant_owner"))
 		assert.NotEqual(t, http.StatusNotFound, w.Code, "route %s must be mounted", rt.path)
@@ -169,7 +169,7 @@ func TestListEvents_BadQueryParams_400(t *testing.T) {
 	for _, qs := range []string{"from=yesterday", "to=2026-01-01", "limit=ten"} {
 		w := sendJSON(t, r, http.MethodGet, "/api/v1/audit/events?"+qs, "", adminHeaders("tenant_admin"))
 		assert.Equal(t, http.StatusBadRequest, w.Code, qs)
-		assert.Equal(t, "invalid_request", decode(t, w)["code"], qs)
+		assert.Equal(t, "INVALID_REQUEST", decode(t, w)["errorCode"], qs)
 	}
 	assert.Empty(t, q.req.TenantID, "service never reached")
 }
@@ -219,7 +219,7 @@ func TestListEvents_ServiceError(t *testing.T) {
 	r := queryRouter(q, &fakeExporter{}, nil)
 	w := sendJSON(t, r, http.MethodGet, "/api/v1/audit/events", "", adminHeaders("tenant_admin"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, "cursor is malformed", decode(t, w)["message"])
+	assert.Equal(t, "cursor is malformed", decode(t, w)["detail"])
 }
 
 func TestListEvents_DeferredToExport_202_D10(t *testing.T) {
@@ -242,7 +242,7 @@ func TestListEvents_DeferredToExport_202_D10(t *testing.T) {
 	w = sendJSON(t, r, http.MethodGet, "/api/v1/audit/events", "", adminHeaders("tenant_admin"))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Equal(t, "60", w.Header().Get("Retry-After"))
-	assert.Equal(t, "rate_limited", decode(t, w)["code"])
+	assert.Equal(t, "RATE_LIMITED", decode(t, w)["errorCode"])
 	assert.Equal(t, 1, e.calls)
 
 	e2 := &fakeExporter{err: errors.New("boom")}
@@ -262,7 +262,7 @@ func TestGetEvent(t *testing.T) {
 	q.getErr = domain.NewError(domain.ErrAuditEntryNotFound, "audit entry not found")
 	w = sendJSON(t, r, http.MethodGet, "/api/v1/audit/events/"+entryID, "", adminHeaders("tenant_admin"))
 	assert.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, "audit_entry_not_found", decode(t, w)["code"])
+	assert.Equal(t, "AUDIT_ENTRY_NOT_FOUND", decode(t, w)["errorCode"])
 }
 
 func TestCreateExport(t *testing.T) {
@@ -288,7 +288,7 @@ func TestCreateExport(t *testing.T) {
 	calls := e.calls
 	w = sendJSON(t, r, http.MethodPost, "/api/v1/audit/exports", `{"from":`, adminHeaders("tenant_admin"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, "invalid_request", decode(t, w)["code"])
+	assert.Equal(t, "INVALID_REQUEST", decode(t, w)["errorCode"])
 	assert.Equal(t, calls, e.calls)
 
 	e.err = domain.NewError(domain.ErrInvalidRequest, "from must not be after to")
@@ -351,7 +351,7 @@ func TestGetExport(t *testing.T) {
 	e.statusErr = domain.NewError(domain.ErrExportNotFound, "export not found")
 	w = sendJSON(t, r, http.MethodGet, "/api/v1/audit/exports/"+exportID, "", adminHeaders("tenant_admin"))
 	assert.Equal(t, http.StatusNotFound, w.Code)
-	assert.Equal(t, "export_not_found", decode(t, w)["code"])
+	assert.Equal(t, "EXPORT_NOT_FOUND", decode(t, w)["errorCode"])
 }
 
 // ── AL-7 (mesh-only provenance read, decision D-14) ─────────────────────
@@ -371,7 +371,7 @@ func TestInternalListEvents_SystemRoleOnly(t *testing.T) {
 	for _, role := range []string{"tenant_admin", "tenant_owner", "member"} {
 		w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", adminHeaders(role))
 		assert.Equal(t, http.StatusForbidden, w.Code, role)
-		assert.Equal(t, "forbidden_peer", decode(t, w)["code"], role)
+		assert.Equal(t, "FORBIDDEN_PEER", decode(t, w)["errorCode"], role)
 	}
 	w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -419,7 +419,7 @@ func TestInternalListEvents_BadRequests(t *testing.T) {
 	} {
 		w := sendJSON(t, r, http.MethodGet, al7Path+qs, "", systemHeaders())
 		assert.Equal(t, http.StatusBadRequest, w.Code, name)
-		assert.Equal(t, "invalid_request", decode(t, w)["code"], name)
+		assert.Equal(t, "INVALID_REQUEST", decode(t, w)["errorCode"], name)
 	}
 	assert.Zero(t, q.icalls)
 }
@@ -429,7 +429,7 @@ func TestInternalListEvents_ServiceErrors(t *testing.T) {
 	r := queryRouter(q, &fakeExporter{}, nil)
 	w := sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", systemHeaders())
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	assert.Equal(t, "range_too_large", decode(t, w)["code"])
+	assert.Equal(t, "RANGE_TOO_LARGE", decode(t, w)["errorCode"])
 
 	q.ierr = errors.New("boom")
 	w = sendJSON(t, r, http.MethodGet, al7Path+"?tenant_id="+tenantA, "", systemHeaders())

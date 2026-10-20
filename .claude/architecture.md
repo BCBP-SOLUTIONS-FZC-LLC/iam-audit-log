@@ -45,7 +45,7 @@ The poller, export worker and ops monitor run under `cmd/server/supervise.go`: a
 
 | Adapter | Responsibility |
 |---|---|
-| `inbound/http` | Router, middleware (`RequireAuditReader`, `RequireSystemRole`, `RequireIdempotencyKey`, per-tenant rate limiters), handlers for AL-1..AL-7, the §17 error envelope |
+| `inbound/http` | Router, middleware (`RequireAuditReader`, `RequireSystemRole`, `RequireIdempotencyKey`, per-tenant rate limiters), handlers for AL-1..AL-7. Errors are RFC 9457 problem details (`application/problem+json`) rendered by platform-gincommon v2 via `AbortWithProblem`; domain types (`ProblemResponse = problem.Problem`) registered at package init from the §17 taxonomy. |
 | `inbound/consumer` | The platform-events consumer fleet and envelope → `domain.BusEvent` |
 | `outbound/postgres` | All SQL, via pgcommon (`withPool`, `TxRunner`). Repositories: audit, query, export, plan-window, partition, archive, redaction, ops, job lease; plus migrations. `wrapConnErr` classifies with `pgcommon.Is*` (closed pool, 08/53/57/58 → 503) |
 | `outbound/s3` | Archive/export store: SSE-KMS, Object Lock, verify, presign |

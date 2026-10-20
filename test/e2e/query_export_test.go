@@ -95,10 +95,10 @@ func (e *e2eEnv) listEvents(t *testing.T, tenant string, q url.Values) (int, eve
 func errorCode(t *testing.T, body string) string {
 	t.Helper()
 	var er struct {
-		Error string `json:"error"`
+		ErrorCode string `json:"errorCode"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(body), &er), body)
-	return er.Error
+	return er.ErrorCode
 }
 
 // AL-5 → AL-1: the direct-written entry comes back with the §5.4 shape.
@@ -192,7 +192,7 @@ func TestAL1AL2_TenantIsolation(t *testing.T) {
 
 	code, _, body = e.do(t, reqOpts{path: "/api/v1/audit/events/" + id, headers: adminHeaders(tenantB)})
 	assert.Equal(t, http.StatusNotFound, code, body)
-	assert.Equal(t, "audit_entry_not_found", errorCode(t, body))
+	assert.Equal(t, "AUDIT_ENTRY_NOT_FOUND", errorCode(t, body))
 }
 
 // §5.2: a plain member is 403 insufficient_permissions on AL-1..AL-4;
@@ -210,7 +210,7 @@ func TestAL1to4_MemberForbidden(t *testing.T) {
 		r.headers["Content-Type"] = "application/json"
 		code, _, body := e.do(t, r)
 		assert.Equal(t, http.StatusForbidden, code, "%s %s: %s", r.method, r.path, body)
-		assert.Equal(t, "insufficient_permissions", errorCode(t, body), r.path)
+		assert.Equal(t, "INSUFFICIENT_PERMISSIONS", errorCode(t, body), r.path)
 	}
 
 	code, _, body := e.do(t, reqOpts{path: "/api/v1/audit/events", headers: gatewayHeaders(adminUser, tenantA, "tenant_owner")})
@@ -270,7 +270,7 @@ func TestAL1_BadRequests(t *testing.T) {
 	} {
 		code, _, body := e.listEvents(t, tenantA, q)
 		assert.Equal(t, http.StatusBadRequest, code, "%s: %s", name, body)
-		assert.Equal(t, "invalid_request", errorCode(t, body), name)
+		assert.Equal(t, "INVALID_REQUEST", errorCode(t, body), name)
 	}
 	code, _, body := e.do(t, reqOpts{path: "/api/v1/audit/events/not-a-uuid", headers: adminHeaders(tenantA)})
 	assert.Equal(t, http.StatusBadRequest, code, body)
@@ -330,7 +330,7 @@ func TestAL3AL4_ExportToSignedURLContents(t *testing.T) {
 	// AL-4 is RLS-scoped: tenant B cannot see A's export.
 	code, _, body = e.do(t, reqOpts{path: acc.StatusURL, headers: adminHeaders(tenantB)})
 	assert.Equal(t, http.StatusNotFound, code, body)
-	assert.Equal(t, "export_not_found", errorCode(t, body))
+	assert.Equal(t, "EXPORT_NOT_FOUND", errorCode(t, body))
 }
 
 // downloadExport GETs a presigned export URL and decodes its gzipped JSONL.
@@ -414,5 +414,5 @@ func TestAL2_ArchivedEntryReadable_Gap32(t *testing.T) {
 
 	code, _, body = e.do(t, reqOpts{path: "/api/v1/audit/events/" + archived.ID, headers: adminHeaders(tenantB)})
 	assert.Equal(t, http.StatusNotFound, code, body)
-	assert.Equal(t, "audit_entry_not_found", errorCode(t, body))
+	assert.Equal(t, "AUDIT_ENTRY_NOT_FOUND", errorCode(t, body))
 }

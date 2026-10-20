@@ -78,7 +78,7 @@ func TestAL7_TenantIsolationAndAuth(t *testing.T) {
 
 	code, _, body = e.internalEvents(t, url.Values{"tenant_id": {tenantA}}, adminHeaders(tenantA))
 	assert.Equal(t, http.StatusForbidden, code, body)
-	assert.Equal(t, "forbidden_peer", errorCode(t, body))
+	assert.Equal(t, "FORBIDDEN_PEER", errorCode(t, body))
 
 	for name, q := range map[string]url.Values{
 		"missing tenant_id": {},
@@ -87,7 +87,7 @@ func TestAL7_TenantIsolationAndAuth(t *testing.T) {
 	} {
 		code, _, body := e.internalEvents(t, q, systemHeaders(tenantA))
 		assert.Equal(t, http.StatusBadRequest, code, "%s: %s", name, body)
-		assert.Equal(t, "invalid_request", errorCode(t, body), name)
+		assert.Equal(t, "INVALID_REQUEST", errorCode(t, body), name)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestAL7_ArchivedRangeTooLarge_D14(t *testing.T) {
 
 	code, _, body := e.internalEvents(t, url.Values{"tenant_id": {tenantA}, "from": {"2018-12-01T00:00:00Z"}}, systemHeaders(tenantA))
 	assert.Equal(t, http.StatusUnprocessableEntity, code, body)
-	assert.Equal(t, "range_too_large", errorCode(t, body))
+	assert.Equal(t, "RANGE_TOO_LARGE", errorCode(t, body))
 
 	code, out, body := e.internalEvents(t, url.Values{
 		"tenant_id": {tenantA}, "from": {time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)},

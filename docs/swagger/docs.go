@@ -130,31 +130,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid_request",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "401": {
                         "description": "missing_identity_headers",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "403": {
                         "description": "insufficient_permissions",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "429": {
                         "description": "rate_limited (deferred export)",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "503": {
                         "description": "dependency_unavailable",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     }
                 }
@@ -200,25 +200,25 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid_request",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "403": {
                         "description": "insufficient_permissions",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "404": {
                         "description": "audit_entry_not_found",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "503": {
                         "description": "dependency_unavailable",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     }
                 }
@@ -268,25 +268,25 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid_request",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "403": {
                         "description": "insufficient_permissions",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "429": {
                         "description": "rate_limited",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "503": {
                         "description": "dependency_unavailable",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     }
                 }
@@ -332,25 +332,25 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid_request",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "403": {
                         "description": "insufficient_permissions",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "404": {
                         "description": "export_not_found",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "503": {
                         "description": "dependency_unavailable",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     }
                 }
@@ -410,25 +410,25 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid_request",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "403": {
                         "description": "forbidden_peer",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "422": {
                         "description": "unknown_entry_type | invalid_actor | metadata_too_large",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "503": {
                         "description": "dependency_unavailable",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     }
                 }
@@ -482,25 +482,25 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid_request",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "403": {
                         "description": "forbidden_peer",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "422": {
                         "description": "batch_too_large",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "429": {
                         "description": "rate_limited",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     }
                 }
@@ -616,31 +616,31 @@ const docTemplate = `{
                     "400": {
                         "description": "invalid_request",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "401": {
                         "description": "missing_identity_headers",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "403": {
                         "description": "forbidden_peer",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "422": {
                         "description": "range_too_large",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     },
                     "503": {
                         "description": "dependency_unavailable",
                         "schema": {
-                            "$ref": "#/definitions/http.ErrorResponse"
+                            "$ref": "#/definitions/http.ProblemResponse"
                         }
                     }
                 }
@@ -648,6 +648,19 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_BCBP-SOLUTIONS-FZC-LLC_platform-gincommon_v2_internal_problem.FieldError": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "description": "Field is the JSON path of the invalid field (e.g. \"deadline\", \"items[0].sku\").",
+                    "type": "string"
+                },
+                "message": {
+                    "description": "Message is a fixed phrase (\"is required\", \"must be in the future\"). It never\nechoes the rejected value, which may be PII.",
+                    "type": "string"
+                }
+            }
+        },
         "http.ActorDTO": {
             "type": "object",
             "properties": {
@@ -874,33 +887,6 @@ const docTemplate = `{
                 }
             }
         },
-        "http.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string"
-                },
-                "details": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "error": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "request_id": {
-                    "type": "string"
-                },
-                "status": {
-                    "type": "integer"
-                },
-                "trace_id": {
-                    "type": "string"
-                }
-            }
-        },
         "http.EventDTO": {
             "type": "object",
             "properties": {
@@ -1054,6 +1040,54 @@ const docTemplate = `{
                         "failed",
                         "expired"
                     ]
+                }
+            }
+        },
+        "http.ProblemResponse": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "description": "Detail is a sentence the service wrote about this occurrence. It never\ncarries exception text, SQL, secrets or tenant information.",
+                    "type": "string"
+                },
+                "errorCode": {
+                    "description": "ErrorCode is the stable, upper snake case, machine-readable code.",
+                    "type": "string"
+                },
+                "instance": {
+                    "description": "Instance is the request path (never the query string, which may carry tokens).",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is the HTTP status code; it always equals the response status.",
+                    "type": "integer"
+                },
+                "tenantId": {
+                    "description": "TenantID is set only for a request with a verified tenant context.",
+                    "type": "string"
+                },
+                "timestamp": {
+                    "description": "Timestamp is when the problem was created, formatted with TimestampLayout.",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "Title is the short, fixed summary of the type. It never varies per occurrence.",
+                    "type": "string"
+                },
+                "traceId": {
+                    "description": "TraceID correlates the response with the server's logs and traces.",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "Type is the absolute, stable type URI ({base}/{domain}/{error}), or\n\"about:blank\" for a status without a registered type (RFC 9457 §4.2.1).",
+                    "type": "string"
+                },
+                "validationErrors": {
+                    "description": "ValidationErrors lists the invalid fields of a validation-failed problem.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_BCBP-SOLUTIONS-FZC-LLC_platform-gincommon_v2_internal_problem.FieldError"
+                    }
                 }
             }
         },

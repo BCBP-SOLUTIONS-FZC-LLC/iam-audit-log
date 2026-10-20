@@ -43,7 +43,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
 )
 
 var (

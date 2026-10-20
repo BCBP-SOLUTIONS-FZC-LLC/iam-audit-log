@@ -11,8 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Every service-emitted error carries the §17 envelope: error == code, a
-// numeric status equal to the HTTP status, and correlation ids.
+// Every service-emitted error is an RFC 9457 Problem Details body (§17, rev 0.30):
+// type, title, status, errorCode (UPPER_SNAKE_CASE), traceId. No error text,
+// no request_id in the body (it is in the X-Request-ID response header).
 func TestErrorEnvelopeShape(t *testing.T) {
 	e := newE2EEnv(t)
 	cases := []reqOpts{
@@ -22,21 +23,21 @@ func TestErrorEnvelopeShape(t *testing.T) {
 		{path: "/api/v1/audit/probe", headers: gatewayHeaders(adminUser, "bad", "tenant_admin")},
 	}
 	for _, o := range cases {
-		o.headers["x-request-id"] = "req-shape"
-		code, _, body := e.do(t, o)
+		code, hdrs, body := e.do(t, o)
 		var er struct {
-			Error     string `json:"error"`
-			Code      string `json:"code"`
-			Message   string `json:"message"`
+			Type      string `json:"type"`
+			Title     string `json:"title"`
 			Status    int    `json:"status"`
-			RequestID string `json:"request_id"`
+			ErrorCode string `json:"errorCode"`
+			TraceID   string `json:"traceId"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(body), &er), body)
-		assert.NotEmpty(t, er.Code, body)
-		assert.Equal(t, er.Code, er.Error, body)
+		assert.NotEmpty(t, er.ErrorCode, body)
 		assert.Equal(t, code, er.Status, body)
-		assert.NotEmpty(t, er.Message, body)
-		assert.Equal(t, "req-shape", er.RequestID, body)
+		assert.NotEmpty(t, er.Title, body)
+		assert.NotEmpty(t, er.Type, body)
+		assert.NotEmpty(t, er.TraceID, body)
+		assert.Equal(t, "application/problem+json", hdrs.Get("Content-Type"), body)
 	}
 }
 
@@ -46,5 +47,5 @@ func TestDatabaseOutage503(t *testing.T) {
 	e.appPool.Close()
 	code, _, body := e.do(t, reqOpts{path: "/api/v1/audit/probe", headers: adminHeaders(tenantA)})
 	assert.Equal(t, http.StatusServiceUnavailable, code)
-	assert.Contains(t, body, `"code":"dependency_unavailable"`)
+	assert.Contains(t, body, `"errorCode":"DEPENDENCY_UNAVAILABLE"`)
 }

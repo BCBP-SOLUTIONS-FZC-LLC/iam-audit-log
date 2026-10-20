@@ -12,7 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/gincommon"
+	"github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2/pkg/problem"
 )
 
 // Pinger is satisfied by any dependency /readyz must check.
@@ -174,7 +175,7 @@ func registerDocsRoutes(r *gin.Engine, cfg RouterConfig) {
 		expected := []byte("Bearer " + cfg.Docs.AuthToken)
 		auth = func(c *gin.Context) {
 			if subtle.ConstantTimeCompare([]byte(c.GetHeader("Authorization")), expected) != 1 {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+				gincommon.AbortWithProblem(c, problem.NewUnauthorizedError("unauthorized"))
 				return
 			}
 			c.Next()
