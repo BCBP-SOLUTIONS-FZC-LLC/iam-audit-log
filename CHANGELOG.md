@@ -4,6 +4,9 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — Helm SecurityPolicy merges with the Gateway policy (2026-10-22)
+- **Helm: the route SecurityPolicy now merges with the Gateway-level policy** (`ingress.securityPolicy.mergeType`, default `StrategicMerge`, rendered into the SecurityPolicy spec only when non-empty). Without `mergeType`, Envoy Gateway applies only the most specific SecurityPolicy, so enabling this chart's HTTPRoute policy REPLACED the Gateway's on these routes — dropping its JWT validation and ext_authz (AuthZ Enrichment, which sets the trusted identity headers; IAM HLD §11.1). `mergeType` requires Envoy Gateway ≥ v1.8; set `""` only on an older gateway, and there leave the policy disabled. Dormant by default (`securityPolicy.enabled: false`).
+
 ### Changed — platform-gincommon/v2 v2.1.0 (2026-10-21)
 - **`platform-gincommon/v2` v2.0.0 → v2.1.0**: additive only — RFC 9457 extension members (`Error.WithExtension`/`WithExtensions`, `Builder.Extension`/`Extensions`, `Problem.Extension`, `ValidExtensionName`); a `Problem` with no extensions serialises byte-identically, so error responses are unchanged. No code change, no new dependencies (only the gincommon line in `go.mod`/`go.sum` moved); the extension API is not adopted yet. Current-state version references updated (README, VERSIONING matrix, LLD §3.1, `docs/observability/`).
 
