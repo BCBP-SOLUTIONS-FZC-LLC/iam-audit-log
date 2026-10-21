@@ -4,6 +4,9 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — platform-gincommon/v2 v2.1.0 (2026-10-21)
+- **`platform-gincommon/v2` v2.0.0 → v2.1.0**: additive only — RFC 9457 extension members (`Error.WithExtension`/`WithExtensions`, `Builder.Extension`/`Extensions`, `Problem.Extension`, `ValidExtensionName`); a `Problem` with no extensions serialises byte-identically, so error responses are unchanged. No code change, no new dependencies (only the gincommon line in `go.mod`/`go.sum` moved); the extension API is not adopted yet. Current-state version references updated (README, VERSIONING matrix, LLD §3.1, `docs/observability/`).
+
 ### Changed — `TenantIdentityProvisioned` replaces `TrialTenantProvisioned` (2026-10-21, LLD rev 0.30)
 - **Taxonomy:** `iam.tenant.events` `TenantIdentityProvisioned` → `tenant.identity_provisioned` (`security_3y`); `TrialTenantProvisioned` / `tenant.trial_provisioned` removed. Realm Provisioner no longer publishes the old event (RP LLD rev 1.33, RP-D16; IAM HLD v1.56). Nothing is deployed, so no stored rows use the old entry type.
 - **Contract:** `api/asyncapi.yaml` `tenantAudit` message renamed to `tenantAuditTenantIdentityProvisioned` with `x-audit-entry-type: tenant.identity_provisioned`; `internal/eventschema/tenant_audit_tenant_identity_provisioned.json` replaces the old extract.
