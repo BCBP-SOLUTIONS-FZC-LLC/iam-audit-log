@@ -164,7 +164,7 @@ jobs:
           fi
 
       # Enforce digest-pinned FROM lines in the Dockerfile. Floating tags (e.g.
-      # golang:1.26.9-bookworm without @sha256:...) can be silently overwritten by
+      # golang:1.26.10-bookworm without @sha256:...) can be silently overwritten by
       # upstream maintainers, breaking supply-chain guarantees. Run
       # `make pin-base-images` (requires docker) to update the pinned digests.
       # Also verifies that .docker-digests records the same sha256 values so the
@@ -173,7 +173,7 @@ jobs:
         run: |
           # 1. All FROM lines must be digest-pinned.
           if grep -E '^FROM [^ @]+:[^ @]+( AS .+)?$' Dockerfile; then
-            echo "::error file=Dockerfile,title=Unpinned base image::Dockerfile FROM lines must use digest-pinned references (e.g. golang:1.26.9-bookworm@sha256:...). Run 'make pin-base-images' to update."
+            echo "::error file=Dockerfile,title=Unpinned base image::Dockerfile FROM lines must use digest-pinned references (e.g. golang:1.26.10-bookworm@sha256:...). Run 'make pin-base-images' to update."
             exit 1
           fi
           echo "Dockerfile base images are digest-pinned."

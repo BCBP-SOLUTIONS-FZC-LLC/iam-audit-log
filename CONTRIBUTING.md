@@ -6,7 +6,7 @@ The LLD (`docs/lld/iam-lld-audit-log-service.md`) is the single source of truth.
 
 ## Prerequisites
 
-- Go 1.26.9+ (matches `go.mod`)
+- Go 1.26.10+ (matches `go.mod`)
 - Docker (required for the PostgreSQL 15 + floci integration tests via `testcontainers-go`)
 - `golangci-lint` and `swag` are managed as Go tools (`go tool golangci-lint`, `go tool swag`), so no separate install is needed
 - `GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*` (private module access; also `GONOSUMDB` for the same prefix)

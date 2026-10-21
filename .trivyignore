@@ -9,3 +9,14 @@
 # :nonroot tag still resolved to the pinned digest (`make pin-base-images`
 # was a no-op). Remove this entry and re-pin once distroless ships 2026c.
 DLA-4792-1 exp:2026-10-31
+
+# DLA-4845-1 — ca-certificates 20250419~deb12u1 → deb12u2 in
+# gcr.io/distroless/static-debian12:nonroot (removes the distrusted Comodo
+# "AAA Certificate Services" and "emSign ECC Root CA - G3" roots). Not
+# exploitable here: the Dockerfile copies the builder's patched deb12u2 bundle
+# over distroless's /etc/ssl/certs/ca-certificates.crt, which is the file the
+# Go binaries trust; Trivy still reports it only because it reads distroless's
+# dpkg metadata. Blocked upstream: on 2026-10-21 the pinned digest was still
+# the latest :nonroot. Remove this entry, the Dockerfile COPY, and re-pin once
+# distroless ships deb12u2. Same fix as iam-realm-provisioner commit 6bd23df.
+DLA-4845-1 exp:2026-11-21
