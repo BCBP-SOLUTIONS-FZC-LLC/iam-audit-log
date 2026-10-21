@@ -4,6 +4,10 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — deploy: platform namespace names gateway / observability (2026-10-22)
+
+- Helm NetworkPolicy ingress selector `envoy-gateway-system` → `gateway` (Envoy Gateway data plane) and metrics-ingress selector `monitoring` → `observability` (Prometheus), matching the platform namespace list (AWS dev environment HLD). Release-checklist example updated.
+
 ### Fixed — Helm SecurityPolicy merges with the Gateway policy (2026-10-22)
 - **Helm: the route SecurityPolicy now merges with the Gateway-level policy** (`ingress.securityPolicy.mergeType`, default `StrategicMerge`, rendered into the SecurityPolicy spec only when non-empty). Without `mergeType`, Envoy Gateway applies only the most specific SecurityPolicy, so enabling this chart's HTTPRoute policy REPLACED the Gateway's on these routes — dropping its JWT validation and ext_authz (AuthZ Enrichment, which sets the trusted identity headers; IAM HLD §11.1). `mergeType` requires Envoy Gateway ≥ v1.8; set `""` only on an older gateway, and there leave the policy disabled. Dormant by default (`securityPolicy.enabled: false`).
 

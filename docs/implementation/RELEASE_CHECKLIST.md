@@ -109,7 +109,7 @@ workspace that owns the `iam-audit-archive` bucket.
                 pathType: PathPrefix
         gateway:
           name: <gateway-name>             # e.g. platform-gateway
-          namespace: <gateway-namespace>   # e.g. envoy-gateway-system
+          namespace: <gateway-namespace>   # e.g. gateway
           sectionName: <listener-name>     # e.g. https
       ```
       If Envoy Gateway is mesh-injected also set:

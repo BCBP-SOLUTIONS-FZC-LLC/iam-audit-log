@@ -225,12 +225,12 @@ networkPolicy:
   # Public /api/v1/audit/* arrives via the gateway; /api/v1/internal/* from
   # same-namespace IAM callers (Catalog, RP, O&M, Group Mapping, Tender ACL).
   ingressControllerNamespaceSelector:
-    kubernetes.io/metadata.name: envoy-gateway-system
+    kubernetes.io/metadata.name: gateway
   ingressControllerPodSelector: {}
   metricsIngress:
     enabled: true
     namespaceSelector:
-      kubernetes.io/metadata.name: monitoring
+      kubernetes.io/metadata.name: observability
     podSelector:
       app.kubernetes.io/name: prometheus
   # Pods allowed to call /api/v1/internal/* (AL-5/AL-6/AL-7): the in-cluster
