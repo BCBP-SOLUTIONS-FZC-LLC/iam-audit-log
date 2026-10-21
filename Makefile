@@ -57,7 +57,7 @@ TEST_INTERNAL_PKGS := ./cmd/... ./internal/... ./pkg/... ./api/...
 COVER_PKG_LIST := $(shell $(GO) list ./cmd/... ./internal/... ./pkg/... 2>/dev/null | tr '\n' ',' | sed 's/,$$//')
 
 # Dockerfile base images (pinned by `make pin-base-images`).
-GOLANG_IMAGE     := golang:1.26.9-bookworm
+GOLANG_IMAGE     := golang:1.26.10-bookworm
 DISTROLESS_IMAGE := gcr.io/distroless/static-debian12:nonroot
 
 # -----------------------------

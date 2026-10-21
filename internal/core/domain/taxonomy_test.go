@@ -34,7 +34,7 @@ var lldTable = []struct {
 	{TopicMembership, "TenantSeatOverageResolved", "tenant.seat_overage.resolved", TierSecurity3y},
 	{TopicTenant, "TenantCreated", "tenant.created", TierSecurity3y},
 	{TopicTenant, "TrialStarted", "tenant.trial_started", TierSecurity3y},
-	{TopicTenant, "TrialTenantProvisioned", "tenant.trial_provisioned", TierSecurity3y},
+	{TopicTenant, "TenantIdentityProvisioned", "tenant.identity_provisioned", TierSecurity3y},
 	{TopicTenant, "TenantRealmReady", "tenant.realm_ready", TierSecurity3y},
 	{TopicTenant, "TenantConverted", "tenant.converted", TierSecurity3y},
 	{TopicTenant, "DirectPaidSignup", "tenant.direct_paid_signup", TierSecurity3y},

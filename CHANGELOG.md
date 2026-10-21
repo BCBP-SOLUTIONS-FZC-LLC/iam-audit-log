@@ -4,6 +4,14 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — `TenantIdentityProvisioned` replaces `TrialTenantProvisioned` (2026-10-21, LLD rev 0.30)
+- **Taxonomy:** `iam.tenant.events` `TenantIdentityProvisioned` → `tenant.identity_provisioned` (`security_3y`); `TrialTenantProvisioned` / `tenant.trial_provisioned` removed. Realm Provisioner no longer publishes the old event (RP LLD rev 1.33, RP-D16; IAM HLD v1.56). Nothing is deployed, so no stored rows use the old entry type.
+- **Contract:** `api/asyncapi.yaml` `tenantAudit` message renamed to `tenantAuditTenantIdentityProvisioned` with `x-audit-entry-type: tenant.identity_provisioned`; `internal/eventschema/tenant_audit_tenant_identity_provisioned.json` replaces the old extract.
+
+### Security — Go 1.26.10 and patched CA bundle (2026-10-21)
+- **Go 1.26.9 → 1.26.10** (`go.mod`, digest-pinned builder, docs): govulncheck **GO-2026-6809** (`crypto/x509`, reachable via the outbound TLS path).
+- **Trivy DLA-4845-1** (`ca-certificates` deb12u1 → deb12u2, removes two distrusted roots): the runtime image now ships the builder's patched CA bundle over distroless's; `.trivyignore` entry expires 2026-11-21, pending a distroless rebuild.
+
 ### Fixed — LLD gap notes: 9 BUILD_PLAN §C decisions documented (2026-10-19)
 All gaps below were already implemented in code; these are the required LLD documentation notes.
 - **D-2** (§4.2): `audit_export_jobs` — corrected export worker location from `cmd/reconciler` to `cmd/server` (runs as `audit_app` via `claim_export_job()` SECURITY DEFINER; reconciler is BYPASSRLS and must not read tenant-scoped export rows).

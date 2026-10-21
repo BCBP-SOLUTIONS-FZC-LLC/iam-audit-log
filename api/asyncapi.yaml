@@ -199,8 +199,8 @@ channels:
         $ref: '#/components/messages/tenantAuditTenantCreated'
       tenantAuditTrialStarted:
         $ref: '#/components/messages/tenantAuditTrialStarted'
-      tenantAuditTrialTenantProvisioned:
-        $ref: '#/components/messages/tenantAuditTrialTenantProvisioned'
+      tenantAuditTenantIdentityProvisioned:
+        $ref: '#/components/messages/tenantAuditTenantIdentityProvisioned'
       tenantAuditTenantRealmReady:
         $ref: '#/components/messages/tenantAuditTenantRealmReady'
       tenantAuditTenantConverted:
@@ -456,7 +456,7 @@ operations:
     messages:
     - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantCreated'
     - $ref: '#/channels/tenantAudit/messages/tenantAuditTrialStarted'
-    - $ref: '#/channels/tenantAudit/messages/tenantAuditTrialTenantProvisioned'
+    - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantIdentityProvisioned'
     - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantRealmReady'
     - $ref: '#/channels/tenantAudit/messages/tenantAuditTenantConverted'
     - $ref: '#/channels/tenantAudit/messages/tenantAuditDirectPaidSignup'
@@ -910,19 +910,19 @@ components:
       x-audit-topic: iam.tenant.events
       x-audit-entry-type: tenant.trial_started
       x-audit-retention-tier: security_3y
-    tenantAuditTrialTenantProvisioned:
+    tenantAuditTenantIdentityProvisioned:
       x-lifecycle:
         status: active
-      name: TrialTenantProvisioned
-      title: TrialTenantProvisioned
-      summary: TrialTenantProvisioned on iam.tenant.events → entry_type tenant.trial_provisioned (security_3y).
+      name: TenantIdentityProvisioned
+      title: TenantIdentityProvisioned
+      summary: TenantIdentityProvisioned on iam.tenant.events → entry_type tenant.identity_provisioned (security_3y).
       tags:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
       payload:
-        $ref: '#/components/schemas/TenantAuditTrialTenantProvisionedPayload'
+        $ref: '#/components/schemas/TenantAuditTenantIdentityProvisionedPayload'
       x-audit-topic: iam.tenant.events
-      x-audit-entry-type: tenant.trial_provisioned
+      x-audit-entry-type: tenant.identity_provisioned
       x-audit-retention-tier: security_3y
     tenantAuditTenantRealmReady:
       x-lifecycle:
@@ -1625,7 +1625,7 @@ components:
     TenantAuditTrialStartedPayload:
       type: object
       additionalProperties: true
-    TenantAuditTrialTenantProvisionedPayload:
+    TenantAuditTenantIdentityProvisionedPayload:
       type: object
       additionalProperties: true
     TenantAuditTenantRealmReadyPayload:
