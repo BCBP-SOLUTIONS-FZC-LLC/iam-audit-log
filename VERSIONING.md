@@ -205,7 +205,7 @@ Both match `release.yml`'s `v*` tag trigger and produce a signed, scanned image,
 
 | iam-audit-log | Go (`go.mod`) | Shared platform libraries | Local AWS emulator |
 |---|---|---|---|
-| Unreleased (`main`) | `1.26.10` | `platform-gincommon/v2` v2.1.0, `platform-events/v2` v2.1.0, `platform-pgcommon/v2` v2.0.2 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
+| Unreleased (`main`) | `1.26.10` | `platform-gincommon/v2` v2.1.0, `platform-events/v2` v2.2.1, `platform-pgcommon/v2` v2.0.2 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
 
 None of those libraries is re-exported. A consumer of this *service* never needs them as a direct dependency of *this* module: producers and callers depend on the HTTP/event contract, not on any Go package here. Every log, metric and trace goes through platform-gincommon; every database connection, configuration and operation through platform-pgcommon; and every event consumption, SQS setting and dedup through platform-events (BUILD_PLAN gaps 43–45, CI-enforced). A bump of any of the three is therefore a change to review for contract impact, even though it is usually a PATCH. Runtime infrastructure (PostgreSQL 15 on RDS, S3 with Object Lock, SQS/SNS, Glue Schema Registry) is platform-provided and invisible to this matrix.
 
