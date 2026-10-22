@@ -4,6 +4,13 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — `legal.terms.accepted` (2026-10-22, LLD rev 0.31)
+
+- **Taxonomy:** direct-write `TermsAccepted` → `legal.terms.accepted`, tier `compliance_7y` (7 years, kept through a GDPR erasure — AL-INV-7). Added to the LLD §7.1 table and the §25 frozen vocabulary (82 → 83). Signup BFF open gap A-4: Realm Provisioner records the tenant owner's terms-of-service acceptance (version, time, user id, IP address, user agent) at RP-1/RP-2.
+- **Producer restriction (new):** a taxonomy row may name the `source_service` values AL-5/AL-6 accept it from. `legal.terms.accepted` accepts only `iam-realm-provisioner`; any other source is `422 unknown_entry_type`. Every other direct-write type is unchanged (any mesh-admitted caller). A future re-acceptance producer (e.g. `iam-org-membership`) is one entry in `termsAcceptedProducers`.
+- **Redaction:** no code change needed — `apply_redaction()`, `sweep_redactions()` and the ingest-time D-18 check already touch `security_3y` only, and never `ip_address`/`user_agent`/`actor_id`. New Postgres test proves a `legal.terms.accepted` row is byte-identical after its actor's erasure, including one delivered after the erasure.
+- **Tests:** taxonomy, domain build, service + handler `201`/replay `200`/wrong-producer `422`, redaction skip, e2e Realm Provisioner producer contract.
+
 ### Changed — platform-events/v2 v2.2.1 (2026-10-22)
 
 - **`platform-events/v2` v2.1.0 → v2.2.1**: handler-initiated dead-letters are settled once — after a successful `SendToDLQ` (handler ctx) the consumer deletes the message whatever the handler returns; a nil return after a *failed* `SendToDLQ` now leaves the message visible for retry (`platform_messages_failed_total{reason="dead_letter_error"}`) instead of deleting it; a message forwarded to the DLQ whose `DeleteMessage` fails is retried 3× and, if still undeleted, its redelivery to the same replica is deleted (12 h memory) instead of being forwarded again. v2.2.1 is the same code released with the go1.26.10 toolchain. This service never calls `SendToDLQ` itself — it relies on `WithDLQForwarding` after its dead-letter handler, which now also gets the delete retry. No code change.

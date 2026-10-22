@@ -147,3 +147,22 @@ func TestDirectWriteBatch_StopsOnDependencyOutage(t *testing.T) {
 		}
 	}
 }
+
+// rev 0.31: the terms-acceptance entry is created once per caller key and
+// derives compliance_7y regardless of the caller.
+func TestDirectWrite_TermsAccepted_CreatedThenReplay(t *testing.T) {
+	store := &fakeStore{}
+	svc := NewIngestService(store, seqIDs(), 8192, 500, nil)
+	c := cmd("TermsAccepted:t:u:2026-09")
+	c.EntryType, c.Action, c.SourceEventType = "legal.terms.accepted", "accept", "TermsAccepted"
+	c.Actor = domain.ActorRef{Type: domain.ActorUser, ID: "22222222-2222-2222-2222-222222222222"}
+	c.IPAddress, c.UserAgent = "203.0.113.7", "Mozilla/5.0"
+	first, created, err := svc.DirectWrite(context.Background(), c)
+	if err != nil || !created || first.RetentionTier != domain.TierCompliance7y || first.IPAddress != "203.0.113.7" || first.UserAgent != "Mozilla/5.0" {
+		t.Fatalf("first: created=%v err=%v entry=%+v", created, err, first)
+	}
+	again, created, err := svc.DirectWrite(context.Background(), c)
+	if err != nil || created || again.ID != first.ID || len(store.appended) != 1 {
+		t.Fatalf("replay: created=%v err=%v rows=%d", created, err, len(store.appended))
+	}
+}

@@ -97,6 +97,7 @@ var lldDirectWrite = map[string]RetentionTier{
 	"billing.adjustment.issued":                     TierSecurity3y,
 	"billing.refund.issued":                         TierSecurity3y,
 	"commercial.cross_tenant_job.ran":               TierSecurity3y,
+	"legal.terms.accepted":                          TierCompliance7y,
 }
 
 func TestTaxonomy_EveryLLDBusRowMaps_ALD3(t *testing.T) {
@@ -152,8 +153,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 82 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 82 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 83 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 83 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 
@@ -210,6 +211,40 @@ func TestEventTypeLabel(t *testing.T) {
 	} {
 		if got := EventTypeLabel(tc.topic, tc.typ); got != tc.want {
 			t.Errorf("EventTypeLabel(%q, %q) = %q, want %q", tc.topic, tc.typ, got, tc.want)
+		}
+	}
+}
+
+// rev 0.31: legal.terms.accepted is a compliance_7y direct-write type that
+// only the listed producers may write; every other direct-write type keeps
+// the D-6 default (any mesh-admitted caller).
+func TestTaxonomy_TermsAcceptedProducerRestricted(t *testing.T) {
+	const et = "legal.terms.accepted"
+	if tier, ok := TierFor(et); !ok || tier != TierCompliance7y || !IsDirectWriteEntryType(et) {
+		t.Fatalf("%s: tier=%s known=%v direct=%v", et, tier, ok, IsDirectWriteEntryType(et))
+	}
+	if got := DirectWriteProducers(et); len(got) != 1 || got[0] != "iam-realm-provisioner" {
+		t.Errorf("producers = %v, want [iam-realm-provisioner]", got)
+	}
+	if !DirectWriteProducerAllowed(et, "iam-realm-provisioner") {
+		t.Error("iam-realm-provisioner must be allowed")
+	}
+	for _, src := range []string{"iam-org-membership", "iam-catalog-admin", "", "IAM-REALM-PROVISIONER"} {
+		if DirectWriteProducerAllowed(et, src) {
+			t.Errorf("%q must not be allowed to write %s", src, et)
+		}
+	}
+	// The returned slice is a copy: mutating it does not widen the list.
+	DirectWriteProducers(et)[0] = "iam-org-membership"
+	if DirectWriteProducerAllowed(et, "iam-org-membership") {
+		t.Error("DirectWriteProducers must return a copy")
+	}
+	for e := range EntryTypes() {
+		if e != et && DirectWriteProducers(e) != nil {
+			t.Errorf("%s unexpectedly producer-restricted", e)
+		}
+		if e != et && !DirectWriteProducerAllowed(e, "anything") {
+			t.Errorf("%s must keep the D-6 default", e)
 		}
 	}
 }

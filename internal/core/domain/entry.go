@@ -106,6 +106,9 @@ func BuildDirectWriteEntry(cmd DirectWriteCommand, maxMetadataBytes int) (AuditE
 	if !IsDirectWriteEntryType(cmd.EntryType) {
 		return zero, NewError(ErrUnknownEntryType, "entry_type "+cmd.EntryType+" is not a direct-write taxonomy value (LLD §7.1)")
 	}
+	if !DirectWriteProducerAllowed(cmd.EntryType, cmd.SourceService) {
+		return zero, NewError(ErrUnknownEntryType, "entry_type "+cmd.EntryType+" is not accepted from source_service "+cmd.SourceService+" (LLD §7.1 producer restriction)")
+	}
 	tier, _ := TierFor(cmd.EntryType)
 	if err := cmd.Actor.Validate(); err != nil {
 		return zero, err

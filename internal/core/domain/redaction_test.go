@@ -52,6 +52,9 @@ func TestRedactionSubjects(t *testing.T) {
 		{"no actor, no target", sec("", nil), nil},
 		{"compliance tier", AuditEntry{RetentionTier: TierCompliance7y, Actor: ActorRef{ID: a}, Target: &TargetRef{Type: "user", ID: b}}, nil},
 		{"access tier", AuditEntry{RetentionTier: TierAccess90d, Actor: ActorRef{ID: a}}, nil},
+		// rev 0.31: a terms acceptance is compliance_7y — never a redaction
+		// subject, so it survives the owner's erasure (AL-INV-7).
+		{"terms accepted", AuditEntry{EntryType: "legal.terms.accepted", RetentionTier: TierCompliance7y, Actor: ActorRef{Type: ActorUser, ID: a}, Target: &TargetRef{Type: "tenant", ID: b}}, nil},
 	}
 	for _, tc := range cases {
 		got := RedactionSubjects(tc.e)
