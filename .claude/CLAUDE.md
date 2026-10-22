@@ -41,7 +41,7 @@ Platform-library confinement (each rule is a CI gate in `make ci`):
 |---|---|---|
 | Logs, metrics, traces | platform-gincommon v1.6.0. Nothing imports OTel or promhttp; `internal/adapter/outbound/telemetry` only wraps gincommon's `NewSpanTracer` / `SpanTraceID` / `MetricsHandler` (gap 43). Metrics: Tier 1/2 via `NewShared*Vec`, Tier 3 via `gincommon.NewCounterVec`/`NewGauge`/`NewHistogramVec`. | `.github/scripts/check-observability-confinement.sh` |
 | DB connection, config, operations | platform-pgcommon v2.0.1: `NewPool`, `ConfigFromEnv`, `RunInTx*`, `Is*`, `pkg/migrate` (gap 44) | `arch-lint.sh` database invariant |
-| Events, SQS config, dedup | platform-events v2.1.0: `NewSQSConsumer`, `config.LoadSQS`; dedup keyed on `Envelope.ID` (gap 45) | `check-forbidden-events-bypass.sh` |
+| Events, SQS config, dedup | platform-events v2.2.1: `NewSQSConsumer`, `config.LoadSQS`; dedup keyed on `Envelope.ID` (gap 45) | `check-forbidden-events-bypass.sh` |
 
 Other gates: `.go-arch-lint.yml` (the core is vendor-free), `check-grants.sh`, `check-asyncapi-receive-only.sh`, `check-metric-naming.sh`, `metrics-registry-lint.sh`, `metricslint.sh` (`make metrics-lint`), and the contract tests in `test/unit` (Helm: per-root secrets, the mesh `AuthorizationPolicy` + NetworkPolicy caller allow-list; IAM least privilege; alert `runbook_url` anchors).
 
