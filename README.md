@@ -274,7 +274,7 @@ This path is for audit facts that have no bus event (AL-D1). The **caller invari
 | Group Mapping / JIT Config | `config.group_mapping.departments.changed`, `…department_roles.changed`, `…tenant_roles.changed`, via `:batch` |
 | Tender ACL | `config.tender_acl.granted`, `.revoked`, `.cascade` |
 | Org & Membership | `config.tenant_setting.changed`, `invitation.created`, `.revoked`, `.expired` |
-| Realm Provisioner | `config.idp.changed` |
+| Realm Provisioner | `config.idp.changed`; `legal.terms.accepted` (the tenant owner's terms acceptance at RP-1/RP-2: `compliance_7y`, kept through GDPR erasure; key `TermsAccepted:<tenant_id>:<user_id>:<version>`; only this producer may write it today) |
 | Signup / onboarding | `tenant.owner_signed_up` |
 | Operator tooling | `security.cross_tenant_access` on every `admin_readonly` session |
 | Commercial operators (Billing, Entitlements) | `config.entitlement_override.set`, `.removed`, `.expired`; `billing.adjustment.issued`; `billing.refund.issued` |
@@ -855,7 +855,7 @@ Hot-path writes (AL-5/AL-6 and bus ingest) depend on **Postgres only**.
 | **Group Mapping / JIT Config** | AL-6 | `config.group_mapping.*` reconciles |
 | **Tender ACL** | AL-5 / AL-6 | `config.tender_acl.*` grants, revokes and cascades |
 | **Org & Membership** | AL-5 | `config.tenant_setting.changed`, `invitation.*` |
-| **Realm Provisioner** | AL-5 | `config.idp.changed` |
+| **Realm Provisioner** | AL-5 | `config.idp.changed`, `legal.terms.accepted` |
 | **Operator tooling** | AL-5 | `security.cross_tenant_access` |
 | **Commercial Entitlements** | AL-5 | `config.entitlement_override.set/removed/expired` |
 | **Commercial Billing** | AL-5 | `billing.adjustment.issued`, `billing.refund.issued` |

@@ -42,7 +42,20 @@ type taxonomyEntry struct {
 	// directWrite marks the non-bus "direct audit write" rows of §7.1 — the
 	// only entry types AL-5/AL-6 accept (decision D-6).
 	directWrite bool
+	// producers, when non-empty, is the closed set of source_service values
+	// AL-5/AL-6 accept this direct-write type from (rev 0.31). Empty means
+	// any mesh-admitted caller, the D-6 default. It narrows the mesh
+	// allow-list (deploy/helm internalCallers), never widens it.
+	producers []string
 }
+
+// termsAcceptedProducers may write legal.terms.accepted (LLD §7.1, rev
+// 0.31): Realm Provisioner records the tenant owner's acceptance at signup
+// (RP-1/RP-2). A future re-acceptance flow (a later terms version accepted
+// in-product) is added by appending its service here, e.g.
+// "iam-org-membership" — plus its pod/SPIFFE id in the Helm internal-caller
+// lists if it is not already there — and a §7.1 note; no schema change.
+var termsAcceptedProducers = []string{"iam-realm-provisioner"}
 
 // entryTypes is the frozen §7.1 / §25 vocabulary (AL-D2 tier rule:
 // approval/auth-failure/credential/privilege → 7 y; configuration/
@@ -137,6 +150,10 @@ var entryTypes = map[string]taxonomyEntry{
 	"invitation.created":                            {tier: TierSecurity3y, directWrite: true},
 	"invitation.revoked":                            {tier: TierSecurity3y, directWrite: true},
 	"invitation.expired":                            {tier: TierSecurity3y, directWrite: true},
+	// Legal: a user's acceptance of a terms-of-service version (rev 0.31).
+	// compliance_7y — kept 7 y and never redacted on erasure (AL-INV-7) —
+	// and producer-restricted (termsAcceptedProducers).
+	"legal.terms.accepted": {tier: TierCompliance7y, directWrite: true, producers: termsAcceptedProducers},
 	// Commercial domain direct-write entries (CD-21; Entitlements and Billing operator actions)
 	"config.entitlement_override.set":     {tier: TierSecurity3y, directWrite: true},
 	"config.entitlement_override.removed": {tier: TierSecurity3y, directWrite: true},
@@ -261,6 +278,31 @@ func TierFor(entryType string) (RetentionTier, bool) {
 // AL-5/AL-6 (decision D-6).
 func IsDirectWriteEntryType(entryType string) bool {
 	return entryTypes[entryType].directWrite
+}
+
+// DirectWriteProducers returns the source_service values entryType is
+// restricted to, or nil when any mesh-admitted caller may write it.
+func DirectWriteProducers(entryType string) []string {
+	p := entryTypes[entryType].producers
+	if len(p) == 0 {
+		return nil
+	}
+	return append([]string(nil), p...)
+}
+
+// DirectWriteProducerAllowed reports whether sourceService may write
+// entryType through AL-5/AL-6: always, unless the type names producers.
+func DirectWriteProducerAllowed(entryType, sourceService string) bool {
+	p := entryTypes[entryType].producers
+	if len(p) == 0 {
+		return true
+	}
+	for _, s := range p {
+		if s == sourceService {
+			return true
+		}
+	}
+	return false
 }
 
 // ClassifyBus maps a consumed event to its entry_type and tier. An

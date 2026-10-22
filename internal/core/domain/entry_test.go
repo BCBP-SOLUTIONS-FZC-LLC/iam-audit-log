@@ -109,6 +109,28 @@ func TestBuildDirectWriteEntry_Rejections(t *testing.T) {
 	}
 }
 
+// rev 0.31: a terms acceptance from Realm Provisioner lands compliance_7y
+// with ip_address and user_agent kept; any other producer is a 422.
+func TestBuildDirectWriteEntry_TermsAccepted(t *testing.T) {
+	c := validCmd()
+	c.EntryType, c.Action, c.SourceEventType = "legal.terms.accepted", "accept", "TermsAccepted"
+	c.SourceService = "iam-realm-provisioner"
+	c.Target = &TargetRef{Type: "tenant", ID: c.TenantID}
+	c.IPAddress, c.UserAgent = "2001:db8::7", "Mozilla/5.0 (X11; Linux x86_64)"
+	c.Metadata = json.RawMessage(`{"terms_version":"2026-09","accepted_at":"2026-09-20T10:00:00Z","signup_type":"trial","plan":"pro"}`)
+	e, err := BuildDirectWriteEntry(c, 8192)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.RetentionTier != TierCompliance7y || e.IPAddress != c.IPAddress || e.UserAgent != c.UserAgent || e.SourceEventType != "TermsAccepted" {
+		t.Errorf("entry = %+v", e)
+	}
+	c.SourceService = "iam-org-membership"
+	if _, err := BuildDirectWriteEntry(c, 8192); codeOf(err) != ErrUnknownEntryType {
+		t.Errorf("unlisted producer: code %q, want %q (%v)", codeOf(err), ErrUnknownEntryType, err)
+	}
+}
+
 // §4.2 metadata cap and shape: absent/null → {}, measured compact.
 func TestNormalizeMetadata(t *testing.T) {
 	for _, in := range []string{"", "null", "  "} {

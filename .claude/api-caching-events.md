@@ -40,7 +40,7 @@ None (AL-D5). The only in-process state is the CAT-I2 plan map, a stale-if-error
   | `wf-template-audit-q` | `wf.template.events` |
 
 - **Consumer:** the platform-events `NewSQSConsumer`, configured by `config.LoadSQS`. The Glue codec validates against the producer's registered schema version (AL-D12). Decode failure → redelivery → DLQ.
-- **Taxonomy:** `internal/core/domain/taxonomy.go`. An unknown type is persisted as `<domain>.unknown` with `security_3y` (AL-EVT-4). The workflow wire aliases are D-7; actor/target derivation is D-8; oversized payloads get a truncation marker (D-9).
+- **Taxonomy:** `internal/core/domain/taxonomy.go`. An unknown type is persisted as `<domain>.unknown` with `security_3y` (AL-EVT-4). Direct-write types may name allowed producers: `legal.terms.accepted` (`TermsAccepted`, `compliance_7y`, LLD rev 0.31) is accepted only from `iam-realm-provisioner`. The workflow wire aliases are D-7; actor/target derivation is D-8; oversized payloads get a truncation marker (D-9).
 - **Dedup:** handlers are idempotent on `events.Envelope.ID`, the platform-events contract. The key goes into the `processed_events` ledger, backed by the `(source_event_id, occurred_at)` unique constraint.
 - **Malformed envelopes (D-22):** `events.WithDLQForwarding` forwards a non-envelope body, or an undecodable one past the threshold, to the queue's own DLQ (raw body kept; `DLQReason` = `malformed message body: …`). The library logs only the body's size and SHA-256. Still alerted via `platform_messages_failed_total{reason="malformed"}`, and `IAMAuditLogDLQNotEmpty` follows.
 - **Timeouts:** `SQS_HANDLER_TIMEOUT` (20s) per delivery; `SQS_DRAIN_TIMEOUT` (15s) for the whole SIGTERM drain, since the fleet stops its consumers concurrently.

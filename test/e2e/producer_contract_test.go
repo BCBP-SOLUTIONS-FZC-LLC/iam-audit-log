@@ -38,6 +38,36 @@ func TestProducerContract_RealmProvisioner(t *testing.T) {
 	assert.Equal(t, http.StatusOK, code, "RP's retry with the same key must be a 200 replay, never 409")
 }
 
+// iam-realm-provisioner RP-1/RP-2 → legal.terms.accepted (LLD rev 0.31): the
+// tenant owner's terms acceptance, actor = the owner, deterministic key
+// TermsAccepted:<tenant>:<owner>:<version>; ip_address and user_agent ride
+// point to point, never the bus. compliance_7y; another producer is a 422.
+func TestProducerContract_RealmProvisioner_TermsAccepted(t *testing.T) {
+	e := newE2EEnv(t)
+	body := func(source string) string {
+		return `{"tenant_id":"` + tenantA + `","entry_type":"legal.terms.accepted","action":"accept",
+	  "actor":{"type":"user","id":"` + adminUser + `"},
+	  "target":{"type":"tenant","id":"` + tenantA + `"},
+	  "occurred_at":"2026-09-20T10:00:00Z","source_service":"` + source + `",
+	  "source_event_type":"TermsAccepted","ip_address":"203.0.113.7","user_agent":"Mozilla/5.0 (Macintosh)",
+	  "metadata":{"terms_version":"2026-09","accepted_at":"2026-09-20T10:00:00Z","signup_type":"trial","plan":"pro"}}`
+	}
+	h := map[string]string{
+		"Content-Type": "application/json", "Idempotency-Key": "TermsAccepted:" + tenantA + ":" + adminUser + ":2026-09",
+		"x-user-id": systemActor, "x-tenant-id": tenantA, "x-tenant-roles": "iam-system",
+	}
+	code, _, resp := e.do(t, reqOpts{method: http.MethodPost, path: "/api/v1/internal/audit-entries", body: body("iam-realm-provisioner"), headers: h})
+	require.Equal(t, http.StatusCreated, code, resp)
+	assert.Equal(t, "compliance_7y", decodeEntry(t, resp).RetentionTier)
+
+	code, _, _ = e.do(t, reqOpts{method: http.MethodPost, path: "/api/v1/internal/audit-entries", body: body("iam-realm-provisioner"), headers: h})
+	assert.Equal(t, http.StatusOK, code, "RP's retry with the same key must be a 200 replay")
+
+	h["Idempotency-Key"] = uuid.NewString()
+	code, _, resp = e.do(t, reqOpts{method: http.MethodPost, path: "/api/v1/internal/audit-entries", body: body("iam-org-membership"), headers: h})
+	assert.Equal(t, http.StatusUnprocessableEntity, code, resp)
+}
+
 // iam-catalog-admin/internal/adapter/outbound/auditlog/client.go
 // (CAT-1/2/5, AL-D14): body tenant_id AND x-tenant-id = platform_tenant;
 // target always present; metadata {changes, record_version}.

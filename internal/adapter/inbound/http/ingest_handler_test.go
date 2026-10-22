@@ -178,3 +178,59 @@ func TestToEntryResponse_SourceTopic(t *testing.T) {
 	direct := toEntryResponse(domain.AuditEntry{ID: "e-2", IngestMode: domain.IngestDirectWrite})
 	assert.Nil(t, direct.SourceTopic)
 }
+
+// memWriter is an in-memory port.AuditWriter keyed by source_event_id, so
+// the real IngestService validation runs behind the handler.
+type memWriter struct{ rows map[string]domain.AuditEntry }
+
+func (m *memWriter) Append(_ context.Context, e domain.AuditEntry, _ string) (domain.AuditEntry, bool, error) {
+	if prev, ok := m.rows[e.SourceEventID]; ok {
+		return prev, false, nil
+	}
+	m.rows[e.SourceEventID] = e
+	return e, true, nil
+}
+
+// termsBody is the AL-5 body Realm Provisioner sends at RP-1/RP-2 (rev 0.31).
+func termsBody(source string) string {
+	return `{"tenant_id":"11111111-1111-1111-1111-111111111111","entry_type":"legal.terms.accepted",
+ "action":"accept","actor":{"type":"user","id":"22222222-2222-2222-2222-222222222222"},
+ "target":{"type":"tenant","id":"11111111-1111-1111-1111-111111111111"},"occurred_at":"2026-09-20T10:00:00Z",
+ "source_service":"` + source + `","source_event_type":"TermsAccepted",
+ "ip_address":"203.0.113.7","user_agent":"Mozilla/5.0 (Macintosh)",
+ "metadata":{"terms_version":"2026-09","accepted_at":"2026-09-20T10:00:00Z","signup_type":"trial","plan":"pro"}}`
+}
+
+// rev 0.31: legal.terms.accepted end to end through the handler and the
+// real ingest validation — 201 compliance_7y with ip/ua kept, 200 on an
+// Idempotency-Key replay, 422 UNKNOWN_ENTRY_TYPE from an unlisted producer.
+func TestCreateEntry_TermsAccepted_CreateReplayAndProducer(t *testing.T) {
+	n := 0
+	svc := service.NewIngestService(&memWriter{rows: map[string]domain.AuditEntry{}}, func() (string, error) {
+		n++
+		return "0190a1b2-0000-7000-8000-00000000000" + string(rune('0'+n)), nil
+	}, 8192, 500, nil)
+	r := ingestRouter(svc, nil)
+	key := map[string]string{"Idempotency-Key": "TermsAccepted:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222:2026-09"}
+
+	w := post(t, r, "/api/v1/internal/audit-entries", termsBody("iam-realm-provisioner"), key)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var first EntryResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &first))
+	assert.Equal(t, "legal.terms.accepted", first.EntryType)
+	assert.Equal(t, "compliance_7y", first.RetentionTier)
+	assert.Equal(t, "203.0.113.7", first.IPAddress)
+	assert.Equal(t, "Mozilla/5.0 (Macintosh)", first.UserAgent)
+	assert.Equal(t, key["Idempotency-Key"], first.SourceEventID, "the caller's key is the source_event_id")
+	assert.JSONEq(t, `{"terms_version":"2026-09","accepted_at":"2026-09-20T10:00:00Z","signup_type":"trial","plan":"pro"}`, string(first.Metadata))
+
+	w = post(t, r, "/api/v1/internal/audit-entries", termsBody("iam-realm-provisioner"), key)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var replay EntryResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &replay))
+	assert.Equal(t, first.ID, replay.ID)
+
+	w = post(t, r, "/api/v1/internal/audit-entries", termsBody("iam-org-membership"), map[string]string{"Idempotency-Key": "other"})
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), `"errorCode":"UNKNOWN_ENTRY_TYPE"`)
+}

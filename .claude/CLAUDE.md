@@ -2,7 +2,7 @@
 
 Guidance for Claude Code working in **`iam-audit-log`**: the Tender Management SaaS platform's compliance system of record. It is a Go service in the IAM subsystem, module `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`.
 
-- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.28).
+- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.31).
 - **Build trace, decisions and gaps:** `docs/implementation/BUILD_PLAN.md`.
 - Where the LLD and a BUILD_PLAN decision (D-n) disagree, the decision is the implemented behavior, and the LLD note it needs is recorded in BUILD_PLAN §C.
 
@@ -28,7 +28,7 @@ Invariants (LLD §2.4; the test map is BUILD_PLAN §B):
 - **AL-INV-4** — dedup: the `processed_events` ledger plus the `uq_audit_events_source_id` backstop.
 - **AL-INV-5** — provenance columns are NOT NULL.
 - **AL-INV-6** — the retention tier is derived from `entry_type`; durations are compiled constants.
-- **AL-INV-7** — redaction never touches `compliance_7y`.
+- **AL-INV-7** — redaction never touches `compliance_7y` (e.g. `legal.terms.accepted`, the owner's terms acceptance: actor, ip_address, user_agent and metadata all survive erasure).
 - **AL-INV-8** — the plan window is a service-layer clamp and never shortens storage.
 - **AL-INV-9** — a partition is dropped only when every retained tier is verified (`audit_drop_partition()`).
 - **AL-INV-10** — no publisher or outbox. The one SQS writer is platform-events' DLQ publisher, wired once in `cmd/server/main.go` for `WithDLQForwarding` (D-22); it moves poison messages to their queue's own DLQ and never publishes an event.
@@ -94,7 +94,8 @@ test/{unit,postgres,integration,e2e,fixtures,dbseed}
 
 ### How to add…
 
-- **An entry_type:** add a row in `domain/taxonomy.go` (tier included), the matching message in `api/asyncapi.yaml`, and an LLD §7.1 row. `test/unit/taxonomy_contract_test.go` parses the LLD.
+- **An entry_type:** add a row in `domain/taxonomy.go` (tier included), the matching message in `api/asyncapi.yaml` (bus types only), an LLD §7.1 row and the §25 frozen-vocabulary line. `test/unit/taxonomy_contract_test.go` parses the LLD.
+- **A producer for a producer-restricted direct-write type:** a taxonomy row's `producers` list (only `legal.terms.accepted` has one: `termsAcceptedProducers`, today `iam-realm-provisioner`) is the closed set of `source_service` values AL-5/AL-6 accept it from; anything else is 422 `unknown_entry_type`. A future terms re-acceptance flow (e.g. `iam-org-membership`) is one entry in that list, plus the Helm internal-caller lists if missing, plus the LLD §7.1 note.
 - **A metric** (Enterprise Platform Observability Standard, LLD §11):
   - Pick the tier by the decision tree. A new `platform_*` or `iam_*` name needs registry ratification first (standard rules 11–12), so default to Tier-3 `iam_audit_log_*`.
   - Register it in `buildCollectors` (`internal/adapter/outbound/metrics/business.go`) with `must(gincommon.NewCounterVec/NewCounter/NewGauge/NewHistogramVec(...))` (Tier 3) or `gincommon.NewShared*Vec` (registry names). gincommon injects `domain`/`service`/`environment`; never set them at a call site. Bound every label value; never use tenant, user, request or event ids as labels.

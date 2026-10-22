@@ -5,7 +5,7 @@ The sequence diagrams live in LLD §8. This file summarizes the flows as impleme
 ## Ingest: one write path (AL-INV-2)
 
 1. **Bus:** `consumer.Handler` → `toBusEvent` (`ID: env.ID`, the dedup key) → `IngestService.IngestBus`. It runs `domain.BuildBusEntry` (taxonomy, actor/target D-8, truncation D-9), then `appendBus`.
-2. **Direct-write:** the AL-5/AL-6 handler runs `IngestService.DirectWrite` → `domain.BuildDirectWriteEntry` (validation; the tier is derived and a caller-supplied tier ignored).
+2. **Direct-write:** the AL-5/AL-6 handler runs `IngestService.DirectWrite` → `domain.BuildDirectWriteEntry` (validation; the tier is derived and a caller-supplied tier ignored; a producer-restricted type such as `legal.terms.accepted` is 422 `unknown_entry_type` from an unlisted `source_service`).
 3. `AuditRepository.Append` runs one pgcommon transaction bound to the entry's tenant GUC:
    1. ledger insert into `processed_events`;
    2. **D-18 check:** if the entry is `security_3y` and its actor or user target appears in `redacted_subjects`, it is stored already redacted (marker plus `_redacted_on_ingest`, `actor_display` cleared);
