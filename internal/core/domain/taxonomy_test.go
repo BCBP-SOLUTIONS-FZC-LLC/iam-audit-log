@@ -100,6 +100,7 @@ var lldDirectWrite = map[string]RetentionTier{
 	"billing.token_addon.granted":                   TierSecurity3y,
 	"billing.token_addon.adjusted":                  TierSecurity3y,
 	"billing.token_addon.revoked":                   TierSecurity3y,
+	"billing.token_addon.expired":                   TierSecurity3y,
 	"commercial.cross_tenant_job.ran":               TierSecurity3y,
 	"legal.terms.accepted":                          TierCompliance7y,
 }
@@ -157,8 +158,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 87 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 87 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 88 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 88 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 

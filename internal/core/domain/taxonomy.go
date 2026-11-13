@@ -161,10 +161,11 @@ var entryTypes = map[string]taxonomyEntry{
 	"config.entitlement_override.expired": {tier: TierSecurity3y, directWrite: true},
 	"billing.adjustment.issued":           {tier: TierSecurity3y, directWrite: true},
 	"billing.refund.issued":               {tier: TierSecurity3y, directWrite: true},
-	// Token add-on operator corrections (IAM-8; CD-55): purchased arrives on the bus; granted/adjusted/revoked via AL-5 from Entitlements.
+	// Token add-on lifecycle (IAM-8/IAM-11; CD-55): purchased arrives on the bus; granted/adjusted/revoked/expired via AL-5 from Entitlements.
 	"billing.token_addon.granted":  {tier: TierSecurity3y, directWrite: true},
 	"billing.token_addon.adjusted": {tier: TierSecurity3y, directWrite: true},
 	"billing.token_addon.revoked":  {tier: TierSecurity3y, directWrite: true},
+	"billing.token_addon.expired":  {tier: TierSecurity3y, directWrite: true}, // IAM-11: pack reaches 12 months after purchase with tokens unused
 	// Cross-tenant bulk jobs (period rollover, limit sync, reconciliation) audit one entry
 	// per run, not per tenant, using the platform_tenant sentinel UUID (CD-21; HLD §7.2).
 	"commercial.cross_tenant_job.ran": {tier: TierSecurity3y, directWrite: true},
