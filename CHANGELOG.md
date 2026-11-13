@@ -4,6 +4,27 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — Go 1.26.11 + dependency updates (2026-11-13)
+
+- **Go 1.26.10 → 1.26.11** (`go.mod`): fixes govulncheck **GO-2026-6859** (`net/http` MaxBytesReader header race, reachable via the ingest and S3/catalog HTTP paths). `govulncheck` is clean after the upgrade. Dockerfile builder image needs `make pin-base-images` to follow.
+- **AWS SDK v2 patch/minor:** `aws-sdk-go-v2` v1.47.3 → v1.48.0, `config` v1.33.9 → v1.33.18, `credentials` v1.20.9 → v1.21.0, `smithy-go` v1.28.5 → v1.28.9, `glue` v1.171.0 → v1.175.1, `s3` v1.114.3 → v1.114.10, `sns` v1.47.5 → v1.48.0, `sqs` v1.52.4 → v1.53.0.
+- **`jackc/pgx/v5`** v5.11.0 → v5.13.0.
+- **`prometheus/common`** v0.72.1 → v0.74.0.
+- **`testcontainers-go`** v0.44.0 → v0.45.0 (+ `modules/postgres`).
+- Platform libs (`platform-events/v2`, `platform-gincommon/v2`, `platform-pgcommon/v2`) unchanged — registry ratification required before bumping.
+
+### Added — `billing.token_addon.expired` (2026-11-13, LLD rev 0.33, IAM-11, CD-55)
+
+- **Taxonomy:** direct-write `TokenAddonExpired` → `billing.token_addon.expired`, tier `security_3y`. Entitlements (`commercial-entitlements`, ns `commercial`) writes this via AL-5 when a token add-on pack reaches 12 months after purchase with tokens unused; actor `commercial-system`.
+- **Mesh identity admitted:** `commercial-entitlements` (SPIFFE `cluster.local/ns/commercial/sa/commercial-entitlements`) added to `mesh.authorizationPolicy.internalCallerPrincipals` and `networkPolicy.internalCallers` (cross-namespace selector). This also retroactively covers IAM-8's `billing.token_addon.granted/adjusted/revoked` types which had the same gap.
+- LLD §7.1 row and §25 vocabulary updated (87 → 88 `entry_type` values). Vocabulary count assertion updated in `taxonomy_test.go`.
+
+### Added — `billing.token_addon.*` bus and direct-write entry types (2026-11-12, LLD rev 0.32, IAM-7/IAM-8, CD-55)
+
+- **IAM-7 — bus row:** `billing.events` `TenantQuotaAddOnChanged` → `billing.token_addon.purchased` (`security_3y`). `billing-audit-q` SNS filter extended. `api/asyncapi.yaml` channel and operation updated; event schema `billing_audit_tenant_quota_addon_changed.json` added.
+- **IAM-8 — three direct-write rows:** `billing.token_addon.granted`, `.adjusted`, `.revoked` (all `security_3y`), written by Entitlements via AL-5 for operator corrections and forfeiture at offboarding.
+- LLD §7.1 table and §25 vocabulary updated (83 → 87 `entry_type` values).
+
 ### Added — `legal.terms.accepted` (2026-10-22, LLD rev 0.31)
 
 - **Taxonomy:** direct-write `TermsAccepted` → `legal.terms.accepted`, tier `compliance_7y` (7 years, kept through a GDPR erasure — AL-INV-7). Added to the LLD §7.1 table and the §25 frozen vocabulary (82 → 83). Signup BFF open gap A-4: Realm Provisioner records the tenant owner's terms-of-service acceptance (version, time, user id, IP address, user agent) at RP-1/RP-2.
