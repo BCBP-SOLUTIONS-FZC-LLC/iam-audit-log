@@ -119,6 +119,7 @@ var entryTypes = map[string]taxonomyEntry{
 	"tenant.payment_past_due":       {tier: TierSecurity3y},
 	"tenant.subscription_cancelled": {tier: TierSecurity3y},
 	"tenant.seats_changed":          {tier: TierSecurity3y}, // CD-21: Billing TenantSeatsChanged (Commercial HLD §9.1)
+	"billing.token_addon.purchased": {tier: TierSecurity3y}, // IAM-7: Billing TenantQuotaAddOnChanged (CD-55; Commercial HLD §8.6.2/§9.4)
 	// usage.events
 	"usage.quota.warning":  {tier: TierAccess90d},
 	"usage.quota.exceeded": {tier: TierAccess90d},
@@ -160,6 +161,10 @@ var entryTypes = map[string]taxonomyEntry{
 	"config.entitlement_override.expired": {tier: TierSecurity3y, directWrite: true},
 	"billing.adjustment.issued":           {tier: TierSecurity3y, directWrite: true},
 	"billing.refund.issued":               {tier: TierSecurity3y, directWrite: true},
+	// Token add-on operator corrections (IAM-8; CD-55): purchased arrives on the bus; granted/adjusted/revoked via AL-5 from Entitlements.
+	"billing.token_addon.granted":  {tier: TierSecurity3y, directWrite: true},
+	"billing.token_addon.adjusted": {tier: TierSecurity3y, directWrite: true},
+	"billing.token_addon.revoked":  {tier: TierSecurity3y, directWrite: true},
 	// Cross-tenant bulk jobs (period rollover, limit sync, reconciliation) audit one entry
 	// per run, not per tenant, using the platform_tenant sentinel UUID (CD-21; HLD §7.2).
 	"commercial.cross_tenant_job.ran": {tier: TierSecurity3y, directWrite: true},
@@ -228,7 +233,8 @@ var busTypes = map[busKey]string{
 	{TopicBilling, "TenantPaymentPastDue"}:        "tenant.payment_past_due",
 	{TopicBilling, "TenantSubscriptionCancelled"}: "tenant.subscription_cancelled",
 	{TopicBilling, "TenantReactivated"}:           "tenant.reactivated",
-	{TopicBilling, "TenantSeatsChanged"}:          "tenant.seats_changed", // CD-21: Commercial HLD §9.1
+	{TopicBilling, "TenantSeatsChanged"}:          "tenant.seats_changed",          // CD-21: Commercial HLD §9.1
+	{TopicBilling, "TenantQuotaAddOnChanged"}:     "billing.token_addon.purchased", // IAM-7: token add-on purchase (CD-55; Commercial HLD §9.4)
 
 	{TopicUsage, "TenantQuotaWarning"}:  "usage.quota.warning",
 	{TopicUsage, "TenantQuotaExceeded"}: "usage.quota.exceeded",
