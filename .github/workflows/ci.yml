@@ -32,7 +32,6 @@ name: CI
 
 "on":
   push:
-    branches: [main, master]
     paths-ignore: ['**.md', 'docs/architecture/**']
   pull_request:
     paths-ignore: ['**.md', 'docs/architecture/**']
