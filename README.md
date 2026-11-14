@@ -25,7 +25,7 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 The trail has two ingest paths that produce **the same row shape** (AL-INV-2):
 
 - **Bus** (`ingest_mode='bus'`): the 12-queue consumer fleet.
-- **Direct-write** (`ingest_mode='direct_write'`): AL-5/AL-6, for the 38 taxonomy types that have no bus event (AL-D1, D-6).
+- **Direct-write** (`ingest_mode='direct_write'`): AL-5/AL-6, for the 39 taxonomy types that have no bus event (AL-D1, D-6).
 
 Neither path can mutate or delete a row. The only ways data leaves the hot store are:
 
@@ -133,7 +133,7 @@ All error responses are **RFC 9457 Problem Details** (`Content-Type: application
 | Rule | Enforcement |
 |---|---|
 | Identity comes only from headers. The body is never trusted for *authorization*. | `x-user-id` must be a UUID, the `iam-system` principal (`…0000000000a1` or the literal `iam-system`), or the `commercial-system` principal (`…0000000000c1` or the literal `commercial-system`), and `x-tenant-id` must be a UUID, else `401`. AL-5 records the body's `tenant_id` and AL-7 reads the query's `tenant_id`: both routes are mesh-only and rebind the GUC to that tenant (`BindTenantGUC`). |
-| Direct-write accepts only the 38 direct-write taxonomy types | Any other `entry_type` returns `422 unknown_entry_type` (D-6). Bus types cannot be forged through AL-5/AL-6. |
+| Direct-write accepts only the 39 direct-write taxonomy types | Any other `entry_type` returns `422 unknown_entry_type` (D-6). Bus types cannot be forged through AL-5/AL-6. |
 | The retention tier is never caller-supplied | A `retention_tier` in the body is ignored. The tier is derived from `entry_type` (AL-INV-6, AL-INV-11). |
 | The actor model is strict | `anonymous` must carry no `id` (AL-D11). Every other type needs a UUID `id`. `iam_system` must use the reserved `00000000-0000-0000-0000-0000000000a1`. A violation returns `422 invalid_actor`. |
 | Metadata is bounded | It must be a JSON object and is compacted, then capped at `MAX_METADATA_BYTES` (8192), else `422 metadata_too_large` with `details`. |
@@ -271,7 +271,7 @@ This path is for audit facts that have no bus event (AL-D1). The **caller invari
 | Producer | `entry_type`s |
 |---|---|
 | Catalog / Admin Config | `config.department.created`, `config.department.updated`, `config.plan.updated`. These are platform-wide, so they are recorded under the reserved platform tenant `00000000-0000-0000-0000-0000000000b1` (AL-D14), which no real tenant can see. |
-| Group Mapping / JIT Config | `config.group_mapping.departments.changed`, `…department_roles.changed`, `…tenant_roles.changed`, via `:batch` |
+| Group Mapping / JIT Config | `config.group_mapping.departments.changed`, `…department_roles.changed`, `…tenant_roles.changed`; `config.group_mapping.purged` (tenant-purge cascade, accepted only from `iam-group-mapping`) |
 | Tender ACL | `config.tender_acl.granted`, `.revoked`, `.cascade` |
 | Org & Membership | `config.tenant_setting.changed`, `invitation.created`, `.revoked`, `.expired` |
 | Realm Provisioner | `config.idp.changed`; `legal.terms.accepted` (the tenant owner's terms acceptance at RP-1/RP-2: `compliance_7y`, kept through GDPR erasure; key `TermsAccepted:<tenant_id>:<user_id>:<version>`; only this producer may write it today) |

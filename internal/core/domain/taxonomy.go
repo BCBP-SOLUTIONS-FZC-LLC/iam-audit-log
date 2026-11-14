@@ -57,6 +57,11 @@ type taxonomyEntry struct {
 // lists if it is not already there — and a §7.1 note; no schema change.
 var termsAcceptedProducers = []string{"iam-realm-provisioner"}
 
+// groupMappingPurgedProducers may write config.group_mapping.purged (LLD
+// §7.1, rev 0.34, PA-OQ-19): only Group Mapping deletes a tenant's mappings
+// on TenantMembershipsPurged, so no other service may claim to have done it.
+var groupMappingPurgedProducers = []string{"iam-group-mapping"}
+
 // entryTypes is the frozen §7.1 / §25 vocabulary (AL-D2 tier rule:
 // approval/auth-failure/credential/privilege → 7 y; configuration/
 // lifecycle/delegation/invitations/profile/workflow-assignment → 3 y;
@@ -145,12 +150,15 @@ var entryTypes = map[string]taxonomyEntry{
 	"config.group_mapping.department_roles.changed": {tier: TierSecurity3y, directWrite: true},
 	"config.group_mapping.departments.changed":      {tier: TierSecurity3y, directWrite: true},
 	"config.group_mapping.tenant_roles.changed":     {tier: TierSecurity3y, directWrite: true},
-	"config.tender_acl.granted":                     {tier: TierSecurity3y, directWrite: true},
-	"config.tender_acl.revoked":                     {tier: TierSecurity3y, directWrite: true},
-	"config.tender_acl.cascade":                     {tier: TierSecurity3y, directWrite: true},
-	"invitation.created":                            {tier: TierSecurity3y, directWrite: true},
-	"invitation.revoked":                            {tier: TierSecurity3y, directWrite: true},
-	"invitation.expired":                            {tier: TierSecurity3y, directWrite: true},
+	// Group Mapping's tenant-purge cascade: one entry per TenantMembershipsPurged
+	// (rev 0.34, PA-OQ-19). Producer-restricted.
+	"config.group_mapping.purged": {tier: TierSecurity3y, directWrite: true, producers: groupMappingPurgedProducers},
+	"config.tender_acl.granted":   {tier: TierSecurity3y, directWrite: true},
+	"config.tender_acl.revoked":   {tier: TierSecurity3y, directWrite: true},
+	"config.tender_acl.cascade":   {tier: TierSecurity3y, directWrite: true},
+	"invitation.created":          {tier: TierSecurity3y, directWrite: true},
+	"invitation.revoked":          {tier: TierSecurity3y, directWrite: true},
+	"invitation.expired":          {tier: TierSecurity3y, directWrite: true},
 	// Legal: a user's acceptance of a terms-of-service version (rev 0.31).
 	// compliance_7y — kept 7 y and never redacted on erasure (AL-INV-7) —
 	// and producer-restricted (termsAcceptedProducers).

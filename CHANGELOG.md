@@ -36,6 +36,7 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 - Billing's BL-OQ-10 types (`security_3y`): `billing.conversion.stub`, `billing.conversion.reverted`, `billing.saga.resolved`, `billing.collection.paused`, `billing.price_book.changed`, `billing.provider.certified`, `billing.provider.certification_revoked`. The vocabulary grows from 88 to 97 with these.
 - `config.audit_delivery.resolved` and `config.audit_delivery.purged` (`compliance_7y`), for platform-audit's parked-row lifecycle (PA-OQ-15). The vocabulary is now 99.
 - **`api/taxonomy.json`:** the taxonomy in machine-readable form, one record per `entry_type` with `tier`, `direct_write` and `producers`. Regenerate it with `make taxonomy-json`; `TestTaxonomyExport_MatchesCode` fails while it is stale (PA-OQ-16).
+- `config.group_mapping.purged` (`security_3y`), Group Mapping's tenant-purge cascade, accepted only from `source_service` `iam-group-mapping` (PA-OQ-19). The vocabulary is now 100.
 - Helm: Billing is admitted as `cluster.local/ns/billing/sa/commercial-billing`. The NetworkPolicy allows namespace `billing` with label `commercial-billing`.
 
 ### Fixed — Trivy: extend DLA-4792-1 + add DLA-4867-1 (2026-11-14)

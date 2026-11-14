@@ -114,6 +114,7 @@ var lldDirectWrite = map[string]RetentionTier{
 	"config.audit_delivery.discarded":               TierCompliance7y,
 	"config.audit_delivery.resolved":                TierCompliance7y,
 	"config.audit_delivery.purged":                  TierCompliance7y,
+	"config.group_mapping.purged":                   TierSecurity3y,
 }
 
 func TestTaxonomy_EveryLLDBusRowMaps_ALD3(t *testing.T) {
@@ -169,8 +170,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 99 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 99 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 100 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 100 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 
@@ -255,12 +256,33 @@ func TestTaxonomy_TermsAcceptedProducerRestricted(t *testing.T) {
 	if DirectWriteProducerAllowed(et, "iam-org-membership") {
 		t.Error("DirectWriteProducers must return a copy")
 	}
+	restricted := map[string]bool{et: true, "config.group_mapping.purged": true}
 	for e := range EntryTypes() {
-		if e != et && DirectWriteProducers(e) != nil {
+		if !restricted[e] && DirectWriteProducers(e) != nil {
 			t.Errorf("%s unexpectedly producer-restricted", e)
 		}
-		if e != et && !DirectWriteProducerAllowed(e, "anything") {
+		if !restricted[e] && !DirectWriteProducerAllowed(e, "anything") {
 			t.Errorf("%s must keep the D-6 default", e)
+		}
+	}
+}
+
+// rev 0.34 (PA-OQ-19): config.group_mapping.purged is a security_3y
+// direct-write type only Group Mapping may write.
+func TestTaxonomy_GroupMappingPurgedProducerRestricted(t *testing.T) {
+	const et = "config.group_mapping.purged"
+	if tier, ok := TierFor(et); !ok || tier != TierSecurity3y || !IsDirectWriteEntryType(et) {
+		t.Fatalf("%s: tier=%s known=%v direct=%v", et, tier, ok, IsDirectWriteEntryType(et))
+	}
+	if got := DirectWriteProducers(et); len(got) != 1 || got[0] != "iam-group-mapping" {
+		t.Errorf("producers = %v, want [iam-group-mapping]", got)
+	}
+	if !DirectWriteProducerAllowed(et, "iam-group-mapping") {
+		t.Error("iam-group-mapping must be allowed")
+	}
+	for _, src := range []string{"iam-org-membership", "group-mapping", "", "iam-realm-provisioner"} {
+		if DirectWriteProducerAllowed(et, src) {
+			t.Errorf("%q must not be allowed to write %s", src, et)
 		}
 	}
 }

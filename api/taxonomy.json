@@ -194,6 +194,14 @@
       "producers": []
     },
     {
+      "entry_type": "config.group_mapping.purged",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": [
+        "iam-group-mapping"
+      ]
+    },
+    {
       "entry_type": "config.group_mapping.tenant_roles.changed",
       "tier": "security_3y",
       "direct_write": true,
