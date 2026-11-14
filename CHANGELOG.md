@@ -4,6 +4,19 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — platform-audit open items: direct-write contract (D-25..D-28, LLD rev 0.34) (2026-11-15)
+
+- **Commercial callers (D-25):** AL-5/AL-6 accept `x-tenant-roles: commercial-system` as well as `iam-system` (CD-19). `x-user-id` may be `…00c1` or the literal `commercial-system`. AL-7 and every other internal route still accept only `iam-system`. An automated action by a non-IAM producer is recorded as actor `{service_account, …00c1}`.
+- **AL-6 `Idempotency-Key` header optional (D-26, supersedes D-4's header rule):** if sent, it must be 1..256 chars, and it is never stored. Each entry's `idempotency_key` is still required and is the dedup key. AL-5 is unchanged.
+- **AL-6 per-index `code` is UPPER_SNAKE (D-27):** for example `UNKNOWN_ENTRY_TYPE`, or `INTERNAL_ERROR` for an unexpected failure. This matches AL-5's `errorCode`.
+- **`X-Max-Metadata-Bytes` (D-28):** the AL-5/AL-6 route chain advertises the effective `MAX_METADATA_BYTES`.
+
+### Added — taxonomy +9 and Billing admission (LLD rev 0.34) (2026-11-15)
+
+- `config.audit_delivery.requeued` and `config.audit_delivery.discarded` (`compliance_7y`), sent by the platform-audit operator helpers.
+- Billing's BL-OQ-10 types (`security_3y`): `billing.conversion.stub`, `billing.conversion.reverted`, `billing.saga.resolved`, `billing.collection.paused`, `billing.price_book.changed`, `billing.provider.certified`, `billing.provider.certification_revoked`. The vocabulary grows from 88 to 97.
+- Helm: Billing is admitted as `cluster.local/ns/billing/sa/commercial-billing`. The NetworkPolicy allows namespace `billing` with label `commercial-billing`.
+
 ### Fixed — Trivy: extend DLA-4792-1 + add DLA-4867-1 (2026-11-14)
 
 - **DLA-4792-1** (`tzdata` refresh) expiry extended to 2027-01-31 — the pinned distroless digest (`sha256:afa5c872`) still ships tzdata 2026b; suppression remains valid.
