@@ -615,8 +615,8 @@ paths:
       - application/json
       description: 'Up to MAX_INGEST_BATCH entries, each with its own idempotency_key
         (decision D-4). Always 207: per-index status 201 (created), 200 (replay) or
-        the §17 error; a bad entry never rejects the batch. Rate-limited per tenant
-        (429, §10.5).'
+        the §17 error with its UPPER_SNAKE code (D-27); a bad entry never rejects
+        the batch. Rate-limited per tenant (429, §10.5).'
       parameters:
       - description: Entries
         in: body
@@ -651,7 +651,6 @@ paths:
       - TenantRoles: []
       - TenantID: []
       - UserID: []
-      - IdempotencyKey: []
       summary: Direct-write a batch of audit entries (AL-6)
       tags:
       - Ingest

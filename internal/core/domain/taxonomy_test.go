@@ -103,6 +103,15 @@ var lldDirectWrite = map[string]RetentionTier{
 	"billing.token_addon.expired":                   TierSecurity3y,
 	"commercial.cross_tenant_job.ran":               TierSecurity3y,
 	"legal.terms.accepted":                          TierCompliance7y,
+	"billing.conversion.stub":                       TierSecurity3y,
+	"billing.conversion.reverted":                   TierSecurity3y,
+	"billing.saga.resolved":                         TierSecurity3y,
+	"billing.collection.paused":                     TierSecurity3y,
+	"billing.price_book.changed":                    TierSecurity3y,
+	"billing.provider.certified":                    TierSecurity3y,
+	"billing.provider.certification_revoked":        TierSecurity3y,
+	"config.audit_delivery.requeued":                TierCompliance7y,
+	"config.audit_delivery.discarded":               TierCompliance7y,
 }
 
 func TestTaxonomy_EveryLLDBusRowMaps_ALD3(t *testing.T) {
@@ -158,8 +167,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 88 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 88 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 97 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 97 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 

@@ -155,6 +155,14 @@ func TestInternalRoutes_RequireSystemRole(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code, uid)
 		assert.Equal(t, "00000000-0000-0000-0000-000000000000", decode(t, w)["user"])
 	}
+
+	// commercial-system is admitted on AL-5/AL-6 only (D-25): every other
+	// internal route, AL-7 included, stays iam-system only.
+	w = do(t, r, http.MethodGet, "/api/v1/internal/probe", map[string]string{
+		"x-user-id": "commercial-system", "x-tenant-id": tenantA, "x-tenant-roles": "commercial-system",
+	})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, "FORBIDDEN_PEER", decode(t, w)["errorCode"])
 }
 
 // LLD §5.4: Idempotency-Key is required on direct-write — rejected, never minted.

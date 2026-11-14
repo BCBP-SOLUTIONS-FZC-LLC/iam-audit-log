@@ -185,7 +185,7 @@ func TestAL6_BatchPartialSuccess_D4(t *testing.T) {
 	require.Len(t, r.Results, 4)
 	assert.Equal(t, 201, r.Results[0].Status)
 	assert.Equal(t, 422, r.Results[1].Status)
-	assert.Equal(t, "unknown_entry_type", r.Results[1].Code)
+	assert.Equal(t, "UNKNOWN_ENTRY_TYPE", r.Results[1].Code, "UPPER_SNAKE (D-27)")
 	assert.Equal(t, 200, r.Results[2].Status)
 	assert.Equal(t, r.Results[0].ID, r.Results[2].ID)
 	assert.Equal(t, 400, r.Results[3].Status, "missing per-entry idempotency_key")

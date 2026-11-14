@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -20,13 +21,39 @@ type DirectWriter interface {
 	DirectWriteBatch(ctx context.Context, cmds []domain.DirectWriteCommand) ([]service.BatchResult, error)
 }
 
+// MaxMetadataBytesHeader carries the effective MAX_METADATA_BYTES on every
+// AL-5/AL-6 response, so a client holding a copied limit can detect drift
+// (D-28; platform-audit PA-OQ-9).
+const MaxMetadataBytesHeader = "X-Max-Metadata-Bytes"
+
 // IngestHandler serves the mesh-only direct-write contract (LLD §5.4, AL-D1).
 type IngestHandler struct {
-	svc DirectWriter
+	svc         DirectWriter
+	maxMetadata string // MAX_METADATA_BYTES as sent in MaxMetadataBytesHeader; "" = header omitted
 }
 
 // NewIngestHandler wires the handler.
 func NewIngestHandler(svc DirectWriter) *IngestHandler { return &IngestHandler{svc: svc} }
+
+// WithMaxMetadataBytes makes every AL-5/AL-6 response advertise n (the
+// service's MAX_METADATA_BYTES) in MaxMetadataBytesHeader.
+func (h *IngestHandler) WithMaxMetadataBytes(n int) *IngestHandler {
+	h.maxMetadata = strconv.Itoa(n)
+	return h
+}
+
+// LimitsHeader sets MaxMetadataBytesHeader before the route's own chain runs,
+// so the route's 400/429 rejections carry it as well as 201/200/207/422.
+// Registered first on each ingest route by the router (the group's identity
+// and role checks run before it).
+func (h *IngestHandler) LimitsHeader() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if h.maxMetadata != "" {
+			c.Header(MaxMetadataBytesHeader, h.maxMetadata)
+		}
+		c.Next()
+	}
+}
 
 // decodeJSON binds the body; a malformed or oversized body is 400
 // invalid_request (§17). Unknown fields (e.g. a caller-supplied
@@ -84,14 +111,13 @@ func (h *IngestHandler) CreateEntry(c *gin.Context) {
 // CreateBatch is AL-6.
 //
 //	@Summary		Direct-write a batch of audit entries (AL-6)
-//	@Description	Up to MAX_INGEST_BATCH entries, each with its own idempotency_key (decision D-4). Always 207: per-index status 201 (created), 200 (replay) or the §17 error; a bad entry never rejects the batch. Rate-limited per tenant (429, §10.5).
+//	@Description	Up to MAX_INGEST_BATCH entries, each with its own idempotency_key (decision D-4). Always 207: per-index status 201 (created), 200 (replay) or the §17 error with its UPPER_SNAKE code (D-27); a bad entry never rejects the batch. Rate-limited per tenant (429, §10.5).
 //	@Tags			Ingest
 //	@Accept			json
 //	@Produce		json
 //	@Security		TenantRoles
 //	@Security		TenantID
 //	@Security		UserID
-//	@Security		IdempotencyKey
 //	@Param			body	body		BatchRequest	true	"Entries"
 //	@Success		207		{object}	BatchResponse	"per-entry results"
 //	@Failure		400		{object} ProblemResponse	"invalid_request"
@@ -125,12 +151,12 @@ func (h *IngestHandler) CreateBatch(c *gin.Context) {
 		default:
 			var de *domain.Error
 			if errors.As(r.Err, &de) {
-				item.Status, item.Code, item.Message = de.Status(), string(de.Code), de.Message
+				item.Status, item.Code, item.Message = de.Status(), wireCode(de.Code), de.Message
 			} else {
 				if errorLogger != nil {
 					errorLogger.Error("batch entry failed", map[string]any{"index": r.Index, "error": r.Err.Error()})
 				}
-				item.Status, item.Code, item.Message = http.StatusInternalServerError, "internal_error", "internal error"
+				item.Status, item.Code, item.Message = http.StatusInternalServerError, codeInternalError, "internal error"
 			}
 		}
 		resp.Results[i] = item

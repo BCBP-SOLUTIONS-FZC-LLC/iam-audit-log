@@ -169,6 +169,20 @@ var entryTypes = map[string]taxonomyEntry{
 	// Cross-tenant bulk jobs (period rollover, limit sync, reconciliation) audit one entry
 	// per run, not per tenant, using the platform_tenant sentinel UUID (CD-21; HLD §7.2).
 	"commercial.cross_tenant_job.ran": {tier: TierSecurity3y, directWrite: true},
+	// Billing operator actions (BL-OQ-10, rev 0.34). The price-book and
+	// provider-certification types carry the platform_tenant sentinel.
+	"billing.conversion.stub":                {tier: TierSecurity3y, directWrite: true},
+	"billing.conversion.reverted":            {tier: TierSecurity3y, directWrite: true},
+	"billing.saga.resolved":                  {tier: TierSecurity3y, directWrite: true},
+	"billing.collection.paused":              {tier: TierSecurity3y, directWrite: true},
+	"billing.price_book.changed":             {tier: TierSecurity3y, directWrite: true},
+	"billing.provider.certified":             {tier: TierSecurity3y, directWrite: true},
+	"billing.provider.certification_revoked": {tier: TierSecurity3y, directWrite: true},
+	// platform-audit operator helpers re-queue or discard a producer's pending
+	// audit records (PA-OQ-14, rev 0.34). A change to an audit record is kept
+	// 7 years like cross-tenant access; any adopter may send them.
+	"config.audit_delivery.requeued":  {tier: TierCompliance7y, directWrite: true},
+	"config.audit_delivery.discarded": {tier: TierCompliance7y, directWrite: true},
 }
 
 type busKey struct{ topic, sourceType string }
