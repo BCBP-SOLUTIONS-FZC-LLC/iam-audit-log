@@ -1,14 +1,14 @@
 flowchart LR
     subgraph producers["Producers"]
         SNS["SNS topics\n(iam.*, tender, billing, usage, wf.*)"]
-        DW["Direct-write callers\n(Catalog, RP, Group Mapping, Tender ACL)"]
+        DW["Direct-write callers\n(Catalog, RP, O&M, Group Mapping, Tender ACL,\nEntitlements, Billing)"]
         GW["Gateway\n(tenant admins)"]
     end
 
     subgraph k8s["Kubernetes namespace iam"]
         subgraph server["cmd/server — 3 replicas, audit_app"]
             API["Gin API\nAL-1..AL-7"]
-            FLEET["platform-events consumer fleet\n11 queues"]
+            FLEET["platform-events consumer fleet\n12 queues"]
             POLL["PlanPoller (CAT-I2)"]
             EXP["Export worker"]
             OPS["OpsMonitor (D-21)"]

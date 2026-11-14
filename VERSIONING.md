@@ -1,13 +1,13 @@
 # Versioning and releases
 
-This repository is a **deployed Go microservice**, not a library other services `go get`. `pkg/requestctx` is an internal helper for this process, and the `go.mod` module path exists so this repo's own code compiles, not for import by sibling repos. This document differs from [`platform-events`](https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events)'s `VERSIONING.md` for that reason.
+This repository is a **deployable Go microservice**, not a library other services `go get`. `pkg/requestctx` is an internal helper for this process, and the `go.mod` module path exists so this repo's own code compiles, not for import by sibling repos. This document differs from [`platform-events`](https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events)'s `VERSIONING.md` for that reason.
 
 What gets versioned here is:
 - the **container image** (`ghcr.io/bcbp-solutions-fzc-llc/iam-audit-log`);
 - the **Helm chart** (`deploy/helm/`) that deploys it;
 - the runtime contract that its dependants rely on.
 
-Those dependants are the platform's audit producers (every IAM and domain service publishing to the 11 audited topics), the direct-write callers of AL-5/AL-6 (Realm Provisioner, Catalog / Admin Config, Group Mapping, Tender ACL, Org & Membership and others; LLD §18.2), tenant admins through the UI (AL-1..AL-4), compliance callers of AL-7, and operators. Versions are published with **Git tags** and described in [CHANGELOG.md](./CHANGELOG.md).
+Those dependants are the platform's audit producers (every IAM and domain service publishing to the 12 audited topics), the direct-write callers of AL-5/AL-6 (Realm Provisioner, Catalog / Admin Config, Group Mapping, Tender ACL, Org & Membership and others; LLD §18.2), tenant admins through the UI (AL-1..AL-4), compliance callers of AL-7, and operators. Versions are published with **Git tags** and described in [CHANGELOG.md](./CHANGELOG.md).
 
 This document follows the same SemVer / image-tag / maintainer-process layout as [`iam-org-membership/VERSIONING.md`](https://github.com/BCBP-SOLUTIONS-FZC-LLC/iam-org-membership/blob/main/VERSIONING.md), which is itself modeled on `iam-realm-provisioner`'s and `iam-authz-enrichment`'s.
 
@@ -28,8 +28,8 @@ This service has no Go package for another service to import. Its "public API" i
 | In scope (SemVer applies) | Out of scope (may change without MAJOR) |
 |---------------------------|------------------------------------------|
 | The 7 routes across two prefixes, with method, path, and documented request/response field names (LLD §5.4, README § API overview): `/api/v1/audit/*` AL-1 `GET /events`, AL-2 `GET /events/:id`, AL-3 `POST /exports`, AL-4 `GET /exports/:id`; `/api/v1/internal/*` AL-5 `POST /audit-entries`, AL-6 `POST /audit-entries:batch`, AL-7 `GET /audit/events`. Also: AL-6's always-207 per-entry body (D-4), AL-1's `202` deferral (D-10), AL-7's `422 range_too_large` (D-14) | `internal/*` package structure, exported Go identifiers and file layout; no other module imports them. Gin's internal route-group structure is not part of the wire contract |
-| The `Idempotency-Key` header semantics on AL-5/AL-6 (it becomes `source_event_id`; a replay returns `200` with the same id; AL-INV-4) and the per-entry `idempotency_key` on AL-6 (D-4) | How the replay is detected internally (the ledger vs the `uq_audit_events_source_id` backstop) |
-| The **11 consumed queue names** (`*-audit-q` + `-dlq`, LLD §7.1 / §25) and their `processed_events.consumer` discriminators (`auth`, `user`, `membership`, `tenant`, `delegation`, `serviceaccount`, `tender`, `billing`, `usage`, `wf_workflow`, `wf_template`, plus `direct_write`); consumed event types, which are **receive-only** (`api/asyncapi.yaml`, zero send operations: AL-INV-10) | Consumer concurrency (`SQS_CONCURRENCY`), visibility-timeout tuning, the Glue decode internals |
+| The `Idempotency-Key` header semantics on AL-5 (it becomes `source_event_id`; a replay returns `200` with the same id; AL-INV-4), and on AL-6 the per-entry `idempotency_key` (D-4) with an optional, unstored header (D-26) | How the replay is detected internally (the ledger vs the `uq_audit_events_source_id` backstop) |
+| The **12 consumed queue names** (`*-audit-q` + `-dlq`, LLD §7.1 / §25) and their `processed_events.consumer` discriminators (`auth`, `user`, `membership`, `tenant`, `delegation`, `serviceaccount`, `tender`, `billing`, `usage`, `wf_workflow`, `wf_template`, `entitlement`, plus `direct_write`); consumed event types, which are **receive-only** (`api/asyncapi.yaml`, zero send operations: AL-INV-10) | Consumer concurrency (`SQS_CONCURRENCY`), visibility-timeout tuning, the Glue decode internals |
 | The **`entry_type` vocabulary and each type's `retention_tier`** (LLD §7.1, `internal/core/domain/taxonomy.go`). A tier may only lengthen, never shorten (AL-INV-6); unknown types persist as `<domain>.unknown` (AL-EVT-4) | How the taxonomy is stored in code; the normaliser's derivation of actor/target (D-8), so long as the persisted shape is unchanged |
 | §17 error **codes** (`internal/core/domain/errors.go`, 13 codes, e.g. `unknown_entry_type`, `metadata_too_large`, `range_too_large`, `forbidden_peer`) and their HTTP statuses | Exact error `message` wording |
 | Required env var **names and semantics** (`internal/config/config.go`; required outside dev: `DATABASE_URL`, `MIGRATION_DATABASE_URL` for `cmd/server`, and `RECONCILER_DATABASE_URL` for `cmd/reconciler`), plus `AUDIT_ARCHIVE_*`; the library-owned `PG_*` / `SQS_*` / `OTEL_*` names follow their libraries | Env var **defaults** (`AUDIT_DEFAULT_QUERY_WINDOW_DAYS=365`, `ARCHIVE_SYNC_MAX_ROWS=10000`, `EXPORT_JOB_LEASE=15m`, `OPS_STATS_INTERVAL=60s`, etc.): tunable without a MAJOR bump, unless the new default itself breaks a documented invariant |
@@ -186,7 +186,7 @@ When cutting a tagged release:
 
 7. **Notify dependants** with upgrade notes if the release is MINOR or MAJOR:
    - the direct-write callers (Realm Provisioner, Catalog / Admin Config, Group Mapping, Tender ACL, Org & Membership);
-   - the producers of the 11 audited topics;
+   - the producers of the 12 audited topics;
    - compliance callers of AL-7 and the UI team owning AL-1..AL-4;
    - whoever owns the Helm deployment.
 
@@ -217,7 +217,7 @@ None of those libraries is re-exported. A consumer of this *service* never needs
 | [README.md](./README.md) | Mental model, API overview, integration, local dev, CI/CD summary |
 | [CONTRIBUTING.md](./CONTRIBUTING.md#deployment) | Deployment pipeline as it exists today (`ci.yml` / `release.yml`) |
 | [docs/lld/iam-lld-audit-log-service.md](./docs/lld/iam-lld-audit-log-service.md) | The runtime contract in full: §5 API, §7 events and taxonomy, §12 configuration, §16 open-question register, §17 error taxonomy, §25 name inventory |
-| [docs/implementation/BUILD_PLAN.md](./docs/implementation/BUILD_PLAN.md) | Build decisions D-1..D-21 and the spec-gap register (gaps 1–46) |
+| [docs/implementation/BUILD_PLAN.md](./docs/implementation/BUILD_PLAN.md) | Build decisions D-1..D-28 and the spec-gap register (gaps 1–46) |
 | [docs/implementation/RELEASE_CHECKLIST.md](./docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites that must be met before the first tagged release |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Layer model, flows, key invariants, threat model |
 | [deploy/monitoring/metric-registry.yaml](./deploy/monitoring/metric-registry.yaml) | The metric contract: tiers, label vocabulary, deprecations with replacement and sunset |

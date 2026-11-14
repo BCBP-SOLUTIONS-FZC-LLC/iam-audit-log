@@ -1104,7 +1104,7 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "IdempotencyKey": {
-            "description": "Required on AL-5/AL-6; becomes the entry's source_event_id (LLD §5.4).",
+            "description": "Required on AL-5 (becomes the entry's source_event_id); optional on AL-6, where each entry's idempotency_key is the key (LLD §5.4, D-26).",
             "type": "apiKey",
             "name": "Idempotency-Key",
             "in": "header"
@@ -1116,13 +1116,13 @@ const docTemplate = `{
             "in": "header"
         },
         "TenantRoles": {
-            "description": "Gateway/mesh-injected roles: tenant_admin|tenant_owner (public) or iam-system (internal).",
+            "description": "Gateway/mesh-injected roles: tenant_admin|tenant_owner (public) or iam-system (internal; AL-5/AL-6 also commercial-system).",
             "type": "apiKey",
             "name": "x-tenant-roles",
             "in": "header"
         },
         "UserID": {
-            "description": "Caller subject (or the iam-system sentinel …00a1).",
+            "description": "Caller subject (or the iam-system sentinel …00a1 / commercial-system …00c1).",
             "type": "apiKey",
             "name": "x-user-id",
             "in": "header"
@@ -1137,7 +1137,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "IAM Audit Log API",
-	Description:      "Audit Log Service — the platform compliance system-of-record (LLD §1). Append-only, tenant-scoped audit trail.\n\n**Public** `/api/v1/audit/*` (AL-1..AL-4): tenant_admin / tenant_owner only; RLS-scoped to x-tenant-id; plan-gated query window.\n**Internal** `/api/v1/internal/*` (AL-5..AL-7): mesh-only, iam-system peers; direct-write ingest requires `Idempotency-Key`.",
+	Description:      "Audit Log Service — the platform compliance system-of-record (LLD §1). Append-only, tenant-scoped audit trail.\n\n**Public** `/api/v1/audit/*` (AL-1..AL-4): tenant_admin / tenant_owner only; RLS-scoped to x-tenant-id; plan-gated query window.\n**Internal** `/api/v1/internal/*` (AL-5..AL-7): mesh-only, iam-system peers (AL-5/AL-6 also commercial-system); AL-5 requires `Idempotency-Key`, optional on AL-6.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

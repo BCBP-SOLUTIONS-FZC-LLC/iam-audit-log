@@ -5,7 +5,7 @@
 // @description     Audit Log Service — the platform compliance system-of-record (LLD §1). Append-only, tenant-scoped audit trail.
 // @description
 // @description     **Public** `/api/v1/audit/*` (AL-1..AL-4): tenant_admin / tenant_owner only; RLS-scoped to x-tenant-id; plan-gated query window.
-// @description     **Internal** `/api/v1/internal/*` (AL-5..AL-7): mesh-only, iam-system peers; direct-write ingest requires `Idempotency-Key`.
+// @description     **Internal** `/api/v1/internal/*` (AL-5..AL-7): mesh-only, iam-system peers (AL-5/AL-6 also commercial-system); AL-5 requires `Idempotency-Key`, optional on AL-6.
 //
 // @contact.name   BCBP Solutions
 // @contact.email  indhu@bcbpsolutions.com
@@ -18,7 +18,7 @@
 // @securityDefinitions.apikey TenantRoles
 // @in                         header
 // @name                       x-tenant-roles
-// @description                Gateway/mesh-injected roles: tenant_admin|tenant_owner (public) or iam-system (internal).
+// @description                Gateway/mesh-injected roles: tenant_admin|tenant_owner (public) or iam-system (internal; AL-5/AL-6 also commercial-system).
 //
 // @securityDefinitions.apikey TenantID
 // @in                         header
@@ -28,12 +28,12 @@
 // @securityDefinitions.apikey UserID
 // @in                         header
 // @name                       x-user-id
-// @description                Caller subject (or the iam-system sentinel …00a1).
+// @description                Caller subject (or the iam-system sentinel …00a1 / commercial-system …00c1).
 //
 // @securityDefinitions.apikey IdempotencyKey
 // @in                         header
 // @name                       Idempotency-Key
-// @description                Required on AL-5/AL-6; becomes the entry's source_event_id (LLD §5.4).
+// @description                Required on AL-5 (becomes the entry's source_event_id); optional on AL-6, where each entry's idempotency_key is the key (LLD §5.4, D-26).
 //
 // @tag.name         Query
 // @tag.description  Tenant audit search, single read, export (AL-1..AL-4)

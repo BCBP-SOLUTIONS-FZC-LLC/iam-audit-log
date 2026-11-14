@@ -223,7 +223,7 @@ readinessProbe:
 networkPolicy:
   enabled: true
   # Public /api/v1/audit/* arrives via the gateway; /api/v1/internal/* from
-  # IAM callers and cross-namespace Commercial callers (Entitlements).
+  # IAM callers and cross-namespace Commercial callers (Entitlements, Billing).
   ingressControllerNamespaceSelector:
     kubernetes.io/metadata.name: gateway
   ingressControllerPodSelector: {}

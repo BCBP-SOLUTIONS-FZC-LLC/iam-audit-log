@@ -1,6 +1,6 @@
 # API, caching and events
 
-Swagger: `docs/swagger` (`make swag`). Router: `internal/adapter/inbound/http/router.go`. Identity comes from the gateway headers `x-user-id`, `x-tenant-id`, `x-tenant-roles`; it is never taken from the path or body. Errors use the §17 envelope `{error, message, status, trace_id, request_id, details?}`.
+Swagger: `docs/swagger` (`make swag`). Router: `internal/adapter/inbound/http/router.go`. Identity comes from the gateway headers `x-user-id`, `x-tenant-id`, `x-tenant-roles`; it is never taken from the path or body. Errors are RFC 9457 problem details (`application/problem+json`, rendered by platform-gincommon v2) with an UPPER_SNAKE `errorCode`; AL-6 per-index results carry the same codes (D-27).
 
 ## Routes
 
@@ -10,9 +10,9 @@ Swagger: `docs/swagger` (`make swag`). Router: `internal/adapter/inbound/http/ro
 | AL-2 | `GET /api/v1/audit/events/:id` | same | Hot read first, then an archive fallback limited to objects whose id range holds the id (gap 32). Outside the window → 404 `audit_entry_not_found`. |
 | AL-3 | `POST /api/v1/audit/exports` | same | 202 `{export_id, status, status_url}`. The filter is stored clamped. Per-tenant limit → 429 `rate_limited` + `Retry-After`. No dedup (gap 31). |
 | AL-4 | `GET /api/v1/audit/exports/:id` | same | When ready, returns a fresh short-lived `download_url` (`EXPORT_DOWNLOAD_URL_TTL`) valid until `expires_at` (7 d, D-11). A lapsed export shows `expired`. |
-| AL-5 | `POST /api/v1/internal/audit-entries` | caller SPIFFE principal checked by the Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`, D-23), then the `iam-system` role (`RequireSystemRole`), else 403 `forbidden_peer` | `Idempotency-Key` is required and becomes `source_event_id`. 201 created, 200 replay. 422 for `unknown_entry_type`, `metadata_too_large`, `invalid_actor`. Only direct-write entry types are accepted (D-6). |
-| AL-6 | `POST /api/v1/internal/audit-entries:batch` | same + per-tenant limiter (D-5) | Each entry carries its own `idempotency_key`; always **207** with per-index results (D-4); 422 `batch_too_large`. |
-| AL-7 | `GET /api/v1/internal/audit/events?tenant_id=` | same as AL-5 | Explicit tenant (RLS-bound), no plan clamp. An archived range over the bounds → 422 `range_too_large` (D-14). |
+| AL-5 | `POST /api/v1/internal/audit-entries` | caller SPIFFE principal checked by the Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`, D-23), then the `iam-system` or `commercial-system` role (`RequireDirectWriterRole`, D-25), else 403 `forbidden_peer` | `Idempotency-Key` is required and becomes `source_event_id`. Responses carry `X-Max-Metadata-Bytes` (D-28). 201 created, 200 replay. 422 for `unknown_entry_type`, `metadata_too_large`, `invalid_actor`. Only direct-write entry types are accepted (D-6). |
+| AL-6 | `POST /api/v1/internal/audit-entries:batch` | same + per-tenant limiter (D-5) | Each entry carries its own `idempotency_key`; the header is optional (D-26); always **207** with per-index results, UPPER_SNAKE `code` (D-4, D-27); 422 `batch_too_large`. |
+| AL-7 | `GET /api/v1/internal/audit/events?tenant_id=` | SPIFFE principal as AL-5, then the `iam-system` role only (`RequireSystemRole`), else 403 `forbidden_peer` | Explicit tenant (RLS-bound), no plan clamp. An archived range over the bounds → 422 `range_too_large` (D-14). |
 
 Also `/healthz`, `/readyz` (Postgres plus consumers), `/asyncapi[.yaml]`, and `/metrics` on the metrics port.
 

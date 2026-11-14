@@ -4,6 +4,25 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — documentation consistency with D-25..D-28 and the code (2026-11-15)
+
+- **New `.claude/agents/docs-consistency-reviewer.md`:** a read-only agent that checks the docs a diff touches, or should have touched, against the code and the other docs. Its first run on this PR found the fixes below.
+- **Wire contract (D-25..D-28):**
+  - README, ARCHITECTURE, VERSIONING, LLD §3.3.1/§5.1/§5.3/§25, `.claude/api-caching-events.md`, `docs/runbook.md` and the swagger info now say that AL-5/AL-6 admit `commercial-system` and AL-7 admits only `iam-system`.
+  - The same docs now say that the AL-6 `Idempotency-Key` header is optional.
+  - The direct-write count is 38, Billing (ns `billing`) is admitted, and the outbox is the recommended caller pattern.
+  - The LLD limits-header note now says the non-JSON `400` lacks the header too.
+- **Earlier drift:**
+  - The queue count is 12, not 11 (VERSIONING, LLD, `init-floci.sh`, `.claude/operations.md`, a diagram).
+  - Go is 1.26.11 in ARCHITECTURE.
+  - The library versions in `.claude/CLAUDE.md` were updated.
+  - The LLD is cited as rev 0.34 and decisions as D-1..D-28 everywhere.
+  - VERSIONING no longer calls the service "deployed".
+  - The README describes the schema-governance targets correctly.
+  - The error-envelope and runbook code casing now match RFC 9457 / UPPER_SNAKE.
+  - LLD §7.1 has the six CD-21 rows it was missing.
+  - Three `docs/architecture/mermaid/*.mmd` files were synced to their ARCHITECTURE.md copies.
+
 ### Changed — platform-audit open items: direct-write contract (D-25..D-28, LLD rev 0.34) (2026-11-15)
 
 - **Commercial callers (D-25):** AL-5/AL-6 accept `x-tenant-roles: commercial-system` as well as `iam-system` (CD-19). `x-user-id` may be `…00c1` or the literal `commercial-system`. AL-7 and every other internal route still accept only `iam-system`. An automated action by a non-IAM producer is recorded as actor `{service_account, …00c1}`.

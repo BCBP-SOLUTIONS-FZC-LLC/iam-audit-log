@@ -5,8 +5,8 @@ flowchart LR
     end
     SNS[("SNS topics\n(raw message delivery)")]
     subgraph queues["SQS — owned by this service (§7.1)"]
-        Q["11 × *-audit-q\nredrive maxReceiveCount = 5"]
-        DLQ["11 × *-audit-q-dlq"]
+        Q["12 × *-audit-q\nredrive maxReceiveCount = 5"]
+        DLQ["12 × *-audit-q-dlq"]
     end
     subgraph server["cmd/server — platform-events consumer fleet"]
         C["events.NewSQSConsumer\n(config.LoadSQS: region, endpoint, batch,\nlong-poll, visibility, SQS_CONCURRENCY)"]

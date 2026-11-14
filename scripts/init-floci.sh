@@ -7,7 +7,7 @@
 # Creates:
 #   11 SNS topics      — the consumed topics (owned by other services in
 #                        production; created here so local dev can publish)
-#   11 SQS queues+DLQs — <topic-short>-audit-q / -dlq, maxReceiveCount=5,
+#   12 SQS queues+DLQs — <topic-short>-audit-q / -dlq, maxReceiveCount=5,
 #                        each subscribed catch-all (no filter, AL-EVT-2)
 #                        with RawMessageDelivery=true
 #   1 S3 bucket        — iam-audit-archive, Object Lock enabled (§15.4)

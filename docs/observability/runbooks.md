@@ -43,9 +43,9 @@ Common starting points:
 
 **Triage.**
 1. Find the routes: `sum by (route, error_class) (rate(platform_http_requests_total{service="iam-audit-log", status_class="5xx"}[5m]))`.
-2. The error body's `code` gives the cause:
-   - `dependency_unavailable`: Postgres or PgBouncer (a closed pool, connection or resource SQLSTATE), or S3 for archived reads and exports. Check `platform_db_pool_connections`, `platform_db_pool_empty_acquires_total` and `service:platform_dependency_request_error_ratio:10m{dependency="s3"}`.
-   - `internal_error`: an unhandled error, logged at error level with the request's `trace_id`.
+2. The problem body's `errorCode` gives the cause:
+   - `DEPENDENCY_UNAVAILABLE`: Postgres or PgBouncer (a closed pool, connection or resource SQLSTATE), or S3 for archived reads and exports. Check `platform_db_pool_connections`, `platform_db_pool_empty_acquires_total` and `service:platform_dependency_request_error_ratio:10m{dependency="s3"}`.
+   - `INTERNAL_ERROR`: an unhandled error, logged at error level with the request's `trace_id`.
 3. Correlate with the availability SLO (`IAMAuditLogAvailabilitySLO*`).
 
 **Mitigate.** Roll back a bad version, or restore the failing dependency.

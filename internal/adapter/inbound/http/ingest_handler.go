@@ -44,8 +44,9 @@ func (h *IngestHandler) WithMaxMetadataBytes(n int) *IngestHandler {
 
 // LimitsHeader sets MaxMetadataBytesHeader before the route's own chain runs,
 // so the route's 400/429 rejections carry it as well as 201/200/207/422.
-// Registered first on each ingest route by the router (the group's identity
-// and role checks run before it).
+// Registered on each ingest route right after RequireDirectWriterRole (the
+// group's identity and Content-Type checks run before both), so 401/403 and a
+// non-JSON 400 lack it.
 func (h *IngestHandler) LimitsHeader() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if h.maxMetadata != "" {

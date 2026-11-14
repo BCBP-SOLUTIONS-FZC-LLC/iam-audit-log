@@ -60,7 +60,7 @@ Complete `docs/implementation/RELEASE_CHECKLIST.md` before the first AWS deploy:
 
 ## Local development
 
-- `make setup && make docker-up` starts Postgres on `localhost:5548` and floci on `localhost:4573` (`scripts/init-floci.sh` creates the 11 queues plus DLQs, the Object-Lock bucket and the Glue registries). Then `make run`, and `make run-reconciler JOB=reconcile`.
+- `make setup && make docker-up` starts Postgres on `localhost:5548` and floci on `localhost:4573` (`scripts/init-floci.sh` creates the 12 queues plus DLQs, the Object-Lock bucket and the Glue registries). Then `make run`, and `make run-reconciler JOB=reconcile`.
 - Ports: API `:8080`, metrics `:9090`.
 - floci 2.1.0-compat supports Object Lock and echoes it back, but it refuses to overwrite a locked key where S3 would version it (gap 16). Pinned by `TestReconciler_FlociObjectLockSupport`.
 

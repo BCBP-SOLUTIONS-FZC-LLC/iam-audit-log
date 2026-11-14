@@ -88,11 +88,13 @@ workspace that owns the `iam-audit-archive` bucket.
 - [x] **`mesh.authorizationPolicy.internalCallerPrincipals` and
       `networkPolicy.internalCallers` are pre-populated** in `deploy/helm/values.yaml`
       with the five core IAM callers (Catalog Admin, Realm Provisioner, Org &
-      Membership, Group Mapping, Tender ACL) using their conventional service
-      account names.
+      Membership, Group Mapping, Tender ACL), Commercial Entitlements (ns
+      `commercial`) and Commercial Billing (ns `billing`), using their
+      conventional service account names. Tender ACL and Group Mapping derive
+      the ServiceAccount from the Helm release name unless
+      `serviceAccount.name` is set; ask them to set it explicitly.
       **Action needed:** confirm each name matches the actual `ServiceAccount`
-      names in your cluster, then add Commercial Entitlements, Billing, and
-      Platform cross-tenant jobs via `networkPolicy.additionalIngressRules` and
+      names in your cluster, then add Platform cross-tenant jobs via `networkPolicy.additionalIngressRules` and
       `mesh.authorizationPolicy.additionalRules` once those services deploy.
       **If wrong:** a caller not listed gets `403 RBAC: access denied`; its
       entries wait in its own retry queue.
@@ -162,7 +164,7 @@ workspace that owns the `iam-audit-archive` bucket.
 | 5 | KMS key ARN in `policy.json` | **Code fix done** (placeholder → key ARN format) | Substitute real key ID before attaching |
 | 6 | DLQ `SendMessage` in `policy.json` | **Done** in repo | Substitute `ACCOUNT_ID` and attach policy |
 | 7 | Istio 1.22+ installed, `iam` namespace meshed | External cluster ops | Platform/infra team |
-| 8 | Mesh principals populated in `values.yaml` | **Done** (5 callers pre-populated) | Confirm service account names; add Commercial callers later |
+| 8 | Mesh principals populated in `values.yaml` | **Done** (7 callers pre-populated, incl. Entitlements and Billing) | Confirm service account names; add Platform cross-tenant jobs later |
 | 9 | Gateway ingress configured | **Values ready**, coordinates needed | Set `ingress.enabled`, hostname, gateway name/namespace |
 | 10 | Deploy in `iam` namespace | Helm flag | `helm install -n iam …` |
 | 11 | Reconciler CronJob alerts | **Done** in `app-alerts.yml` | Confirm `prometheusRule.enabled: true` and operator labels |

@@ -4,7 +4,7 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`
 **Module:** Go 1.26.11 · private module · deployed as two binaries from one image (`cmd/server`, `cmd/reconciler`)
-**Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.33** (as-built through Phase 8, the platform-library / observability-standard alignment, production-readiness hardening, and Commercial Phase 1 taxonomy additions IAM-7/IAM-8/IAM-11). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-23) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
+**Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.34** (as-built through Phase 8, the platform-library / observability-standard alignment, production-readiness hardening, Commercial Phase 1 taxonomy additions IAM-7/IAM-8/IAM-11, and the platform-audit open items D-25..D-28). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-28) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
 
 **Status:** shared libraries at their latest releases (platform-gincommon/v2 v2.1.0, platform-events/v2 v2.2.1, platform-pgcommon/v2 v2.0.2); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
 ---
@@ -25,7 +25,7 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 The trail has two ingest paths that produce **the same row shape** (AL-INV-2):
 
 - **Bus** (`ingest_mode='bus'`): the 12-queue consumer fleet.
-- **Direct-write** (`ingest_mode='direct_write'`): AL-5/AL-6, for the 28 taxonomy types that have no bus event (AL-D1, D-6).
+- **Direct-write** (`ingest_mode='direct_write'`): AL-5/AL-6, for the 38 taxonomy types that have no bus event (AL-D1, D-6).
 
 Neither path can mutate or delete a row. The only ways data leaves the hot store are:
 
@@ -75,14 +75,14 @@ This is enforced structurally. `internal/core/service` depends only on `internal
 
 AL-1 query parameters are `from`, `to`, `entry_type` (repeatable), `actor_id`, `actor_type`, `target_type`, `target_id` (requires `target_type`), `source_service`, `retention_tier`, `limit` and `cursor`. A response carries `events`, `next_cursor`, `window_clamped` and `effective_from`. If a query reaches back past the plan window, the response is `200` with an empty or truncated page and `window_clamped: true`; it is not an error.
 
-### Internal routes (3): `/api/v1/internal/*`, mesh mTLS, NetworkPolicy, `iam-system` role
+### Internal routes (3): `/api/v1/internal/*`, mesh mTLS, NetworkPolicy, `iam-system` role (AL-5/AL-6 also `commercial-system`)
 
-The caller's identity is checked by the mesh, not by a header. The chart's Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`) allows this prefix only from the listed caller principals (`mesh.authorizationPolicy.internalCallerPrincipals`), which exist only over mTLS. The NetworkPolicy admits only the listed caller pods (`networkPolicy.internalCallers`), never the whole namespace. `APP_ENV=prod` refuses to render without the policy. In the service, `RequireSystemRole` is defense in depth: without the `iam-system` role the request gets `403 forbidden_peer`.
+The caller's identity is checked by the mesh, not by a header. The chart's Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`) allows this prefix only from the listed caller principals (`mesh.authorizationPolicy.internalCallerPrincipals`), which exist only over mTLS. The NetworkPolicy admits only the listed caller pods (`networkPolicy.internalCallers`), never the whole namespace. `APP_ENV=prod` refuses to render without the policy. In the service, the role check is defense in depth: AL-5/AL-6 admit `iam-system` or `commercial-system` (`RequireDirectWriterRole`), AL-7 only `iam-system` (`RequireSystemRole`); any other role gets `403 forbidden_peer`.
 
 | # | Method & Path | Caller | Purpose |
 |---|---|---|---|
 | AL-5 | `POST /internal/audit-entries` | Direct-write producers (via `platform-audit`) | Record one direct-write entry. **`Idempotency-Key` header required.** Returns `201` for a new entry or `200` for an idempotent replay. |
-| AL-6 | `POST /internal/audit-entries:batch` | Direct-write producers (for example Group Mapping reconciles) | Up to `MAX_INGEST_BATCH` (500) entries. The `Idempotency-Key` header is required, and so is each entry's `idempotency_key` (D-4). The response is **always `207`** with a per-index `{index, status, id \| code, message}`. Rate-limited per tenant (D-5). |
+| AL-6 | `POST /internal/audit-entries:batch` | Direct-write producers (for example Group Mapping reconciles) | Up to `MAX_INGEST_BATCH` (500) entries. Each entry's `idempotency_key` is required and is the dedup key (D-4); the `Idempotency-Key` header is optional and, if sent, 1–256 chars (D-26). The response is **always `207`** with a per-index `{index, status, id \| code, message}`, where `code` is the UPPER_SNAKE `errorCode` (D-27). Rate-limited per tenant (D-5). |
 | AL-7 | `GET /internal/audit/events?tenant_id=` | Compliance and verification callers | Provenance read for an explicit `tenant_id`. RLS-scoped to that tenant, **no plan clamp**. Returns `422 range_too_large` instead of `202` when the archived range exceeds the D-10 bounds (D-14). |
 
 AL-6's path contains a literal colon. Gin routes it with an escaped segment (`/audit-entries\:batch`), so callers send `…/audit-entries:batch` as written.
@@ -132,12 +132,12 @@ All error responses are **RFC 9457 Problem Details** (`Content-Type: application
 
 | Rule | Enforcement |
 |---|---|
-| Identity comes only from headers. The body is never trusted for *authorization*. | `x-user-id` must be a UUID or the `iam-system` principal (`…0000000000a1` or the literal `iam-system`), and `x-tenant-id` must be a UUID, else `401`. AL-5 records the body's `tenant_id` and AL-7 reads the query's `tenant_id`: both routes are mesh-only and rebind the GUC to that tenant (`BindTenantGUC`). |
-| Direct-write accepts only the 28 direct-write taxonomy types | Any other `entry_type` returns `422 unknown_entry_type` (D-6). Bus types cannot be forged through AL-5/AL-6. |
+| Identity comes only from headers. The body is never trusted for *authorization*. | `x-user-id` must be a UUID, the `iam-system` principal (`…0000000000a1` or the literal `iam-system`), or the `commercial-system` principal (`…0000000000c1` or the literal `commercial-system`), and `x-tenant-id` must be a UUID, else `401`. AL-5 records the body's `tenant_id` and AL-7 reads the query's `tenant_id`: both routes are mesh-only and rebind the GUC to that tenant (`BindTenantGUC`). |
+| Direct-write accepts only the 38 direct-write taxonomy types | Any other `entry_type` returns `422 unknown_entry_type` (D-6). Bus types cannot be forged through AL-5/AL-6. |
 | The retention tier is never caller-supplied | A `retention_tier` in the body is ignored. The tier is derived from `entry_type` (AL-INV-6, AL-INV-11). |
 | The actor model is strict | `anonymous` must carry no `id` (AL-D11). Every other type needs a UUID `id`. `iam_system` must use the reserved `00000000-0000-0000-0000-0000000000a1`. A violation returns `422 invalid_actor`. |
 | Metadata is bounded | It must be a JSON object and is compacted, then capped at `MAX_METADATA_BYTES` (8192), else `422 metadata_too_large` with `details`. |
-| `Idempotency-Key` is required and never minted | Required on AL-5 and AL-6 (1–256 chars), else `400`. The caller's stable key is what makes its retry-until-acked delivery safe (LLD §18.2). |
+| `Idempotency-Key` is required on AL-5 and never minted | Required on AL-5 (1–256 chars), else `400`. On AL-6 the header is optional (checked if sent, never stored) and each entry's `idempotency_key` is required (D-26). The caller's stable key is what makes its retry-until-acked delivery safe (LLD §18.2). |
 | POST bodies must be JSON | A non-empty body whose `Content-Type` is not `application/json` returns `400 invalid_request` (`RequireJSONContentType`). |
 | Query filters are shape-checked | `from ≤ to`; `actor_id` is a UUID; `actor_type` and `retention_tier` come from their enums; `target_id` requires `target_type`; `1 ≤ limit ≤ 1000`. Anything else returns `400`. |
 | Unknown bus types are kept, not dropped | An unrecognized event type is persisted as `<domain>.unknown` at `security_3y` (AL-EVT-4). |
@@ -179,7 +179,7 @@ iam-audit-log/
 ├── api/asyncapi.yaml                  # 12 consumed channels, receive-only
 ├── docs/
 │   ├── lld/                           # The spec: §17 error taxonomy, §16 open questions, §22 decisions
-│   ├── implementation/                # BUILD_PLAN.md (phases, D-1..D-23, gaps), RELEASE_CHECKLIST.md
+│   ├── implementation/                # BUILD_PLAN.md (phases, D-1..D-28, gaps), RELEASE_CHECKLIST.md
 │   ├── architecture/                  # Mermaid diagrams
 │   ├── swagger/                       # Generated REST contract (make swag)
 │   ├── observability/                 # Observability standard here, generated metric inventory, migration, per-alert runbooks
@@ -237,7 +237,7 @@ iam-audit-log/
 
 ### 1. Prerequisites
 
-Every caller of `/api/v1/internal/*` must run on the internal service mesh (mTLS plus NetworkPolicy) and present the `iam-system` role in `x-tenant-roles`. The public `/api/v1/audit/*` routes expect the gateway to forward the validated `x-user-id`, `x-tenant-id` and `x-tenant-roles` headers. This service does not parse JWTs. The mesh address is **`http://iam-audit-log.iam.svc.cluster.local:8080`** (LLD §18.2, AL-Q17).
+Every caller of `/api/v1/internal/*` must run on the internal service mesh (mTLS plus NetworkPolicy) and present the `iam-system` role in `x-tenant-roles` (a Commercial producer may present `commercial-system` on AL-5/AL-6 only, D-25). The public `/api/v1/audit/*` routes expect the gateway to forward the validated `x-user-id`, `x-tenant-id` and `x-tenant-roles` headers. This service does not parse JWTs. The mesh address is **`http://iam-audit-log.iam.svc.cluster.local:8080`** (LLD §18.2, AL-Q17).
 
 ### 2. Bus producers: publish to your own topic, and nothing else is needed
 
@@ -266,7 +266,7 @@ Every producer below publishes to its own topic as usual. This service owns the 
 
 ### 3. Direct-write producers: AL-5 / AL-6 via `platform-audit`
 
-This path is for audit facts that have no bus event (AL-D1). The **caller invariant (AUDIT-CALLER-1)** is that audit capture must never fail the producer's primary write. The producer commits first, then records the entry fire-and-forget with a bounded retry buffer. Use `uuidv5(<service-namespace>, <natural key of the change>)` as the idempotency key.
+This path is for audit facts that have no bus event (AL-D1). The **caller invariant (AUDIT-CALLER-1)** is that audit capture must never fail the producer's primary write. The recommended pattern is the transactional outbox (`platform-audit` `auditoutbox`): enqueue the entry in the business transaction and let a relay deliver it. Fire-and-forget with a bounded retry buffer is the fallback for producers without a database (LLD §5.4). Use `uuidv5(<service-namespace>, <natural key of the change>)` as the idempotency key.
 
 | Producer | `entry_type`s |
 |---|---|
@@ -278,10 +278,11 @@ This path is for audit facts that have no bus event (AL-D1). The **caller invari
 | Signup / onboarding | `tenant.owner_signed_up` |
 | Operator tooling | `security.cross_tenant_access` on every `admin_readonly` session |
 | Commercial Entitlements (ns `commercial`) | `config.entitlement_override.set`, `.removed`, `.expired`; `billing.token_addon.granted`, `.adjusted`, `.revoked`, `.expired` |
-| Commercial Billing | `billing.adjustment.issued`; `billing.refund.issued` |
+| Commercial Billing (ns `billing`) | `billing.adjustment.issued`; `billing.refund.issued`; `billing.conversion.stub`, `.conversion.reverted`; `billing.saga.resolved`; `billing.collection.paused`; `billing.price_book.changed`; `billing.provider.certified`, `.provider.certification_revoked` |
 | Platform cross-tenant jobs | `commercial.cross_tenant_job.ran` under the `platform_tenant` sentinel UUID (AL-D14) |
+| Every `platform-audit` adopter | `config.audit_delivery.requeued`, `.discarded`, `.resolved`, `.purged` (`compliance_7y`) |
 
-**Being allowed to call AL-5/AL-6 (D-23).** `/api/v1/internal/*` admits only listed callers: the producer's pods in `networkPolicy.internalCallers` and its SPIFFE principal (`cluster.local/ns/<ns>/sa/<serviceaccount>`) in `mesh.authorizationPolicy.internalCallerPrincipals`. The defaults cover Catalog Admin, Realm Provisioner, Org & Membership, Group Mapping and Tender ACL in the `iam` namespace, and Commercial Entitlements in the `commercial` namespace. A new producer (Signup, operator tooling) is added per environment; until then its calls get `403 RBAC: access denied` from the sidecar and wait in its own retry queue (AUDIT-CALLER-1).
+**Being allowed to call AL-5/AL-6 (D-23).** `/api/v1/internal/*` admits only listed callers: the producer's pods in `networkPolicy.internalCallers` and its SPIFFE principal (`cluster.local/ns/<ns>/sa/<serviceaccount>`) in `mesh.authorizationPolicy.internalCallerPrincipals`. The defaults cover Catalog Admin, Realm Provisioner, Org & Membership, Group Mapping and Tender ACL in the `iam` namespace, Commercial Entitlements in the `commercial` namespace, and Commercial Billing in the `billing` namespace (`cluster.local/ns/billing/sa/commercial-billing`). A new producer (Signup, operator tooling) is added per environment; until then its calls get `403 RBAC: access denied` from the sidecar and wait in its own retry queue (AUDIT-CALLER-1).
 
 ### 4. Catalog / Admin Config: CAT-I2 plan windows (this service calls out)
 
@@ -386,7 +387,7 @@ In dev, `.env-example` points all three DSNs at the local `postgres` superuser. 
 | `make install-hooks` / `make godoc` / `make help` | Install the pre-commit hook / serve pkgsite at `:8080` / list every target |
 | `make clean` | Remove `bin/`, `.coverage/` and coverage files |
 
-There are no schema-governance targets (unlike iam-org-membership): this service publishes nothing (AL-INV-10), so it owns no produced schemas to register. `make test-ci` plus `make test-e2e` takes more than 10 minutes locally, so run it in the background.
+Schema-governance targets (`make extract-schemas`, `make schema-validate`) exist because the platform workflows run here too (D-24), although this service publishes nothing (AL-INV-10) and registers no produced schemas. `make test-ci` plus `make test-e2e` takes more than 10 minutes locally, so run it in the background.
 
 ### Running a single test
 
@@ -640,7 +641,7 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 
 | Topic | Guidance |
 |---|---|
-| **Three-layer isolation** | RLS (`FORCE ROW LEVEL SECURITY`, tenant policy on `app.tenant_id`) is the DB floor. Identity comes only from gateway- or mesh-injected headers. Internal routes also require mesh mTLS, NetworkPolicy and the `iam-system` role (`RequireSystemRole`). |
+| **Three-layer isolation** | RLS (`FORCE ROW LEVEL SECURITY`, tenant policy on `app.tenant_id`) is the DB floor. Identity comes only from gateway- or mesh-injected headers. Internal routes also require mesh mTLS, NetworkPolicy and a system role: `iam-system` or `commercial-system` on AL-5/AL-6 (`RequireDirectWriterRole`), `iam-system` elsewhere (`RequireSystemRole`). |
 | **AL-INV-3: GUC hygiene** | `app.tenant_id` is transaction-local on every checkout. The app pool forces `PGBouncerMode`, and CI rejects any non-`LOCAL` `SET app.tenant_id`. RLS violations are logged to `rls_violation_log` and exported as `iam_rls_violations_total`. |
 | **AL-INV-1: append-only** | `audit_app` holds exactly INSERT+SELECT on `audit_events` (`check-grants.sh`, `TestGrants_LeastPrivilegeMatrix_ALINV1`). A trigger blocks UPDATE and DELETE even for privileged sessions. Rows leave only through the reconciler's gated partition drop or scoped redaction functions. |
 | **Role separation** | Three DB roles, and each root gets only its own DSN. Helm splits secrets per root (`TestHelm_PerRootSecretsNeverShareRoleDSNs`). BYPASSRLS `audit_reconciler` is never mounted into the server. |
@@ -649,7 +650,7 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 | **Exports** | SSE-KMS objects, reached only through short-lived presigned URLs minted per AL-4 poll (default 15 m). No long-lived link is stored. |
 | **Log hygiene** | Logs carry identifiers, never payloads or `metadata` (`TestLogHygiene_NoPayloadFields`). Metric labels exclude unbounded keys such as `tenant_id`, `user_id`, `actor_id` and `event_id` (registry `forbidden` list). |
 | **Least-privilege AWS** | `deploy/iam/policy.json`, checked by `TestIAMPolicy_LeastPrivilege`: SQS receive, delete, visibility and attributes; S3 object, retention and Object Lock actions on the archive bucket; KMS `Decrypt`, `GenerateDataKey` and `DescribeKey`; Glue `GetSchemaVersion` and `GetSchemaByDefinition` only |
-| **Internal-route identity (D-23)** | The service checks only the `iam-system` role header on `/api/v1/internal/*`, so the chart checks the caller: an Istio `AuthorizationPolicy` (`templates/mesh.yaml`) allows the prefix only from the SPIFFE principals in `mesh.authorizationPolicy.internalCallerPrincipals`, and `/api/v1/audit/*` only from the gateway; the NetworkPolicy admits only `networkPolicy.internalCallers`. `APP_ENV=prod` refuses to render without the policy (`mesh.acknowledgeNoMesh` is the tracked escape hatch). |
+| **Internal-route identity (D-23)** | The service checks only the role header on `/api/v1/internal/*` (`iam-system`, or `commercial-system` on AL-5/AL-6), so the chart checks the caller: an Istio `AuthorizationPolicy` (`templates/mesh.yaml`) allows the prefix only from the SPIFFE principals in `mesh.authorizationPolicy.internalCallerPrincipals`, and `/api/v1/audit/*` only from the gateway; the NetworkPolicy admits only `networkPolicy.internalCallers`. `APP_ENV=prod` refuses to render without the policy (`mesh.acknowledgeNoMesh` is the tracked escape hatch). |
 | **Poison messages (D-22)** | Malformed or undecodable messages are forwarded to their queue's own DLQ (`events.WithDLQForwarding`), never deleted; the IRSA role may `SendMessage` to the audit DLQs only. platform-events logs only the body's size and SHA-256. |
 | **Pod hardening** | Distroless `nonroot` (UID 65532), `readOnlyRootFilesystem`, all capabilities dropped, `seccompProfile: RuntimeDefault`, NetworkPolicy enabled by default. The public ingress exposes only `/api/v1/audit` (`TestHelm_IngressExposesOnlyPublicAuditAPI`). |
 
@@ -859,7 +860,7 @@ Hot-path writes (AL-5/AL-6 and bus ingest) depend on **Postgres only**.
 | **Realm Provisioner** | AL-5 | `config.idp.changed`, `legal.terms.accepted` |
 | **Operator tooling** | AL-5 | `security.cross_tenant_access` |
 | **Commercial Entitlements** (ns `commercial`, SPIFFE `cluster.local/ns/commercial/sa/commercial-entitlements`) | AL-5 | `config.entitlement_override.set/removed/expired`; `billing.token_addon.granted/adjusted/revoked/expired` (IAM-8/IAM-11, CD-55) |
-| **Commercial Billing** | AL-5 | `billing.adjustment.issued`, `billing.refund.issued` |
+| **Commercial Billing** (ns `billing`, SPIFFE `cluster.local/ns/billing/sa/commercial-billing`) | AL-5 | `billing.adjustment.issued`, `billing.refund.issued`, the seven BL-OQ-10 `billing.*` types |
 | **Platform cross-tenant jobs** | AL-5 | `commercial.cross_tenant_job.ran` (platform_tenant sentinel) |
 | **Product UI (via gateway)** | AL-1..AL-4 | The tenant admin's "View audit log" and exports |
 | **Compliance / verification services** | AL-7 | Provenance reads beyond the plan window |
@@ -918,7 +919,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, extending the taxo
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Detailed architecture narrative |
 | [`docs/architecture/`](docs/architecture/README.md) | Mermaid diagrams |
 | [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | The LLD: §5 API, §7 events, §11 observability, §17 error taxonomy, §22 decisions |
-| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → test map, D-1..D-23, gaps |
+| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → test map, D-1..D-28, gaps |
 | [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites outside this repo |
 | [`docs/runbook.md`](docs/runbook.md) | RB-1..RB-10 |
 | [`docs/observability/`](docs/observability/README.md) | Observability standard as implemented here, metric inventory, migration, per-alert runbooks |

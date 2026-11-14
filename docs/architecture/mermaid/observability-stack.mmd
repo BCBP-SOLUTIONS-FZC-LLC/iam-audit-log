@@ -3,7 +3,7 @@ graph LR
         panic["PanicRecovery\n· recover, log, 500 JSON"]
         reqid["RequestID\n· x-request-id / generated"]
         trace["Tracing (OTel)\n· W3C traceparent, server span"]
-        metricsmw["Metrics\n· http_requests_total{method,route,status_class}\n· http_request_duration_seconds"]
+        metricsmw["Metrics\n· platform_http_requests_total{method,route,status_class}\n· platform_http_request_duration_seconds"]
         logging["Logging (Zap)\n· http_request log, IDs only"]
     end
 
@@ -16,7 +16,7 @@ graph LR
 
     subgraph tiers["Metrics — three tiers (metric-registry.yaml, registry.go)"]
         t1["Tier 1 platform_* (registry; service-built 5)\nmessages_received{queue,event_type} · processed{event_type}\nfailed / retry{event_type,reason} · dlq_messages{queue,reason}\nduplicate_messages{event_type} · dependency_request_seconds{dependency,operation,outcome}\nevent_propagation_seconds{event_type} · queue_depth / dlq_depth{queue}"]
-        t2["Tier 2 iam_*\niam_rls_violations_total{violation_type}"]
+        t2["Tier 2 iam_* (registry, proposed)\niam_rls_violations_total{violation_type}"]
         t3["Tier 3 iam_audit_log_*\ningest · direct-write · query/export · catalog poller\nredaction · archival · ops gauges (D-21)\nbuilt with gincommon validating constructors"]
         inj["central injection by gincommon: domain=iam,\nservice=iam-audit-log, environment (both roots)"]
     end

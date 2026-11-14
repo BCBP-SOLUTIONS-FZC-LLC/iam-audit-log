@@ -166,7 +166,7 @@ SELECT occurred_at, table_name, violation_type, session_role, application_name, 
 1. Break it down by `source_service`:
    `sum by (source_service, result) (rate(iam_audit_log_directwrite_requests_total[10m]))`.
 2. Results:
-   - **`rejected`** (4xx, the producer's fault): `unknown_entry_type` (direct-write accepts only the D-6 types), `invalid_actor`, `metadata_too_large`, `forbidden_peer` (a mesh identity other than `iam-system`).
+   - **`rejected`** (4xx, the producer's fault): `unknown_entry_type` (direct-write accepts only the D-6 types), `invalid_actor`, `metadata_too_large`, `forbidden_peer` (a role other than `iam-system` / `commercial-system`).
    - **`error`** (5xx): Postgres unavailable, so check pool and DB health.
 3. The producer must keep committing its own business writes (AUDIT-CALLER-1) and retry with the **same** `Idempotency-Key`. A replay returns `200` with the existing entry.
 
