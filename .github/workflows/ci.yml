@@ -374,7 +374,7 @@ jobs:
       - name: Verify image signature
         run: |
           cosign verify \
-            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/.github/workflows/.*@refs/heads/(main|master)$" \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/.github/workflows/.*@refs/heads/.*$" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${{ env.IMAGE_NAME }}@${{ steps.pushed.outputs.digest }}"
 
