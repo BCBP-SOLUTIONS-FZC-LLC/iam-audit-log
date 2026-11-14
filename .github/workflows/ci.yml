@@ -295,7 +295,7 @@ jobs:
     name: Push image → GHCR
     runs-on: ubuntu-latest
     needs: [validate-test, trivy, smoke, validate-quality]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     # amd64-only publish with provenance/SBOM attestations can exceed 10 minutes.
     timeout-minutes: 25
     permissions:
@@ -374,7 +374,7 @@ jobs:
       - name: Verify image signature
         run: |
           cosign verify \
-            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/.github/workflows/.*@refs/heads/.*$" \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/.github/workflows/.*@refs/heads/(main|master)$" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${{ env.IMAGE_NAME }}@${{ steps.pushed.outputs.digest }}"
 
