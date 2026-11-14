@@ -5,10 +5,19 @@
 # DLA-4792-1 — tzdata 2026b → 2026c in gcr.io/distroless/static-debian12:nonroot.
 # A timezone-database refresh, not a security flaw (Trivy: UNKNOWN). Not
 # exploitable here: the service never loads a zone (no time.LoadLocation, no
-# time/tzdata; all timestamps are UTC). Blocked upstream: on 2026-09-28 the
-# :nonroot tag still resolved to the pinned digest (`make pin-base-images`
-# was a no-op). Remove this entry and re-pin once distroless ships 2026c.
-DLA-4792-1 exp:2026-10-31
+# time/tzdata; all timestamps are UTC). Blocked upstream: pinned distroless
+# digest (sha256:afa5c872…) still ships tzdata 2026b. Remove once distroless
+# ships 2026c and re-pin.
+DLA-4792-1 exp:2027-01-31
+
+# DLA-4867-1 — tzdata 2026b → 2026f in gcr.io/distroless/static-debian12:nonroot.
+# Same package and situation as DLA-4792-1 and DLA-4854-1: a timezone-database
+# refresh (Trivy: UNKNOWN), not a security flaw. Not exploitable here: the
+# service never loads a zone (no time.LoadLocation, no time/tzdata, no
+# time.Local use; all timestamps are UTC). Blocked upstream: pinned distroless
+# digest (sha256:afa5c872…) still ships tzdata 2026b. Remove once distroless
+# ships tzdata >= 2026f and re-pin.
+DLA-4867-1 exp:2027-01-31
 
 # DLA-4845-1 — ca-certificates 20250419~deb12u1 → deb12u2 in
 # gcr.io/distroless/static-debian12:nonroot (removes the distrusted Comodo

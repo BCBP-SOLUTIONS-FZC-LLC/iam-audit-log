@@ -74,6 +74,8 @@ install-hooks:
 	@mkdir -p .git/hooks
 	@cp .githooks/pre-commit .git/hooks/pre-commit
 	@chmod +x .git/hooks/pre-commit
+	@cp .githooks/pre-push .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
 	@echo "Installed git hooks"
 
 # godoc: serve package documentation locally using pkgsite.
@@ -99,6 +101,23 @@ pin-base-images:
 	 echo "$(GOLANG_IMAGE) $$GOLANG_DIGEST" > .docker-digests && \
 	 echo "$(DISTROLESS_IMAGE) $$DISTROLESS_DIGEST" >> .docker-digests && \
 	 echo "Digests written to .docker-digests — commit both Dockerfile and .docker-digests"
+
+# trivy: local mirror of ci.yml's "Trivy CVE scan" gate — build the amd64
+# image, then fail on CRITICAL/HIGH/UNKNOWN CVEs that have a fix (.trivyignore
+# applies automatically). The Dockerfile needs the go_private_token build
+# secret: GO_PRIVATE_TOKEN from the environment, else `gh auth token`.
+TRIVY_IMAGE ?= iam-audit-log-trivy
+GO_PRIVATE_TOKEN ?= $(shell gh auth token 2>/dev/null)
+export GO_PRIVATE_TOKEN
+
+.PHONY: trivy
+trivy:
+	@command -v trivy >/dev/null || { echo "trivy not found (brew install trivy)"; exit 1; }
+	@test -n "$$GO_PRIVATE_TOKEN" || { echo "GO_PRIVATE_TOKEN is empty: export it or run 'gh auth login'"; exit 1; }
+	docker build --platform linux/amd64 \
+	  --secret id=go_private_token,env=GO_PRIVATE_TOKEN \
+	  -t $(TRIVY_IMAGE) .
+	trivy image --severity CRITICAL,HIGH,UNKNOWN --ignore-unfixed --exit-code 1 $(TRIVY_IMAGE)
 
 .PHONY: help
 help:
@@ -139,7 +158,8 @@ help:
 	@echo "  make extract-schemas  - derive internal/eventschema/*.json from api/asyncapi.yaml (schema-gov)"
 	@echo "  make schema-validate  - extract --check + schema-gov validate (what CI runs)"
 	@echo "  make docs-serve       - run the server and print the doc URLs"
-	@echo "  make install-hooks    - install .githooks/pre-commit into .git/hooks"
+	@echo "  make trivy           - build the image and Trivy-scan it like CI (CRITICAL/HIGH/UNKNOWN, fixed only); run by .githooks/pre-push"
+	@echo "  make install-hooks    - install .githooks/pre-commit and .githooks/pre-push into .git/hooks"
 	@echo "  make godoc            - serve local godoc/pkgsite at http://localhost:8080"
 	@echo "  make pin-base-images  - fetch + pin SHA digests for Dockerfile base images"
 	@echo "  make clean            - remove build artefacts"

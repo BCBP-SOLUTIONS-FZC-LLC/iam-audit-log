@@ -32,7 +32,6 @@ name: CI
 
 "on":
   push:
-    branches: [main, master]
     paths-ignore: ['**.md', 'docs/architecture/**']
   pull_request:
     paths-ignore: ['**.md', 'docs/architecture/**']
@@ -296,7 +295,7 @@ jobs:
     name: Push image → GHCR
     runs-on: ubuntu-latest
     needs: [validate-test, trivy, smoke, validate-quality]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     # amd64-only publish with provenance/SBOM attestations can exceed 10 minutes.
     timeout-minutes: 25
     permissions:

@@ -4,6 +4,57 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — Trivy: extend DLA-4792-1 + add DLA-4867-1 (2026-11-14)
+
+- **DLA-4792-1** (`tzdata` refresh) expiry extended to 2027-01-31 — the pinned distroless digest (`sha256:afa5c872`) still ships tzdata 2026b; suppression remains valid.
+- **DLA-4867-1** added: a new `tzdata 2026b → 2026f` refresh advisory, same package and situation (Trivy: UNKNOWN, not a security flaw). The service never loads a timezone (no `time.LoadLocation`, no `time/tzdata`, no `time.Local`; all timestamps are UTC). Suppressed until distroless ships tzdata ≥ 2026f.
+
+### Fixed — Dockerfile builder `golang:1.26.11-bookworm` (2026-11-14)
+
+- Builder image updated from `golang:1.26.10-bookworm` to `golang:1.26.11-bookworm` (new digest `sha256:dc40a13b…`). `go.mod` already required `go 1.26.11`; without this the Docker build failed with `GOTOOLCHAIN=local` rejecting the module. `.docker-digests` updated.
+
+### Fixed — event schema filename `addon` → `add_on` (2026-11-13)
+
+- `internal/eventschema/billing_audit_tenant_quota_addon_changed.json` renamed to `billing_audit_tenant_quota_add_on_changed.json`. The schema-gov tool derives `add_on` (two words) from `AddOn` in the AsyncAPI message name `TenantQuotaAddOnChanged`; the CI event-schema sync check failed until this was corrected.
+
+### Security — `golang.org/x/crypto` v0.58.0 → v0.59.0 (GO-2026-5932) (2026-11-13)
+
+- **GO-2026-5932** fixed in v0.59.0: `golang.org/x/crypto/openpgp` is unmaintained and unsafe by design. The service does not use `openpgp`, but Trivy's binary scan flags the package's presence at UNKNOWN severity, which the CI gate treats as a failure. Upgraded to remove it. `govulncheck`: no vulnerabilities found. Note: an earlier CHANGELOG entry (2026-09-28) recorded this CVE as "has no fix yet" — v0.59.0 is now that fix.
+- Also upgraded transitively: `x/sync` v0.24.0 → v0.25.0, `x/sys` v0.49.0 → v0.50.0, `x/text` v0.43.0 → v0.44.0.
+
+### Added — CI runs on every branch push (2026-11-13)
+
+- `.github/workflows/ci.yml` push trigger no longer restricts to `branches: [main, master]`. Every push to any branch now runs the full CI pipeline automatically, without needing an open PR. `workflow_dispatch` and `pull_request` triggers are unchanged.
+
+### Added — Claude Code automation: hooks, invariant-reviewer, add-entry-type skill (2026-11-13)
+
+- **`.claude/hooks/guard-invariants.sh`** (PreToolUse): blocks edits that CI would reject — `.env` edits, immutable migrations (MIG-1), session-level `SET app.tenant_id` (AL-INV-3), raw DB connections, publisher wiring (AL-INV-10), OTel/promhttp outside the telemetry adapter, adapter imports in `internal/core/`.
+- **`.claude/hooks/gofmt.sh`** (PostToolUse): auto-runs `gofmt -w` on every edited Go file so `fmt-check` never fails on Claude's edits.
+- **`.claude/agents/invariant-reviewer.md`**: read-only subagent that reviews a diff against all 12 AL-INV-* invariants before a PR. Invoke with the diff file path.
+- **`.claude/skills/add-entry-type/SKILL.md`**: guided multi-file workflow for adding a new `entry_type` — walks through `taxonomy.go`, `asyncapi.yaml`, event schema, LLD §7.1/§25, and `taxonomy_test.go` in the correct order.
+- **`.claude/settings.json`** wires both hooks (same pattern as `iam-org-membership`).
+
+### Security — Go 1.26.11 + dependency updates (2026-11-13)
+
+- **Go 1.26.10 → 1.26.11** (`go.mod`): fixes govulncheck **GO-2026-6859** (`net/http` MaxBytesReader header race, reachable via the ingest and S3/catalog HTTP paths). `govulncheck` is clean after the upgrade. Dockerfile builder image needs `make pin-base-images` to follow.
+- **AWS SDK v2 patch/minor:** `aws-sdk-go-v2` v1.47.3 → v1.48.0, `config` v1.33.9 → v1.33.18, `credentials` v1.20.9 → v1.21.0, `smithy-go` v1.28.5 → v1.28.9, `glue` v1.171.0 → v1.175.1, `s3` v1.114.3 → v1.114.10, `sns` v1.47.5 → v1.48.0, `sqs` v1.52.4 → v1.53.0.
+- **`jackc/pgx/v5`** v5.11.0 → v5.13.0.
+- **`prometheus/common`** v0.72.1 → v0.74.0.
+- **`testcontainers-go`** v0.44.0 → v0.45.0 (+ `modules/postgres`).
+- Platform libs (`platform-events/v2`, `platform-gincommon/v2`, `platform-pgcommon/v2`) unchanged — registry ratification required before bumping.
+
+### Added — `billing.token_addon.expired` (2026-11-13, LLD rev 0.33, IAM-11, CD-55)
+
+- **Taxonomy:** direct-write `TokenAddonExpired` → `billing.token_addon.expired`, tier `security_3y`. Entitlements (`commercial-entitlements`, ns `commercial`) writes this via AL-5 when a token add-on pack reaches 12 months after purchase with tokens unused; actor `commercial-system`.
+- **Mesh identity admitted:** `commercial-entitlements` (SPIFFE `cluster.local/ns/commercial/sa/commercial-entitlements`) added to `mesh.authorizationPolicy.internalCallerPrincipals` and `networkPolicy.internalCallers` (cross-namespace selector). This also retroactively covers IAM-8's `billing.token_addon.granted/adjusted/revoked` types which had the same gap.
+- LLD §7.1 row and §25 vocabulary updated (87 → 88 `entry_type` values). Vocabulary count assertion updated in `taxonomy_test.go`.
+
+### Added — `billing.token_addon.*` bus and direct-write entry types (2026-11-12, LLD rev 0.32, IAM-7/IAM-8, CD-55)
+
+- **IAM-7 — bus row:** `billing.events` `TenantQuotaAddOnChanged` → `billing.token_addon.purchased` (`security_3y`). `billing-audit-q` SNS filter extended. `api/asyncapi.yaml` channel and operation updated; event schema `billing_audit_tenant_quota_addon_changed.json` added.
+- **IAM-8 — three direct-write rows:** `billing.token_addon.granted`, `.adjusted`, `.revoked` (all `security_3y`), written by Entitlements via AL-5 for operator corrections and forfeiture at offboarding.
+- LLD §7.1 table and §25 vocabulary updated (83 → 87 `entry_type` values).
+
 ### Added — `legal.terms.accepted` (2026-10-22, LLD rev 0.31)
 
 - **Taxonomy:** direct-write `TermsAccepted` → `legal.terms.accepted`, tier `compliance_7y` (7 years, kept through a GDPR erasure — AL-INV-7). Added to the LLD §7.1 table and the §25 frozen vocabulary (82 → 83). Signup BFF open gap A-4: Realm Provisioner records the tenant owner's terms-of-service acceptance (version, time, user id, IP address, user agent) at RP-1/RP-2.
@@ -200,7 +251,7 @@ All gaps below were already implemented in code; these are the required LLD docu
 
 ### Fixed — trace service name and dependency CVEs (2026-09-28)
 - **Helm: `OTEL_SERVICE_NAME` is now set per composition root** (`serverEnv` `iam-audit-log`, `reconcilerEnv` `iam-audit-log-reconciler`, matching each root's `cfg.ServiceName`). Without it, gincommon's `InitTracingFromEnv` fell back to `APP_NAME`, which the chart never set, and then to `"platform-gincommon"`. Every span would have carried the library's name as its `service.name`.
-- **Dependencies (govulncheck):** `google.golang.org/grpc` v1.83.0 → v1.83.2 fixes GO-2026-6348, which the service calls: an HTTP/2 DATA-frame memory exhaustion reached through the gincommon OTel exporter. The same bump fixes GO-2026-6443, which it does not call. `golang.org/x/crypto` v0.54.0 → v0.56.0 fixes GO-2026-6355, -6354 and -6303, none of them called. GO-2026-5932 (x/crypto) has no fix yet and is not called (c62cf3e).
+- **Dependencies (govulncheck):** `google.golang.org/grpc` v1.83.0 → v1.83.2 fixes GO-2026-6348, which the service calls: an HTTP/2 DATA-frame memory exhaustion reached through the gincommon OTel exporter. The same bump fixes GO-2026-6443, which it does not call. `golang.org/x/crypto` v0.54.0 → v0.56.0 fixes GO-2026-6355, -6354 and -6303, none of them called. GO-2026-5932 (x/crypto) had no fix at the time of this entry — fixed in v0.59.0 (see 2026-11-13 entry above).
 
 ### Changed — dependencies upgraded to latest (2026-09-28)
 - **AWS SDK v2:** core v1.47.1, `config` v1.33.6, `credentials` v1.20.6, `glue` v1.164.0, `s3` v1.113.4, `sns` v1.47.2 and `sqs` v1.52.1, plus `smithy-go` v1.28.2.

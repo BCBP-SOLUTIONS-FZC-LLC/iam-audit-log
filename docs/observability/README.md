@@ -1,6 +1,10 @@
 # Enterprise Platform Observability Standard — iam-audit-log
 
-This page describes how this service implements the standard defined and enforced by [platform-gincommon](https://github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/tree/main/docs/observability). gincommon ships the standard in its `docs/observability/` with each release. This page covers only what is specific to iam-audit-log; the standard itself, its rules and the governance process are documented there. The service-level design is LLD §11 (`docs/lld/iam-lld-audit-log-service.md`) and BUILD_PLAN gaps 43 and 46.
+This service implements the **Enterprise Platform Observability Standard**, which defines a consistent three-tier observability taxonomy across all platform domains (IAM, Workflow, Billing, Tender Management, Notifications, and future services). The standard is enforced mechanically by platform-gincommon (see `platform-gincommon/docs/observability/`) and by the CI gates listed below.
+
+**Standard compliance summary:** all naming rules, suffix rules, label governance, CI validation checks and backward compatibility requirements are satisfied. Six metrics (five Tier 1, one Tier 2) are `proposed` pending registry ratification — their formal submissions are in [`governance-submissions.md`](governance-submissions.md).
+
+This page covers what is specific to iam-audit-log. The service-level design is LLD §11 (`docs/lld/iam-lld-audit-log-service.md`) and BUILD_PLAN gaps 43 and 46.
 
 | Piece | Location |
 |---|---|
@@ -13,6 +17,7 @@ This page describes how this service implements the standard defined and enforce
 | Alerts, recording rules, SLOs | `deploy/monitoring/app-alerts.yml`, `recording-rules.yml`, `slo-rules.yml`, mirrored into `deploy/helm/templates/prometheusrule.yaml` by `make prometheusrule` |
 | Dashboard, HPA | `deploy/monitoring/dashboard-audit-log.json`, `deploy/monitoring/prometheus-adapter-rule.yaml` |
 | Renamed and removed metric names | [`migration.md`](migration.md) |
+| Registry ratification submissions for proposed metrics | [`governance-submissions.md`](governance-submissions.md) |
 | Alert runbooks | [`runbooks.md`](runbooks.md) (per alert), and the full procedures in [`../runbook.md`](../runbook.md) (RB-1 … RB-10) |
 
 ## Platform libraries
@@ -87,6 +92,34 @@ Several `platform_*` successors this service depends on are `proposed` in the re
 - an adapter rule gets the comment, and the HPA gets the `observability.platform/metric-status: proposed` annotation.
 
 When governance ratifies a metric, flip its status to `StatusCanonical` in `registry.go` and in `metric-registry.yaml` and drop the markers. `TestRegistryLedger_MatchesPlatformRegistry` fails until both agree with the registry.
+
+## Tier classification rationale
+
+The standard's three-step decision tree was applied to every metric this service emits:
+
+**Step 1 — Cross-domain? → `platform_*`**
+
+| Metric | Decision |
+|---|---|
+| `platform_dlq_messages_total` | Messages reaching the DLQ threshold: applies identically to any SQS-consuming service in any domain. ✅ Canonical |
+| `platform_duplicate_messages_total` | Dedup hits on redelivered messages: universal at-least-once pattern across all event-driven services. ✅ Proposed (submission: `governance-submissions.md`) |
+| `platform_dependency_request_seconds` | Outbound call latency to any named dependency: meaningful to Billing (Stripe), Workflow (external APIs), Tender, etc. ✅ Proposed |
+| `platform_queue_depth` | SQS queue depth: used as an HPA signal by every queue-based service. ✅ Proposed |
+| `platform_dlq_depth` | DLQ depth: compliance/health signal relevant to any SQS consumer. ✅ Proposed |
+
+All five fail step 1 → NO for Tier 3 options. All five pass step 1 → YES for Tier 1.
+
+**Step 2 — IAM-domain shared? → `iam_*`**
+
+| Metric | Decision |
+|---|---|
+| `iam_rls_violations_total` | RLS violation detection via the `app.tenant_id` GUC pattern: used by iam-org-membership and iam-user-profile with identical semantics; Billing and Workflow do not use this RLS model. ✅ Proposed (submission: `governance-submissions.md`) |
+
+**Step 3 — Service-specific → `iam_audit_log_*`**
+
+All 18 Tier 3 metrics are specific to this service's behavior (ingest, archival, redaction, plan-window, export, CAT-I2 poller, RLS gauges). No other service has an `audit_events` append-only partition table, a `processed_events` dedup ledger, or a CAT-I2 plan-window projection.
+
+The Tier 3 service token is `audit_log`, derived from the service name `iam-audit-log`. `check-metric-naming.sh` and `metric-lint.yaml` (`no_service_name_in_shared_names: true`) enforce that this token never appears in `platform_*` or `iam_*` names.
 
 ## Adding a metric
 

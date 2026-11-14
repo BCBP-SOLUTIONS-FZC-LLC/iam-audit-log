@@ -311,6 +311,8 @@ channels:
         $ref: '#/components/messages/billingAuditTenantReactivated'
       billingAuditTenantSeatsChanged:
         $ref: '#/components/messages/billingAuditTenantSeatsChanged'
+      billingAuditTenantQuotaAddOnChanged:
+        $ref: '#/components/messages/billingAuditTenantQuotaAddOnChanged'
   usageAudit:
     address: usage-audit-q
     title: usage.events → usage-audit-q
@@ -506,6 +508,7 @@ operations:
     - $ref: '#/channels/billingAudit/messages/billingAuditTenantSubscriptionCancelled'
     - $ref: '#/channels/billingAudit/messages/billingAuditTenantReactivated'
     - $ref: '#/channels/billingAudit/messages/billingAuditTenantSeatsChanged'
+    - $ref: '#/channels/billingAudit/messages/billingAuditTenantQuotaAddOnChanged'
   receiveUsageAudit:
     action: receive
     channel:
@@ -1282,6 +1285,20 @@ components:
       x-audit-topic: billing.events
       x-audit-entry-type: tenant.seats_changed
       x-audit-retention-tier: security_3y
+    billingAuditTenantQuotaAddOnChanged:
+      x-lifecycle:
+        status: active
+      name: TenantQuotaAddOnChanged
+      title: TenantQuotaAddOnChanged
+      summary: TenantQuotaAddOnChanged on billing.events → entry_type billing.token_addon.purchased (security_3y; IAM-7/CD-55).
+      tags:
+      - $ref: '#/components/tags/consumed'
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/BillingAuditTenantQuotaAddOnChangedPayload'
+      x-audit-topic: billing.events
+      x-audit-entry-type: billing.token_addon.purchased
+      x-audit-retention-tier: security_3y
     usageAuditTenantQuotaWarning:
       x-lifecycle:
         status: active
@@ -1701,6 +1718,9 @@ components:
       type: object
       additionalProperties: true
     BillingAuditTenantSeatsChangedPayload:
+      type: object
+      additionalProperties: true
+    BillingAuditTenantQuotaAddOnChangedPayload:
       type: object
       additionalProperties: true
     UsageAuditTenantQuotaWarningPayload:
