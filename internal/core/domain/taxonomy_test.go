@@ -112,6 +112,8 @@ var lldDirectWrite = map[string]RetentionTier{
 	"billing.provider.certification_revoked":        TierSecurity3y,
 	"config.audit_delivery.requeued":                TierCompliance7y,
 	"config.audit_delivery.discarded":               TierCompliance7y,
+	"config.audit_delivery.resolved":                TierCompliance7y,
+	"config.audit_delivery.purged":                  TierCompliance7y,
 }
 
 func TestTaxonomy_EveryLLDBusRowMaps_ALD3(t *testing.T) {
@@ -167,8 +169,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 97 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 97 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 99 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 99 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 

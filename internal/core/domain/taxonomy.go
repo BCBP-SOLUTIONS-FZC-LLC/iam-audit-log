@@ -178,11 +178,15 @@ var entryTypes = map[string]taxonomyEntry{
 	"billing.price_book.changed":             {tier: TierSecurity3y, directWrite: true},
 	"billing.provider.certified":             {tier: TierSecurity3y, directWrite: true},
 	"billing.provider.certification_revoked": {tier: TierSecurity3y, directWrite: true},
-	// platform-audit operator helpers re-queue or discard a producer's pending
-	// audit records (PA-OQ-14, rev 0.34). A change to an audit record is kept
-	// 7 years like cross-tenant access; any adopter may send them.
+	// platform-audit's parked-row lifecycle: an operator re-queues, discards
+	// or resolves a producer's parked audit record, and the library purges a
+	// disposed row after its retention (PA-OQ-14/PA-OQ-15, rev 0.34). A
+	// change to an audit record is kept 7 years like cross-tenant access;
+	// any adopter may send them.
 	"config.audit_delivery.requeued":  {tier: TierCompliance7y, directWrite: true},
 	"config.audit_delivery.discarded": {tier: TierCompliance7y, directWrite: true},
+	"config.audit_delivery.resolved":  {tier: TierCompliance7y, directWrite: true},
+	"config.audit_delivery.purged":    {tier: TierCompliance7y, directWrite: true},
 }
 
 type busKey struct{ topic, sourceType string }

@@ -153,6 +153,7 @@ help:
 	@echo "  make mod-verify       - go mod verify"
 	@echo "  make vuln-check       - govulncheck on internal + pkg"
 	@echo "  make prometheusrule   - regenerate the Helm PrometheusRule from deploy/monitoring/"
+	@echo "  make taxonomy-json    - regenerate api/taxonomy.json from taxonomy.go (a unit test gates drift)"
 	@echo "  make swag             - regenerate docs/swagger/ from handler annotations"
 	@echo "  make swag-check       - fail if Swagger regeneration would change docs/swagger/ (CI drift gate)"
 	@echo "  make extract-schemas  - derive internal/eventschema/*.json from api/asyncapi.yaml (schema-gov)"
@@ -435,6 +436,12 @@ cover-func: test-ci
 .PHONY: prometheusrule
 prometheusrule:
 	python3 scripts/gen-prometheusrule.py
+
+# taxonomy-json: regenerate api/taxonomy.json, the machine-readable taxonomy
+# (PA-OQ-16). TestTaxonomyExport_MatchesCode fails while it is stale.
+.PHONY: taxonomy-json
+taxonomy-json:
+	TAXONOMY_JSON_WRITE=1 go test ./test/unit -run '^TestTaxonomyExport_MatchesCode$$' -count=1
 
 # -----------------------------
 # SCHEMA GOVERNANCE

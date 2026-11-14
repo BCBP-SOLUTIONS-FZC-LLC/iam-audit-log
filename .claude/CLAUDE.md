@@ -94,7 +94,7 @@ test/{unit,postgres,integration,e2e,fixtures,dbseed}
 
 ### How to add…
 
-- **An entry_type:** add a row in `domain/taxonomy.go` (tier included), the matching message in `api/asyncapi.yaml` (bus types only), an LLD §7.1 row and the §25 frozen-vocabulary line. `test/unit/taxonomy_contract_test.go` parses the LLD.
+- **An entry_type:** add a row in `domain/taxonomy.go` (tier included), the matching message in `api/asyncapi.yaml` (bus types only), an LLD §7.1 row and the §25 frozen-vocabulary line, then run `make taxonomy-json` and commit `api/taxonomy.json` (read by platform-audit; `TestTaxonomyExport_MatchesCode` fails while stale). `test/unit/taxonomy_contract_test.go` parses the LLD.
 - **A producer for a producer-restricted direct-write type:** a taxonomy row's `producers` list (only `legal.terms.accepted` has one: `termsAcceptedProducers`, today `iam-realm-provisioner`) is the closed set of `source_service` values AL-5/AL-6 accept it from; anything else is 422 `unknown_entry_type`. A future terms re-acceptance flow (e.g. `iam-org-membership`) is one entry in that list, plus the Helm internal-caller lists if missing, plus the LLD §7.1 note.
 - **A metric** (Enterprise Platform Observability Standard, LLD §11):
   - Pick the tier by the decision tree. A new `platform_*` or `iam_*` name needs registry ratification first (standard rules 11–12), so default to Tier-3 `iam_audit_log_*`.

@@ -245,6 +245,7 @@ Pinned (from sibling `go.mod`, matches LLD §3.1): Go `1.26.6`, `platform-events
 - **D-27 (2026-11-15, user): AL-6 per-index `code` is UPPER_SNAKE** — the §17 `errorCode` (`wireCode`), `INTERNAL_ERROR` for an unexpected failure. Nothing was deployed, so no compatibility period. LLD rev 0.34 §5.4, §17.
 - **D-28 (2026-11-15, PA-OQ-9): `X-Max-Metadata-Bytes`** on every AL-5/AL-6 response from the route's own chain (set by `IngestHandler.LimitsHeader` after the role check, so 401/403 lack it). LLD rev 0.34 §5.4.
 - **platform-audit reply (2026-11-15).** Also applied, as the open-items file proposed: taxonomy +9 (`config.audit_delivery.requeued|discarded` `compliance_7y`; Billing's seven BL-OQ-10 types `security_3y`); Billing admitted (`cluster.local/ns/billing/sa/commercial-billing`, NetworkPolicy namespace `billing` — Commercial HLD CD-3); AL-Q4 closed; §5.4/§18.2 recommend the outbox; LLD header version fixed. Reply: `platform-audit/docs/lld/reply-iam-audit-log.md`.
+  - **Round 2 (2026-11-15):** `config.audit_delivery.resolved` / `.purged` (`compliance_7y`, PA-OQ-15); `api/taxonomy.json` machine-readable taxonomy, `make taxonomy-json`, drift-gated by `TestTaxonomyExport_MatchesCode` (PA-OQ-16). No release tag is committed to yet (user, 2026-11-15). Reply: `platform-audit/docs/lld/reply-iam-audit-log-2.md`.
 
 Blocking (need a decision before the phase noted; 1–3 resolved above):
 

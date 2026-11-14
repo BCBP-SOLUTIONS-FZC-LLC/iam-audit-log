@@ -11,10 +11,12 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 - **AL-6 per-index `code` is UPPER_SNAKE (D-27):** for example `UNKNOWN_ENTRY_TYPE`, or `INTERNAL_ERROR` for an unexpected failure. This matches AL-5's `errorCode`.
 - **`X-Max-Metadata-Bytes` (D-28):** the AL-5/AL-6 route chain advertises the effective `MAX_METADATA_BYTES`.
 
-### Added — taxonomy +9 and Billing admission (LLD rev 0.34) (2026-11-15)
+### Added — taxonomy +11, machine-readable taxonomy, Billing admission (LLD rev 0.34) (2026-11-15)
 
 - `config.audit_delivery.requeued` and `config.audit_delivery.discarded` (`compliance_7y`), sent by the platform-audit operator helpers.
-- Billing's BL-OQ-10 types (`security_3y`): `billing.conversion.stub`, `billing.conversion.reverted`, `billing.saga.resolved`, `billing.collection.paused`, `billing.price_book.changed`, `billing.provider.certified`, `billing.provider.certification_revoked`. The vocabulary grows from 88 to 97.
+- Billing's BL-OQ-10 types (`security_3y`): `billing.conversion.stub`, `billing.conversion.reverted`, `billing.saga.resolved`, `billing.collection.paused`, `billing.price_book.changed`, `billing.provider.certified`, `billing.provider.certification_revoked`. The vocabulary grows from 88 to 97 with these.
+- `config.audit_delivery.resolved` and `config.audit_delivery.purged` (`compliance_7y`), for platform-audit's parked-row lifecycle (PA-OQ-15). The vocabulary is now 99.
+- **`api/taxonomy.json`:** the taxonomy in machine-readable form, one record per `entry_type` with `tier`, `direct_write` and `producers`. Regenerate it with `make taxonomy-json`; `TestTaxonomyExport_MatchesCode` fails while it is stale (PA-OQ-16).
 - Helm: Billing is admitted as `cluster.local/ns/billing/sa/commercial-billing`. The NetworkPolicy allows namespace `billing` with label `commercial-billing`.
 
 ### Fixed — Trivy: extend DLA-4792-1 + add DLA-4867-1 (2026-11-14)
