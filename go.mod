@@ -5,8 +5,8 @@ go 1.26.11
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
 require (
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.2.1
-	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2 v2.1.0
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-events/v2 v2.3.0
+	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-gincommon/v2 v2.6.0
 	github.com/BCBP-SOLUTIONS-FZC-LLC/platform-pgcommon/v2 v2.0.2
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.18

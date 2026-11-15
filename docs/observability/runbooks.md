@@ -280,7 +280,7 @@ Fast burn means the 1 h and 5 m error ratios are both above 14.4× the 1% budget
 
 **Meaning.** More than the budgeted share of events is first received later than 5 s after the envelope time (`platform_event_propagation_seconds`). Propagation covers the producer's outbox, SNS and SQS. The persist step is the ingest-lag SLO.
 
-**Triage.** `platform_queue_depth`, the failure ratio and consumer health here. If the queues are empty, the delay is upstream, in the producer's outbox or in SNS: check `platform_outbox_oldest_pending_age` for the producing service.
+**Triage.** `platform_queue_depth`, the failure ratio and consumer health here. If the queues are empty, the delay is upstream, in the producer's outbox or in SNS: check `platform_outbox_oldest_pending_age_seconds` for the producing service.
 
 ### IAMAuditLogAvailabilitySLOFastBurn / IAMAuditLogAvailabilitySLOSlowBurn
 
