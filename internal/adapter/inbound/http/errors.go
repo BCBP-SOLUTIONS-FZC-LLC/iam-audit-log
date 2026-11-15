@@ -57,6 +57,19 @@ var codeToType = map[domain.ErrorCode]problem.Type{
 	domain.ErrDependencyUnavailable:   typeDependencyUnavailable,
 }
 
+// wireCode is the UPPER_SNAKE errorCode the §17 registry sends for code, so
+// AL-6 per-index results carry the same vocabulary as AL-5 problem bodies
+// (D-27). An unregistered code falls back to INTERNAL_ERROR, like toProblem.
+func wireCode(code domain.ErrorCode) string {
+	if t, ok := codeToType[code]; ok {
+		return t.Code
+	}
+	return codeInternalError
+}
+
+// codeInternalError is the errorCode of an unexpected per-entry failure.
+const codeInternalError = "INTERNAL_ERROR"
+
 // toProblem converts a *domain.Error to a *problem.Error using the §17 type
 // registry. Unmapped codes fall back to a 500 internal-error (cause never sent).
 func toProblem(de *domain.Error) *problem.Error {

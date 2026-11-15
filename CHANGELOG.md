@@ -4,6 +4,41 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — documentation consistency with D-25..D-28 and the code (2026-11-15)
+
+- **New `.claude/agents/docs-consistency-reviewer.md`:** a read-only agent that checks the docs a diff touches, or should have touched, against the code and the other docs. Its first run on this PR found the fixes below.
+- **Wire contract (D-25..D-28):**
+  - README, ARCHITECTURE, VERSIONING, LLD §3.3.1/§5.1/§5.3/§25, `.claude/api-caching-events.md`, `docs/runbook.md` and the swagger info now say that AL-5/AL-6 admit `commercial-system` and AL-7 admits only `iam-system`.
+  - The same docs now say that the AL-6 `Idempotency-Key` header is optional.
+  - The direct-write count is 38, Billing (ns `billing`) is admitted, and the outbox is the recommended caller pattern.
+  - The LLD limits-header note now says the non-JSON `400` lacks the header too.
+- **Earlier drift:**
+  - The queue count is 12, not 11 (VERSIONING, LLD, `init-floci.sh`, `.claude/operations.md`, a diagram).
+  - Go is 1.26.11 in ARCHITECTURE.
+  - The library versions in `.claude/CLAUDE.md` were updated.
+  - The LLD is cited as rev 0.34 and decisions as D-1..D-28 everywhere.
+  - VERSIONING no longer calls the service "deployed".
+  - The README describes the schema-governance targets correctly.
+  - The error-envelope and runbook code casing now match RFC 9457 / UPPER_SNAKE.
+  - LLD §7.1 has the six CD-21 rows it was missing.
+  - Three `docs/architecture/mermaid/*.mmd` files were synced to their ARCHITECTURE.md copies.
+
+### Changed — platform-audit open items: direct-write contract (D-25..D-28, LLD rev 0.34) (2026-11-15)
+
+- **Commercial callers (D-25):** AL-5/AL-6 accept `x-tenant-roles: commercial-system` as well as `iam-system` (CD-19). `x-user-id` may be `…00c1` or the literal `commercial-system`. AL-7 and every other internal route still accept only `iam-system`. An automated action by a non-IAM producer is recorded as actor `{service_account, …00c1}`.
+- **AL-6 `Idempotency-Key` header optional (D-26, supersedes D-4's header rule):** if sent, it must be 1..256 chars, and it is never stored. Each entry's `idempotency_key` is still required and is the dedup key. AL-5 is unchanged.
+- **AL-6 per-index `code` is UPPER_SNAKE (D-27):** for example `UNKNOWN_ENTRY_TYPE`, or `INTERNAL_ERROR` for an unexpected failure. This matches AL-5's `errorCode`.
+- **`X-Max-Metadata-Bytes` (D-28):** the AL-5/AL-6 route chain advertises the effective `MAX_METADATA_BYTES`.
+
+### Added — taxonomy +11, machine-readable taxonomy, Billing admission (LLD rev 0.34) (2026-11-15)
+
+- `config.audit_delivery.requeued` and `config.audit_delivery.discarded` (`compliance_7y`), sent by the platform-audit operator helpers.
+- Billing's BL-OQ-10 types (`security_3y`): `billing.conversion.stub`, `billing.conversion.reverted`, `billing.saga.resolved`, `billing.collection.paused`, `billing.price_book.changed`, `billing.provider.certified`, `billing.provider.certification_revoked`. The vocabulary grows from 88 to 97 with these.
+- `config.audit_delivery.resolved` and `config.audit_delivery.purged` (`compliance_7y`), for platform-audit's parked-row lifecycle (PA-OQ-15). The vocabulary is now 99.
+- **`api/taxonomy.json`:** the taxonomy in machine-readable form, one record per `entry_type` with `tier`, `direct_write` and `producers`. Regenerate it with `make taxonomy-json`; `TestTaxonomyExport_MatchesCode` fails while it is stale (PA-OQ-16).
+- `config.group_mapping.purged` (`security_3y`), Group Mapping's tenant-purge cascade, accepted only from `source_service` `iam-group-mapping` (PA-OQ-19). The vocabulary is now 100.
+- Helm: Billing is admitted as `cluster.local/ns/billing/sa/commercial-billing`. The NetworkPolicy allows namespace `billing` with label `commercial-billing`.
+
 ### Fixed — Trivy: extend DLA-4792-1 + add DLA-4867-1 (2026-11-14)
 
 - **DLA-4792-1** (`tzdata` refresh) expiry extended to 2027-01-31 — the pinned distroless digest (`sha256:afa5c872`) still ships tzdata 2026b; suppression remains valid.

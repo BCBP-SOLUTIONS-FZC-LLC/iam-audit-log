@@ -2,7 +2,7 @@
 
 This document describes the internal structure, dependency rules, and runtime data flows of `iam-audit-log`.
 
-`iam-audit-log` is a **private Go service** (`github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`, Go 1.26.10) deployed as a containerised microservice (3 replicas by default; HPA 3–6, CPU 70% / memory 80%, off by default in `deploy/helm/values.yaml`). It refines the IAM HLD (`iam-hld-tender-saas-v1.41.md`, header version 1.47) through the LLD at `docs/lld/iam-lld-audit-log-service.md` (**rev 0.29**; where LLD and HLD disagree, HLD is authoritative, and every deviation this build took is recorded in `docs/implementation/BUILD_PLAN.md` §C as a decision `D-n` or `gap n`). It is the platform's **compliance system of record**: a single append-only, tenant-scoped store answering *who did what, to what, when and from where* across every IAM and domain service. It is a **pure sink**: it consumes 12 SNS→SQS queues and a mesh-only direct-write API, and **publishes nothing** (AL-INV-10). It ships as **two binaries from one image**: `cmd/server` (the query/export and ingest HTTP API, the 12-queue platform-events consumer fleet, and four background workers: the CAT-I2 plan poller, the export worker, the ops-gauge monitor and the consumer fleet itself) and `cmd/reconciler` (a single binary dispatched by `--job=<name>`, covering 4 CronJobs: `reconcile`, `redaction-retry`, `redaction-sweep`, `processed-events-prune`).
+`iam-audit-log` is a **private Go service** (`github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`, Go 1.26.11) deployed as a containerised microservice (3 replicas by default; HPA 3–6, CPU 70% / memory 80%, off by default in `deploy/helm/values.yaml`). It refines the IAM HLD (`iam-hld-tender-saas-v1.41.md`, header version 1.47) through the LLD at `docs/lld/iam-lld-audit-log-service.md` (**rev 0.34**; where LLD and HLD disagree, HLD is authoritative, and every deviation this build took is recorded in `docs/implementation/BUILD_PLAN.md` §C as a decision `D-n` or `gap n`). It is the platform's **compliance system of record**: a single append-only, tenant-scoped store answering *who did what, to what, when and from where* across every IAM and domain service. It is a **pure sink**: it consumes 12 SNS→SQS queues and a mesh-only direct-write API, and **publishes nothing** (AL-INV-10). It ships as **two binaries from one image**: `cmd/server` (the query/export and ingest HTTP API, the 12-queue platform-events consumer fleet, and four background workers: the CAT-I2 plan poller, the export worker, the ops-gauge monitor and the consumer fleet itself) and `cmd/reconciler` (a single binary dispatched by `--job=<name>`, covering 4 CronJobs: `reconcile`, `redaction-retry`, `redaction-sweep`, `processed-events-prune`).
 
 All eight build phases (LLD §19) are implemented. Phases 0–8 are committed as `13c96bd`, `9d62133`, `612ccd6`, `c96ad3c` and `b64f932`. The platform-library confinement and the Enterprise Platform Observability Standard alignment (gaps 43–46) sit on top of them; see `CHANGELOG.md` and `git log`.
 
@@ -25,7 +25,7 @@ graph TD
     end
 
     subgraph adapters_in["Inbound Adapters  —  internal/adapter/inbound/"]
-        http_h["http/\nNewRouter (single route table, shared with e2e)\nIngestHandler — AL-5/AL-6 (Idempotency-Key, 207 batch)\nQueryHandler — AL-1..AL-4, AL-7\nIdentityBridge · RequireAuditReader · RequireSystemRole\nTenantRateLimiter (AL-6, AL-3) · AsyncAPI docs"]
+        http_h["http/\nNewRouter (single route table, shared with e2e)\nIngestHandler — AL-5/AL-6 (Idempotency-Key on AL-5, 207 batch, X-Max-Metadata-Bytes)\nQueryHandler — AL-1..AL-4, AL-7\nIdentityBridge · RequireAuditReader · RequireDirectWriterRole · RequireSystemRole\nTenantRateLimiter (AL-6, AL-3) · AsyncAPI docs"]
         consumer["consumer/\nFleet — one platform-events consumer per *-audit-q\nHandler → IngestService.IngestBus (Envelope.ID = dedup key)\ninstrument — Tier-1 message metrics (bounded event_type, reason)\nDeadLetterObserveAt = SQS_MAX_RECEIVE_COUNT − 1"]
     end
 
@@ -190,7 +190,7 @@ graph LR
 
 ## Request flow
 
-Every HTTP request passes through the full middleware stack before reaching a handler. The public query API sits behind gateway-injected identity headers (`x-user-id` / `x-tenant-id` / `x-tenant-roles`); the service never parses a JWT. `/api/v1/internal/*` additionally requires the `iam-system` role and is reachable only over the mesh (the gateway does not route it; `TestHelm_IngressExposesOnlyPublicAuditAPI`).
+Every HTTP request passes through the full middleware stack before reaching a handler. The public query API sits behind gateway-injected identity headers (`x-user-id` / `x-tenant-id` / `x-tenant-roles`); the service never parses a JWT. `/api/v1/internal/*` additionally requires the `iam-system` role (AL-5/AL-6 also accept `commercial-system`, D-25) and is reachable only over the mesh (the gateway does not route it; `TestHelm_IngressExposesOnlyPublicAuditAPI`).
 
 > Source: [`docs/architecture/mermaid/request-flow.mmd`](docs/architecture/mermaid/request-flow.mmd)
 
@@ -253,10 +253,12 @@ sequenceDiagram
                                RequireAuditReader                — 403 insufficient_permissions (tenant_admin | tenant_owner)
                                  AL-1 GET /events · AL-2 GET /events/:id · AL-3 POST /exports (rate-limited in handler) · AL-4 GET /exports/:id
       [/api/v1/internal group] gincommon.ProtectedMiddlewares · IdentityBridge · RequireJSONContentType
+                                 AL-5 POST /audit-entries          (RequireDirectWriterRole · LimitsHeader · RequireIdempotencyKey)
+                                 AL-6 POST /audit-entries:batch    (RequireDirectWriterRole · LimitsHeader · OptionalIdempotencyKey · TenantRateLimiter → 429)
                                RequireSystemRole                 — 403 forbidden_peer unless iam-system
-                                 AL-5 POST /audit-entries          (RequireIdempotencyKey)
-                                 AL-6 POST /audit-entries:batch    (RequireIdempotencyKey · TenantRateLimiter → 429)
                                  AL-7 GET  /audit/events           (explicit tenant_id, no plan clamp; 422 range_too_large)
+      RequireDirectWriterRole answers 403 forbidden_peer unless the role is iam-system or commercial-system (D-25);
+      LimitsHeader sets X-Max-Metadata-Bytes (D-28).
 ```
 
 `/healthz`, `/readyz` (`registerInfraRoutes`) and the AsyncAPI docs (`registerDocsRoutes`, gated by `DocsConfig.active()`) are registered **before** this chain, so a probe with no headers still gets `200`. `/healthz` is pure liveness and never inspects a dependency. `/readyz` runs its checks concurrently (the consumer fleet's liveness and `pool.Health` on the `audit_app` pool) and returns `503` on any failure. `/metrics` is **not** on this router: it is served on the separate `METRICS_PORT` listener by `telemetry.MetricsHandler`, which exposes exactly gincommon's registry. `net/http`'s own error lines go to the gincommon logger (`telemetry.HTTPErrorLog`), and gin itself writes nothing (`telemetry.QuietGin`).
@@ -815,7 +817,7 @@ The data is append-only, so there is no optimistic locking (`record_version`). C
 flowchart LR
     subgraph producers["Producers"]
         SNS["SNS topics\n(iam.*, tender, billing, usage, wf.*)"]
-        DW["Direct-write callers\n(Catalog, RP, Group Mapping, Tender ACL)"]
+        DW["Direct-write callers\n(Catalog, RP, O&M, Group Mapping, Tender ACL,\nEntitlements, Billing)"]
         GW["Gateway\n(tenant admins)"]
     end
 
@@ -869,7 +871,7 @@ flowchart LR
 | `iam-audit-log-server` | `/iam-audit-log-server` | HTTP API (`cmd/server`), the image's `ENTRYPOINT`, exposing `8080` (API) and `9090` (metrics). It runs migrations at startup and hosts the 12-queue consumer fleet, the CAT-I2 poller, the export worker and the OpsMonitor |
 | `iam-audit-log-reconciler` | `/iam-audit-log-reconciler` | One-shot reconciler (`cmd/reconciler`), dispatched via `--job=<name>` by the 4 CronJobs |
 
-The `Dockerfile` has two stages: a `golang:1.26.10-bookworm` builder (SHA-pinned; private modules fetched through a BuildKit secret, `-trimpath`, `buildVersion` via `-ldflags`), and a `gcr.io/distroless/static-debian12:nonroot` runtime (SHA-pinned, no shell, `nonroot`) that copies only the two binaries. `api/asyncapi.yaml` and the per-source JSON Schemas are compiled in via `//go:embed`.
+The `Dockerfile` has two stages: a `golang:1.26.11-bookworm` builder (SHA-pinned; private modules fetched through a BuildKit secret, `-trimpath`, `buildVersion` via `-ldflags`), and a `gcr.io/distroless/static-debian12:nonroot` runtime (SHA-pinned, no shell, `nonroot`) that copies only the two binaries. `api/asyncapi.yaml` and the per-source JSON Schemas are compiled in via `//go:embed`.
 
 ### Helm chart
 
@@ -933,8 +935,8 @@ This service is the **consumer**. Before a producer publishes to an audited topi
 - [ ] For `UserDeleted`, `data.user_id` is required. Without it no redaction task can be created (gap 36).
 
 **Direct-write (AL-5/AL-6)**
-- [ ] Mesh-only, with `x-tenant-roles: iam-system` (otherwise `403 forbidden_peer`), the `…00a1` user and a tenant header.
-- [ ] `Idempotency-Key` is required, stable across your retries and unique per change (it becomes `source_event_id`). AL-6 also needs a per-entry `idempotency_key` (D-4).
+- [ ] Mesh-only, with `x-tenant-roles: iam-system` (or `commercial-system` for a Commercial producer, D-25; otherwise `403 forbidden_peer`), the matching `…00a1` / `…00c1` user and a tenant header.
+- [ ] On AL-5, `Idempotency-Key` is required, stable across your retries and unique per change (it becomes `source_event_id`). On AL-6 each entry's `idempotency_key` plays that role (D-4) and the header is optional (D-26).
 - [ ] Use only the direct-write `entry_type`s (D-6; otherwise `422 unknown_entry_type`). Don't send a retention tier; it is derived and a caller value is ignored (AL-INV-11).
 - [ ] Treat `201` and `200` (replay) as success. Retry `5xx` and `429` with the **same** key. Audit failure must never fail your business write (AUDIT-CALLER-1).
 
@@ -952,7 +954,7 @@ STRIDE analysis of `iam-audit-log`. Every row is grounded in a real mechanism in
 
 | STRIDE | Threat | Component | Mitigation |
 |--------|--------|-----------|------------|
-| **Spoofing** | A caller forges a direct-write entry for another tenant, or impersonates a mesh peer | `/api/v1/internal/*` | Istio `AuthorizationPolicy` allows the prefix only from the listed caller principals (mTLS identity), and the NetworkPolicy only from the listed caller pods; the gateway never routes `/internal`. `RequireSystemRole` → `403 forbidden_peer` is defense in depth. The row is bound to the **body** tenant under `WITH CHECK`, and an idempotency key reused across tenants gets `400` without revealing the other tenant's row |
+| **Spoofing** | A caller forges a direct-write entry for another tenant, or impersonates a mesh peer | `/api/v1/internal/*` | Istio `AuthorizationPolicy` allows the prefix only from the listed caller principals (mTLS identity), and the NetworkPolicy only from the listed caller pods; the gateway never routes `/internal`. `RequireDirectWriterRole` (AL-5/AL-6) / `RequireSystemRole` (AL-7) → `403 forbidden_peer` is defense in depth. The row is bound to the **body** tenant under `WITH CHECK`, and an idempotency key reused across tenants gets `400` without revealing the other tenant's row |
 | **Spoofing** | A forged identity header impersonates a tenant admin | IdentityBridge | Envoy strips client identity headers at the trust boundary. The `AuthorizationPolicy` allows `/api/v1/audit/*` only from the gateway (its principal, or a source with no mesh principal), so an in-mesh workload cannot reach it with forged headers. The service validates the header shape and role (`RequireAuditReader`) but does not re-authenticate |
 | **Tampering** | An audit row is altered or deleted | `audit_events` | `audit_app` INSERT+SELECT only (AL-INV-1). The `forbid_audit_mutation` trigger rejects UPDATE/DELETE from every role but `audit_reconciler`, whose UPDATE is column-level (`metadata`, `actor_display`) and reached only through `apply_redaction()` / `sweep_redactions()` |
 | **Tampering** | An archived object is replaced or deleted | S3 archive | SSE-KMS, Object Lock COMPLIANCE retain-until ≥ tier, read-back checksum and lock verification before seal, sealed objects never rewritten (D-20). The IAM policy denies delete and governance bypass |
@@ -1014,7 +1016,7 @@ graph LR
         claude[".claude/CLAUDE.md + siblings\narchitecture · database-schema\napi-caching-events · request-flows · operations"]
         readme["README.md\ncapabilities · quick start · gates · docs index"]
         asyncapi_yaml["api/asyncapi.yaml\nreceive-only AsyncAPI (65 messages)"]
-        lld["docs/lld/iam-lld-audit-log-service.md\nLLD rev 0.29"]
+        lld["docs/lld/iam-lld-audit-log-service.md\nLLD rev 0.34"]
         plan["docs/implementation/\nBUILD_PLAN.md · RELEASE_CHECKLIST.md"]
         ops["docs/runbook.md · deploy/monitoring/"]
     end
@@ -1049,8 +1051,8 @@ graph LR
 | [`.claude/request-flows.md`](.claude/request-flows.md) | Ingest, query routing, export, archival/re-open, redaction |
 | [`.claude/operations.md`](.claude/operations.md) | Configuration, CronJobs, metrics and alerts, local dev, troubleshooting |
 | [`docs/architecture/README.md`](docs/architecture/README.md) | Standalone Mermaid diagram index (the 14 `.mmd` files embedded above) |
-| [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | Full LLD (rev 0.29): §16 open questions, §17 error taxonomy, §22 decision register, §25 name inventory |
-| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → enforcement → test map, decisions D-1..D-23, gaps 1–46 |
+| [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | Full LLD (rev 0.34): §16 open questions, §17 error taxonomy, §22 decision register, §25 name inventory |
+| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → enforcement → test map, decisions D-1..D-28, gaps 1–46 |
 | [`docs/observability/`](docs/observability/README.md) | Observability standard as implemented, generated metric inventory, migration, per-alert runbooks |
 | [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites outside this repo (Terraform role grant, bucket, namespace, CronJob alerting) |
 | [`docs/runbook.md`](docs/runbook.md) | RB-1..RB-10 operational runbooks |

@@ -73,7 +73,7 @@ const maxBodyBytes = 8 << 20
 //	TimeoutMiddleware → Observability (PanicRecovery → RequestID → Tracing →
 //	CorrelationHeaders → Metrics → Logging)
 //	  /api/v1/audit/*    → RequireAuth → Context → IdentityBridge → RequireAuditReader
-//	  /api/v1/internal/* → RequireAuth → Context → IdentityBridge → RequireSystemRole
+//	  /api/v1/internal/* → RequireAuth → Context → IdentityBridge → RequireDirectWriterRole (AL-5/AL-6) | RequireSystemRole (rest)
 //
 // /healthz, /readyz and the AsyncAPI docs are registered before auth.
 // /metrics is served on its own METRICS_PORT listener, not here.
@@ -104,21 +104,27 @@ func NewRouter(cfg RouterConfig) *Router {
 	if cfg.Audit != nil {
 		cfg.Audit(audit)
 	}
-	internal := r.Group("/api/v1/internal", append(protected, RequireSystemRole())...)
+	// /api/v1/internal/*: AL-5/AL-6 admit iam-system and commercial-system
+	// (D-25); AL-7 and every other internal route stay iam-system only.
+	internal := r.Group("/api/v1/internal", protected...)
 	if cfg.Ingest != nil {
-		internal.POST("/audit-entries", RequireIdempotencyKey(), cfg.Ingest.CreateEntry) // AL-5
-		batch := []gin.HandlerFunc{RequireIdempotencyKey()}
+		write := func(hs ...gin.HandlerFunc) []gin.HandlerFunc {
+			return append([]gin.HandlerFunc{RequireDirectWriterRole(), cfg.Ingest.LimitsHeader()}, hs...)
+		}
+		internal.POST("/audit-entries", write(RequireIdempotencyKey(), cfg.Ingest.CreateEntry)...) // AL-5
+		batch := write(OptionalIdempotencyKey())                                                   // D-26
 		if cfg.BatchLimiter != nil {
 			batch = append(batch, cfg.BatchLimiter.Middleware())
 		}
 		// Escaped colon: gin routes the literal LLD path …/audit-entries:batch.
 		internal.POST(`/audit-entries\:batch`, append(batch, cfg.Ingest.CreateBatch)...) // AL-6
 	}
+	system := internal.Group("", RequireSystemRole())
 	if cfg.Query != nil {
-		internal.GET("/audit/events", cfg.Query.InternalListEvents) // AL-7
+		system.GET("/audit/events", cfg.Query.InternalListEvents) // AL-7
 	}
 	if cfg.Internal != nil {
-		cfg.Internal(internal)
+		cfg.Internal(system)
 	}
 	return &Router{engine: r}
 }

@@ -2,7 +2,7 @@
 
 Guidance for Claude Code working in **`iam-audit-log`**: the Tender Management SaaS platform's compliance system of record. It is a Go service in the IAM subsystem, module `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`.
 
-- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.31).
+- **Spec:** `docs/lld/iam-lld-audit-log-service.md` (revision table at the top; latest rev 0.34).
 - **Build trace, decisions and gaps:** `docs/implementation/BUILD_PLAN.md`.
 - Where the LLD and a BUILD_PLAN decision (D-n) disagree, the decision is the implemented behavior, and the LLD note it needs is recorded in BUILD_PLAN §C.
 
@@ -17,7 +17,7 @@ A single append-only, tenant-scoped store answering *who did what, to what, when
 - **Archives** months past the hot window to S3 (SSE-KMS, Object Lock COMPLIANCE, per-tenant objects). It drops a partition only when it is provably archived, and it applies GDPR redaction to `security_3y` rows.
 - **Publishes nothing** (AL-INV-10): no SNS publisher, no outbox.
 
-**Status:** build phases 0–8, the platform-library confinement (gaps 43–45) and the observability standard (gap 46) are complete. Since then (LLD rev 0.33): platform-gincommon/v2 v2.1.0, platform-events/v2 v2.2.1, platform-pgcommon/v2 v2.0.2, Go 1.26.11 (GO-2026-6859 + GO-2026-5932), AWS SDK v2 updated, production-readiness hardening (D-22/D-23), taxonomy additions for Commercial Phase 1 (IAM-7/IAM-8/IAM-11: `billing.token_addon.*` bus + direct-write types, `legal.terms.accepted`, CD-21/CD-17 Commercial domain), Entitlements (`commercial-entitlements`, ns `commercial`) admitted to Helm mesh allow-lists, observability governance docs added, CI runs on every branch push, `.claude/` hooks + `invariant-reviewer` agent + `add-entry-type` skill added. Merged coverage 96.5%. Remaining deploy prerequisites are in `docs/implementation/RELEASE_CHECKLIST.md`.
+**Status:** build phases 0–8, the platform-library confinement (gaps 43–45) and the observability standard (gap 46) are complete. Since then (LLD rev 0.34): platform-gincommon/v2 v2.1.0, platform-events/v2 v2.2.1, platform-pgcommon/v2 v2.0.2, Go 1.26.11 (GO-2026-6859 + GO-2026-5932), AWS SDK v2 updated, production-readiness hardening (D-22/D-23), taxonomy additions for Commercial Phase 1 (IAM-7/IAM-8/IAM-11: `billing.token_addon.*` bus + direct-write types, `legal.terms.accepted`, CD-21/CD-17 Commercial domain), Entitlements (`commercial-entitlements`, ns `commercial`) admitted to Helm mesh allow-lists, D-25..D-28 (AL-5/AL-6 admit `commercial-system`, AL-6 `Idempotency-Key` header optional, UPPER_SNAKE per-index codes, `X-Max-Metadata-Bytes`), taxonomy 100 + `api/taxonomy.json`, Billing (`commercial-billing`, ns `billing`) admitted, observability governance docs added, CI runs on every branch push, `.claude/` hooks + `invariant-reviewer` and `docs-consistency-reviewer` agents + `add-entry-type` skill added. Merged coverage 96.5%. Remaining deploy prerequisites are in `docs/implementation/RELEASE_CHECKLIST.md`.
 
 ## Binding rules
 
@@ -39,13 +39,13 @@ Platform-library confinement (each rule is a CI gate in `make ci`):
 
 | Concern | Only through | Enforced by |
 |---|---|---|
-| Logs, metrics, traces | platform-gincommon v1.6.0. Nothing imports OTel or promhttp; `internal/adapter/outbound/telemetry` only wraps gincommon's `NewSpanTracer` / `SpanTraceID` / `MetricsHandler` (gap 43). Metrics: Tier 1/2 via `NewShared*Vec`, Tier 3 via `gincommon.NewCounterVec`/`NewGauge`/`NewHistogramVec`. | `.github/scripts/check-observability-confinement.sh` |
-| DB connection, config, operations | platform-pgcommon v2.0.1: `NewPool`, `ConfigFromEnv`, `RunInTx*`, `Is*`, `pkg/migrate` (gap 44) | `arch-lint.sh` database invariant |
+| Logs, metrics, traces | platform-gincommon/v2 v2.1.0. Nothing imports OTel or promhttp; `internal/adapter/outbound/telemetry` only wraps gincommon's `NewSpanTracer` / `SpanTraceID` / `MetricsHandler` (gap 43). Metrics: Tier 1/2 via `NewShared*Vec`, Tier 3 via `gincommon.NewCounterVec`/`NewGauge`/`NewHistogramVec`. | `.github/scripts/check-observability-confinement.sh` |
+| DB connection, config, operations | platform-pgcommon/v2 v2.0.2: `NewPool`, `ConfigFromEnv`, `RunInTx*`, `Is*`, `pkg/migrate` (gap 44) | `arch-lint.sh` database invariant |
 | Events, SQS config, dedup | platform-events v2.2.1: `NewSQSConsumer`, `config.LoadSQS`; dedup keyed on `Envelope.ID` (gap 45) | `check-forbidden-events-bypass.sh` |
 
 Other gates: `.go-arch-lint.yml` (the core is vendor-free), `check-grants.sh`, `check-asyncapi-receive-only.sh`, `check-metric-naming.sh`, `metrics-registry-lint.sh`, `metricslint.sh` (`make metrics-lint`), and the contract tests in `test/unit` (Helm: per-root secrets, the mesh `AuthorizationPolicy` + NetworkPolicy caller allow-list; IAM least privilege; alert `runbook_url` anchors).
 
-Internal-route identity (D-23): `/api/v1/internal/*` trusts the `iam-system` role header only because the chart's Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`) admits only the listed caller principals. Never widen `networkPolicy.internalCallers` to the whole namespace or drop the policy; `APP_ENV=prod` refuses to render without it.
+Internal-route identity (D-23): `/api/v1/internal/*` trusts the `iam-system` role header (and `commercial-system` on AL-5/AL-6, D-25) only because the chart's Istio `AuthorizationPolicy` (`deploy/helm/templates/mesh.yaml`) admits only the listed caller principals. Never widen `networkPolicy.internalCallers` to the whole namespace or drop the policy; `APP_ENV=prod` refuses to render without it.
 
 ## Common commands
 
@@ -90,12 +90,12 @@ test/{unit,postgres,integration,e2e,fixtures,dbseed}
 - **DB roles:** `cmd/server` uses only `audit_app` (plus the migrator DSN for startup migrations); `cmd/reconciler` uses only `audit_reconciler`.
 - **Definer functions:** anything a role can't do by grant goes through a narrow SECURITY DEFINER function, e.g. partition DDL, the export claim, redaction, the drop/re-open gate and ops stats. `app_tenant_id` / RLS helpers are separate.
 - **jsonb binding:** bind as `string`, never `[]byte` (PgBouncer mode, gap 28).
-- **Decisions:** D-1..D-23 live in BUILD_PLAN §C, and each has a date and "user" when the user chose it. Don't invent behavior; if the spec is silent, raise a gap and ask.
+- **Decisions:** D-1..D-28 live in BUILD_PLAN §C, and each has a date and "user" when the user chose it. Don't invent behavior; if the spec is silent, raise a gap and ask.
 
 ### How to add…
 
-- **An entry_type:** add a row in `domain/taxonomy.go` (tier included), the matching message in `api/asyncapi.yaml` (bus types only), an LLD §7.1 row and the §25 frozen-vocabulary line. `test/unit/taxonomy_contract_test.go` parses the LLD.
-- **A producer for a producer-restricted direct-write type:** a taxonomy row's `producers` list (only `legal.terms.accepted` has one: `termsAcceptedProducers`, today `iam-realm-provisioner`) is the closed set of `source_service` values AL-5/AL-6 accept it from; anything else is 422 `unknown_entry_type`. A future terms re-acceptance flow (e.g. `iam-org-membership`) is one entry in that list, plus the Helm internal-caller lists if missing, plus the LLD §7.1 note.
+- **An entry_type:** add a row in `domain/taxonomy.go` (tier included), the matching message in `api/asyncapi.yaml` (bus types only), an LLD §7.1 row and the §25 frozen-vocabulary line, then run `make taxonomy-json` and commit `api/taxonomy.json` (read by platform-audit; `TestTaxonomyExport_MatchesCode` fails while stale). `test/unit/taxonomy_contract_test.go` parses the LLD.
+- **A producer for a producer-restricted direct-write type:** a taxonomy row's `producers` list (`legal.terms.accepted` → `termsAcceptedProducers`, today `iam-realm-provisioner`; `config.group_mapping.purged` → `groupMappingPurgedProducers`, `iam-group-mapping`) is the closed set of `source_service` values AL-5/AL-6 accept it from; anything else is 422 `unknown_entry_type`. A future terms re-acceptance flow (e.g. `iam-org-membership`) is one entry in that list, plus the Helm internal-caller lists if missing, plus the LLD §7.1 note.
 - **A metric** (Enterprise Platform Observability Standard, LLD §11):
   - Pick the tier by the decision tree. A new `platform_*` or `iam_*` name needs registry ratification first (standard rules 11–12), so default to Tier-3 `iam_audit_log_*`.
   - Register it in `buildCollectors` (`internal/adapter/outbound/metrics/business.go`) with `must(gincommon.NewCounterVec/NewCounter/NewGauge/NewHistogramVec(...))` (Tier 3) or `gincommon.NewShared*Vec` (registry names). gincommon injects `domain`/`service`/`environment`; never set them at a call site. Bound every label value; never use tenant, user, request or event ids as labels.

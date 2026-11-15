@@ -1,0 +1,609 @@
+{
+  "_comment": "Generated from internal/core/domain/taxonomy.go by `make taxonomy-json`; do not edit. Every known entry_type (<domain>.unknown excluded), its retention tier, whether AL-5/AL-6 accept it, and the source_service values it is restricted to (empty = any admitted caller). LLD §7.1, §25.",
+  "entry_types": [
+    {
+      "entry_type": "auth.email.verified",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "auth.login.failure",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "auth.login.success",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "auth.mfa.enrolled",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "auth.mfa.reset",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "auth.password.reset",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.adjustment.issued",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.collection.paused",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.conversion.reverted",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.conversion.stub",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.price_book.changed",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.provider.certification_revoked",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.provider.certified",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.refund.issued",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.saga.resolved",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.token_addon.adjusted",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.token_addon.expired",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.token_addon.granted",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.token_addon.purchased",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "billing.token_addon.revoked",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "commercial.cross_tenant_job.ran",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.audit_delivery.discarded",
+      "tier": "compliance_7y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.audit_delivery.purged",
+      "tier": "compliance_7y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.audit_delivery.requeued",
+      "tier": "compliance_7y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.audit_delivery.resolved",
+      "tier": "compliance_7y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.department.created",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.department.updated",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.entitlement_override.expired",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.entitlement_override.removed",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.entitlement_override.set",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.group_mapping.department_roles.changed",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.group_mapping.departments.changed",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.group_mapping.purged",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": [
+        "iam-group-mapping"
+      ]
+    },
+    {
+      "entry_type": "config.group_mapping.tenant_roles.changed",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.idp.changed",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.plan.updated",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.tenant_setting.changed",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.tender_acl.cascade",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.tender_acl.granted",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "config.tender_acl.revoked",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "delegation.ended",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "delegation.escalation_requested",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "delegation.review_requested",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "delegation.started",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "entitlement.tenant_changed",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "invitation.created",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "invitation.expired",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "invitation.revoked",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "legal.terms.accepted",
+      "tier": "compliance_7y",
+      "direct_write": true,
+      "producers": [
+        "iam-realm-provisioner"
+      ]
+    },
+    {
+      "entry_type": "membership.department.granted",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "membership.department.level_changed",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "membership.department.revoked",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "membership.purged",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "membership.revoked",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "membership.role.granted",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "membership.role.revoked",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "security.cross_tenant_access",
+      "tier": "compliance_7y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "serviceaccount.credential.issued",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "serviceaccount.credential.revoked",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "serviceaccount.credential.rotated",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "serviceaccount.registered",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "serviceaccount.revoked",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.converted",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.created",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.direct_paid_signup",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.identity_provisioned",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.offboarded",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.owner_signed_up",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.payment_past_due",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.plan_changed",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.reactivated",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.realm_ready",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.seat_overage.resolved",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.seat_overage.started",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.seats_changed",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.state.changed",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.subscription_cancelled",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.suspended",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.trial_expired",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.trial_reactivated",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tenant.trial_started",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tender.access.granted",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tender.assignee.overridden",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tender.restricted",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "tender.section.approved",
+      "tier": "compliance_7y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "usage.quota.exceeded",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "usage.quota.restored",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "usage.quota.warning",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "user.availability.changed",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "user.deleted",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "user.provisioned",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "user.status.changed",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "user.updated",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "workflow.finished",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "workflow.task.created",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "workflow.task.deferred",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "workflow.task.reassigned",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "workflow.task.sla_breached",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "workflow.task.sla_warning",
+      "tier": "access_90d",
+      "direct_write": false,
+      "producers": []
+    },
+    {
+      "entry_type": "workflow.template.published",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    }
+  ]
+}

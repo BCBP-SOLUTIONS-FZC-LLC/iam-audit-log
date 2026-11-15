@@ -284,7 +284,7 @@ func run() int {
 	// ── 4. Router ─────────────────────────────────────────────────────────
 	router := httpadapter.NewRouter(httpadapter.RouterConfig{
 		GinConfig: ginCfg,
-		Ingest:    httpadapter.NewIngestHandler(ingest),
+		Ingest:    httpadapter.NewIngestHandler(ingest).WithMaxMetadataBytes(cfg.MaxMetadataBytes),
 		Query: httpadapter.NewQueryHandler(query, exports,
 			httpadapter.NewTenantRateLimiterPerMinute(cfg.ExportRateLimitPerMin, cfg.ExportRateLimitBurst)),
 		BatchLimiter: httpadapter.NewTenantRateLimiter(cfg.IngestBatchRateLimitRPS, cfg.IngestBatchRateLimitBurst),

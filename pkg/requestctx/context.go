@@ -40,9 +40,12 @@ func (rc *RequestContext) HasRole(role string) bool {
 
 // Role names this service authorizes against (LLD §5.2, §10.2).
 const (
-	RoleSystem      = "iam-system"
-	RoleTenantAdmin = "tenant_admin"
-	RoleTenantOwner = "tenant_owner"
+	RoleSystem = "iam-system"
+	// RoleCommercialSystem is the Commercial domain's service role (CD-19).
+	// It is admitted on the direct-write routes only (AL-5/AL-6, D-25).
+	RoleCommercialSystem = "commercial-system"
+	RoleTenantAdmin      = "tenant_admin"
+	RoleTenantOwner      = "tenant_owner"
 )
 
 // IsSystem reports whether the caller is a recognized mesh peer — the
@@ -51,6 +54,14 @@ const (
 // x-tenant-roles: iam-system).
 func (rc *RequestContext) IsSystem() bool {
 	return rc.HasRole(RoleSystem)
+}
+
+// IsDirectWriter reports whether the caller may use the direct-write routes
+// AL-5/AL-6: the iam-system role, or the commercial-system role Commercial
+// producers present (CD-19, D-25). Which workloads may call at all is decided
+// by the mesh AuthorizationPolicy's principal list (LLD §10.2).
+func (rc *RequestContext) IsDirectWriter() bool {
+	return rc.IsSystem() || rc.HasRole(RoleCommercialSystem)
 }
 
 // IsAuditReader reports whether the caller may read the tenant's audit

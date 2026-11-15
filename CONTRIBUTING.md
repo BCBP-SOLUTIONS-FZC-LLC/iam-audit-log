@@ -2,7 +2,7 @@
 
 This is an internal IAM microservice for the XpertPMS platform: the platform's compliance system of record. This guide covers development setup, how to extend the service, test requirements, and the PR process for `iam-audit-log`.
 
-The LLD (`docs/lld/iam-lld-audit-log-service.md`) is the single source of truth. In the PR, cite the section or ID you implement (AL-INV-\*, AL-EVT-\*, AL-D\*, AL-1..AL-7, D-n). Do not diverge from the LLD in code; raise a spec gap in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) §C instead (decisions D-1..D-21, gaps 1–46).
+The LLD (`docs/lld/iam-lld-audit-log-service.md`) is the single source of truth. In the PR, cite the section or ID you implement (AL-INV-\*, AL-EVT-\*, AL-D\*, AL-1..AL-7, D-n). Do not diverge from the LLD in code; raise a spec gap in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) §C instead (decisions D-1..D-28, gaps 1–46).
 
 ## Prerequisites
 

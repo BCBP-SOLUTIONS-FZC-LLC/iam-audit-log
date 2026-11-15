@@ -40,5 +40,8 @@ Then make the changes in this order:
 - Direct-write: add to `lldDirectWrite` map
 - Update the vocabulary count assertion (`len(EntryTypes()) != N`)
 
-**Step 6 — verify**
+**Step 6 — `api/taxonomy.json`**
+- Run `make taxonomy-json` and commit the regenerated file (platform-audit reads it; `TestTaxonomyExport_MatchesCode` fails while it is stale)
+
+**Step 7 — verify**
 Run `make vet lint arch-lint invariant-lint` before committing.

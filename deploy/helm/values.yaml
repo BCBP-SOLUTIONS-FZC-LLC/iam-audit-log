@@ -223,7 +223,7 @@ readinessProbe:
 networkPolicy:
   enabled: true
   # Public /api/v1/audit/* arrives via the gateway; /api/v1/internal/* from
-  # IAM callers and cross-namespace Commercial callers (Entitlements).
+  # IAM callers and cross-namespace Commercial callers (Entitlements, Billing).
   ingressControllerNamespaceSelector:
     kubernetes.io/metadata.name: gateway
   ingressControllerPodSelector: {}
@@ -261,6 +261,12 @@ networkPolicy:
       podSelector:
         matchLabels:
           app.kubernetes.io/name: commercial-entitlements  # billing.token_addon.* (AL-5; IAM-8/IAM-11, CD-55)
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: billing
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: commercial-billing       # billing.* operator actions (AL-5; BL-OQ-10, rev 0.34)
   allowNoInternalCallers: false
   # Egress for the CAT-I2 plans poll (port 8080): Catalog Admin's pods only.
   catalogPodLabels:
@@ -289,6 +295,7 @@ mesh:
       - cluster.local/ns/iam/sa/iam-group-mapping
       - cluster.local/ns/iam/sa/iam-tender-acl
       - cluster.local/ns/commercial/sa/commercial-entitlements  # billing.token_addon.* (IAM-8/IAM-11, CD-55)
+      - cluster.local/ns/billing/sa/commercial-billing          # billing.* operator actions (BL-OQ-10, rev 0.34)
     # The gateway's principal when Envoy Gateway is mesh-injected (then set
     # peerAuthentication.apiPortMode: STRICT). Empty: /api/v1/audit/* is
     # allowed only from sources with no mesh principal (the non-injected

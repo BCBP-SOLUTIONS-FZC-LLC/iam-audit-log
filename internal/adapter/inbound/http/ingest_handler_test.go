@@ -44,7 +44,7 @@ func (f *fakeWriter) DirectWriteBatch(_ context.Context, cs []domain.DirectWrite
 func ingestRouter(w DirectWriter, limiter *TenantRateLimiter) *Router {
 	return NewRouter(RouterConfig{
 		GinConfig:    gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"},
-		Ingest:       NewIngestHandler(w),
+		Ingest:       NewIngestHandler(w).WithMaxMetadataBytes(8192),
 		BatchLimiter: limiter,
 	})
 }
@@ -126,8 +126,9 @@ func TestCreateBatch_207PerIndex_D4(t *testing.T) {
 	assert.Equal(t, BatchResultItem{Index: 0, Status: 201, ID: "a"}, resp.Results[0])
 	assert.Equal(t, BatchResultItem{Index: 1, Status: 200, ID: "a"}, resp.Results[1])
 	assert.Equal(t, 422, resp.Results[2].Status)
-	assert.Equal(t, "invalid_actor", resp.Results[2].Code)
+	assert.Equal(t, "INVALID_ACTOR", resp.Results[2].Code, "UPPER_SNAKE like AL-5 (D-27)")
 	assert.Equal(t, 500, resp.Results[3].Status)
+	assert.Equal(t, "INTERNAL_ERROR", resp.Results[3].Code)
 	assert.Equal(t, "e", f.got[0].IdempotencyKey, "each entry uses its own idempotency_key")
 }
 
@@ -233,4 +234,50 @@ func TestCreateEntry_TermsAccepted_CreateReplayAndProducer(t *testing.T) {
 	w = post(t, r, "/api/v1/internal/audit-entries", termsBody("iam-org-membership"), map[string]string{"Idempotency-Key": "other"})
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 	assert.Contains(t, w.Body.String(), `"errorCode":"UNKNOWN_ENTRY_TYPE"`)
+}
+
+// D-26: the AL-6 header is optional; a sent header must still be 1..256 chars.
+func TestCreateBatch_IdempotencyHeaderOptional_D26(t *testing.T) {
+	f := &fakeWriter{batch: []service.BatchResult{{Index: 0, Entry: domain.AuditEntry{ID: "a"}, Created: true}}}
+	r := ingestRouter(f, nil)
+	body := `{"entries":[{"idempotency_key":"e"}]}`
+	assert.Equal(t, http.StatusMultiStatus, post(t, r, "/api/v1/internal/audit-entries:batch", body, nil).Code, "no header")
+	assert.Equal(t, http.StatusMultiStatus, post(t, r, "/api/v1/internal/audit-entries:batch", body, map[string]string{"Idempotency-Key": "b"}).Code)
+	w := post(t, r, "/api/v1/internal/audit-entries:batch", body, map[string]string{"Idempotency-Key": strings.Repeat("k", 257)})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "INVALID_REQUEST")
+}
+
+// D-28: AL-5/AL-6 responses advertise the effective MAX_METADATA_BYTES,
+// including the route's own 400s; a handler without the limit omits it.
+func TestIngest_MaxMetadataBytesHeader_D28(t *testing.T) {
+	f := &fakeWriter{created: true, batch: []service.BatchResult{}}
+	r := ingestRouter(f, nil)
+	for _, w := range []*httptest.ResponseRecorder{
+		post(t, r, "/api/v1/internal/audit-entries", validBody, map[string]string{"Idempotency-Key": "k"}),
+		post(t, r, "/api/v1/internal/audit-entries", validBody, nil), // 400 missing key
+		post(t, r, "/api/v1/internal/audit-entries:batch", `{"entries":[]}`, nil),
+	} {
+		assert.Equal(t, "8192", w.Header().Get(MaxMetadataBytesHeader), w.Code)
+	}
+	bare := NewRouter(RouterConfig{
+		GinConfig: gincommon.Config{Domain: "iam", Environment: "test", ServiceName: "iam-audit-log", BuildVersion: "test"},
+		Ingest:    NewIngestHandler(f),
+	})
+	assert.Empty(t, post(t, bare, "/api/v1/internal/audit-entries", validBody, map[string]string{"Idempotency-Key": "k"}).Header().Get(MaxMetadataBytesHeader))
+}
+
+// D-25: AL-5/AL-6 admit iam-system and commercial-system (x-user-id …00c1 or
+// the literal); any other role is 403 forbidden_peer.
+func TestIngest_CommercialSystemRole_D25(t *testing.T) {
+	f := &fakeWriter{created: true, batch: []service.BatchResult{}}
+	r := ingestRouter(f, nil)
+	for _, uid := range []string{domain.CommercialSystemActorID, "commercial-system"} {
+		h := map[string]string{"x-user-id": uid, "x-tenant-roles": "commercial-system", "Idempotency-Key": "k"}
+		assert.Equal(t, http.StatusCreated, post(t, r, "/api/v1/internal/audit-entries", validBody, h).Code, uid)
+		assert.Equal(t, http.StatusMultiStatus, post(t, r, "/api/v1/internal/audit-entries:batch", `{"entries":[]}`, h).Code, uid)
+	}
+	w := post(t, r, "/api/v1/internal/audit-entries", validBody, map[string]string{"x-tenant-roles": "tenant_admin", "Idempotency-Key": "k"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "FORBIDDEN_PEER")
 }
