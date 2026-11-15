@@ -64,6 +64,7 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ### Changed — platform-events/v2 v2.2.1 (2026-10-22)
 
+- **platform-events v2.2.1 → v2.3.0, platform-gincommon → v2.6.0** (governance decision PA-D34): the outbox oldest-pending-age gauge is now `platform_outbox_oldest_pending_age_seconds`. v2.3.0 emits it alongside the deprecated `platform_outbox_oldest_pending_age` (same value) until the sunset (not before 2026-12-15); gincommon v2.6.0's registry has the new entry and flags the old name as deprecated. `docs/observability/metric-registry.md` regenerated (`make metrics-inventory`).
 - **`platform-events/v2` v2.1.0 → v2.2.1**: handler-initiated dead-letters are settled once — after a successful `SendToDLQ` (handler ctx) the consumer deletes the message whatever the handler returns; a nil return after a *failed* `SendToDLQ` now leaves the message visible for retry (`platform_messages_failed_total{reason="dead_letter_error"}`) instead of deleting it; a message forwarded to the DLQ whose `DeleteMessage` fails is retried 3× and, if still undeleted, its redelivery to the same replica is deleted (12 h memory) instead of being forwarded again. v2.2.1 is the same code released with the go1.26.10 toolchain. This service never calls `SendToDLQ` itself — it relies on `WithDLQForwarding` after its dead-letter handler, which now also gets the delete retry. No code change.
 
 ### Changed — deploy: platform namespace names gateway / observability (2026-10-22)
