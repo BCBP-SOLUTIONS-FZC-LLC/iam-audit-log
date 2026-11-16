@@ -55,7 +55,7 @@ This service holds **no third-party admin-API client** to track in a compatibili
 | Version | Status | Image tag | Notes |
 |---------|--------|-----------|-------|
 | `v0.1.1` (2026-11-16) | **Released, not deployed** | `0.1.1` | First published release: Phases 0–8, the platform-library and observability-standard alignment, and the platform-audit open items (LLD rev 0.34). Same service code as `v0.1.0`, plus the release-pipeline fixes. Helm chart `version` / `appVersion` `0.1.1`. Published with the deploy gate skipped (D-29), so it has not run in any environment and no support window has started |
-| `v0.1.0` (2026-11-16) | **Tag only, never published** | — | Its release run failed in the release scripts: no GitHub release and no signed image. GHCR holds unsigned `0.1.0` images from the failed runs; do not use them. Use `v0.1.1` |
+| `v0.1.0` (2026-11-16) | **Tag only, never published** | — | Its release run failed in the release scripts: no GitHub release and no signed image. The unsigned images those runs pushed were deleted from GHCR (2026-11-16), so there is no `0.1.0` image tag. Use `v0.1.1` |
 | `< v0.1.0` | — | — | No tagged Git releases |
 
 **This service is not yet safe to deploy even once `make ci` is green.** Before enabling the deploy gate (`DEPLOY_GATE_ENABLED`, D-29) or running any `helm install`, complete the deployment prerequisites in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md):
@@ -80,7 +80,7 @@ For a tagged release:
 docker pull ghcr.io/bcbp-solutions-fzc-llc/iam-audit-log:0.1.1
 ```
 
-Tagged release images (`0.1.1` onward) are signed by `release.yml`, and `main`-branch images by `ci.yml` (see CI below), keylessly via Sigstore/Cosign (no long-lived key). The `0.1.0` images in GHCR come from the failed v0.1.0 runs and are unsigned; do not use them. Verify before deploying:
+Tagged release images (`0.1.1` onward) are signed by `release.yml`, and `main`-branch images by `ci.yml` (see CI below), keylessly via Sigstore/Cosign (no long-lived key). Verify before deploying:
 
 ```bash
 # main-branch builds (current: signed by ci.yml's push job)
