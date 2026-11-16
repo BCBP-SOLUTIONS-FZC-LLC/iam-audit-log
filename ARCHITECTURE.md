@@ -888,7 +888,7 @@ There is one Secret per composition root: the server secret never carries the re
 
 ### Migration safety
 
-`cmd/server` runs `000001`…`000011` at startup through `platform-pgcommon/pkg/migrate` on `MIGRATION_DATABASE_URL`. That DSN is direct, not via PgBouncer, because the runner's advisory lock is session-scoped. The migration table is pgcommon's default `pgcommon_migrations` (gap 13). **Release prerequisite (gap 34):** Terraform must grant `audit_migrator` membership in `audit_reconciler`, or `000007`'s `ALTER FUNCTION apply_redaction … OWNER TO audit_reconciler` fails at startup; see `docs/implementation/RELEASE_CHECKLIST.md`. The service has never been released (no tags), which is why label-set changes on unchanged metric names were applied directly (gap 46).
+`cmd/server` runs `000001`…`000011` at startup through `platform-pgcommon/pkg/migrate` on `MIGRATION_DATABASE_URL`. That DSN is direct, not via PgBouncer, because the runner's advisory lock is session-scoped. The migration table is pgcommon's default `pgcommon_migrations` (gap 13). **Release prerequisite (gap 34):** Terraform must grant `audit_migrator` membership in `audit_reconciler`, or `000007`'s `ALTER FUNCTION apply_redaction … OWNER TO audit_reconciler` fails at startup; see `docs/implementation/RELEASE_CHECKLIST.md`. The service had never been released when gap 46 was applied (no tags then, and it has never been deployed), which is why label-set changes on unchanged metric names were applied directly.
 
 ---
 

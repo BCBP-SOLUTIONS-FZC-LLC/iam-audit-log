@@ -45,7 +45,7 @@ This service holds **no third-party admin-API client** to track in a compatibili
 
 ### Guarantees
 
-- **Pre-`v1.0.0` (current status):** per [SemVer §4](https://semver.org/#spec-item-4), anything may change at any time while the major version is `0`. This service has **never been deployed** to any environment (first tag v0.1.0, published with the deploy gate skipped, D-29; no live deployment) and has not yet committed to a stable *service* contract through a tag. That is why, for example, the gap-46 metric relabelling could be applied directly without a compatibility period on unchanged names. The table above still indicates what is *more* disruptive than what within `v0.x`: a MINOR bump is still meant to signal "safer than a MAJOR bump would have been". But a producer or caller should not yet assume `v0.x` compatibility across a MINOR bump the way it could once `v1` ships.
+- **Pre-`v1.0.0` (current status):** per [SemVer §4](https://semver.org/#spec-item-4), anything may change at any time while the major version is `0`. This service has **never been deployed** to any environment (first published release v0.1.1, with the deploy gate skipped, D-29; the earlier `v0.1.0` tag never published; no live deployment) and has not yet committed to a stable *service* contract through a tag. That is why, for example, the gap-46 metric relabelling could be applied directly without a compatibility period on unchanged names. The table above still indicates what is *more* disruptive than what within `v0.x`: a MINOR bump is still meant to signal "safer than a MAJOR bump would have been". But a producer or caller should not yet assume `v0.x` compatibility across a MINOR bump the way it could once `v1` ships.
 - **MAJOR (once `v1` ships):** we avoid breaking changes to the runtime contract within `v1.x`. A breaking change ships as `v2.0.0` with migration notes in the CHANGELOG. Retention tiers never shorten, in any version (AL-INV-6).
 - **MINOR:** safe to redeploy without changing producer topics, caller URLs, or Helm values, unless you opt into a new capability.
 - **PATCH:** drop-in image replacement; upgrade recommended for security fixes (every image is CVE-scanned, see below).
@@ -54,7 +54,8 @@ This service holds **no third-party admin-API client** to track in a compatibili
 
 | Version | Status | Image tag | Notes |
 |---------|--------|-----------|-------|
-| `v0.1.0` (2026-11-16) | **Released, not deployed** | `0.1.0` | First tagged release: Phases 0–8, the platform-library and observability-standard alignment, and the platform-audit open items (LLD rev 0.34). Helm chart `version` / `appVersion` `0.1.0`. Published with the deploy gate skipped (D-29), so it has not run in any environment and no support window has started |
+| `v0.1.1` (2026-11-16) | **Released, not deployed** | `0.1.1` | First published release: Phases 0–8, the platform-library and observability-standard alignment, and the platform-audit open items (LLD rev 0.34). Same service code as `v0.1.0`, plus the release-pipeline fixes. Helm chart `version` / `appVersion` `0.1.1`. Published with the deploy gate skipped (D-29), so it has not run in any environment and no support window has started |
+| `v0.1.0` (2026-11-16) | **Tag only, never published** | — | Its release run failed in the release scripts: no GitHub release and no signed image. GHCR holds unsigned `0.1.0` images from the failed runs; do not use them. Use `v0.1.1` |
 | `< v0.1.0` | — | — | No tagged Git releases |
 
 **This service is not yet safe to deploy even once `make ci` is green.** Before enabling the deploy gate (`DEPLOY_GATE_ENABLED`, D-29) or running any `helm install`, complete the deployment prerequisites in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md):
@@ -73,13 +74,13 @@ This service is **not** consumed via `go get`; do not add this module as a depen
 
 ### Pull and verify the image
 
-Once a tag exists:
+For a tagged release:
 
 ```bash
-docker pull ghcr.io/bcbp-solutions-fzc-llc/iam-audit-log:v0.1.0
+docker pull ghcr.io/bcbp-solutions-fzc-llc/iam-audit-log:0.1.1
 ```
 
-**Today** only `main`-branch images are published (see CI below). Every image pushed from `ci.yml` is signed keylessly via Sigstore/Cosign (no long-lived key). Verify before deploying:
+Tagged release images (`0.1.1` onward) are signed by `release.yml`, and `main`-branch images by `ci.yml` (see CI below), keylessly via Sigstore/Cosign (no long-lived key). The `0.1.0` images in GHCR come from the failed v0.1.0 runs and are unsigned; do not use them. Verify before deploying:
 
 ```bash
 # main-branch builds (current: signed by ci.yml's push job)
@@ -107,18 +108,18 @@ See [README.md § CI](README.md#ci).
 
 | Tag pattern | Produced for | Example (from `v1.2.3`) |
 |-------------|--------------|--------------------------|
-| `vMAJOR.MINOR.PATCH` | Every release | `v1.2.3` |
-| `vMAJOR.MINOR` | Every release | `v1.2` |
-| `vMAJOR` | Every release | `v1` |
+| `MAJOR.MINOR.PATCH` | Every release | `1.2.3` |
+| `MAJOR.MINOR` | Every release | `1.2` |
+| `MAJOR` | Every release | `1` |
 | `latest` | Stable releases only (no pre-release suffix) | `latest` |
 
 Separately, `ci.yml` pushes the image on every merge to `main` with branch and `sha-<short>` tags. Pin production by a **release tag or digest**, not `latest` or an untagged `main` build.
 
 | Pin style | Use when |
 |-----------|----------|
-| `vMAJOR.MINOR.PATCH` | Production; exact reproducibility (recommended; also enables digest verification) |
-| `vMAJOR.MINOR` | Accept PATCH updates automatically |
-| `vMAJOR` | Accept MINOR/PATCH updates automatically; not recommended before `v1.0.0` |
+| `MAJOR.MINOR.PATCH` | Production; exact reproducibility (recommended; also enables digest verification) |
+| `MAJOR.MINOR` | Accept PATCH updates automatically |
+| `MAJOR` | Accept MINOR/PATCH updates automatically; not recommended before `v1.0.0` |
 | `latest` / untagged `main` | Local/dev experiments only; never production |
 
 ### Deploy via Helm
@@ -127,7 +128,7 @@ Separately, `ci.yml` pushes the image on every merge to `main` with branch and `
 helm upgrade iam-audit-log ./deploy/helm \
   --install \
   --namespace iam \
-  --set image.tag=v0.1.0 \
+  --set image.tag=0.1.1 \
   --set secrets.server.existingSecret=iam-audit-log-server-secrets \
   --set secrets.reconciler.existingSecret=iam-audit-log-reconciler-secrets
 ```
@@ -166,9 +167,10 @@ When cutting a tagged release:
 
 5. **Create and push an annotated tag.** This is what triggers `release.yml`:
    ```bash
-   git tag -a v0.1.0 -m "v0.1.0"
-   git push origin v0.1.0
+   git tag -a v0.1.1 -m "v0.1.1"
+   git push origin v0.1.1
    ```
+   Every release job checks out the **tag**, so `.github/scripts/*` run as they were at the tagged commit. A `workflow_dispatch` re-run (`-f tag=…`) picks up a fixed `release.yml` from the branch it is dispatched on, but not fixed scripts: those need a new tag.
 
 6. **The release workflow** (`.github/workflows/release.yml`) runs:
    - **`validate-test` / `validate-quality`:** the same reusable gates `ci.yml` uses, re-run at the exact tagged commit, including the **95% coverage gate** (`.github/scripts/coverage-gate.sh`). Merged coverage is about 96.5%.
@@ -205,7 +207,7 @@ Both match `release.yml`'s `v*` tag trigger and produce a signed, scanned image,
 
 | iam-audit-log | Go (`go.mod`) | Shared platform libraries | Local AWS emulator |
 |---|---|---|---|
-| `v0.1.0` | `1.26.11` | `platform-gincommon/v2` v2.6.0, `platform-events/v2` v2.3.0, `platform-pgcommon/v2` v2.0.2 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
+| `v0.1.0`, `v0.1.1` | `1.26.11` | `platform-gincommon/v2` v2.6.0, `platform-events/v2` v2.3.0, `platform-pgcommon/v2` v2.0.2 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
 
 None of those libraries is re-exported. A consumer of this *service* never needs them as a direct dependency of *this* module: producers and callers depend on the HTTP/event contract, not on any Go package here. Every log, metric and trace goes through platform-gincommon; every database connection, configuration and operation through platform-pgcommon; and every event consumption, SQS setting and dedup through platform-events (BUILD_PLAN gaps 43–45, CI-enforced). A bump of any of the three is therefore a change to review for contract impact, even though it is usually a PATCH. Runtime infrastructure (PostgreSQL 15 on RDS, S3 with Object Lock, SQS/SNS, Glue Schema Registry) is platform-provided and invisible to this matrix.
 
@@ -213,7 +215,7 @@ None of those libraries is re-exported. A consumer of this *service* never needs
 
 | File | Purpose |
 |------|---------|
-| [CHANGELOG.md](./CHANGELOG.md) | User-facing history per version (`[0.1.0]` is the first tagged release) |
+| [CHANGELOG.md](./CHANGELOG.md) | User-facing history per version (`[0.1.0]` is the first tag; `[0.1.1]` the first published release) |
 | [README.md](./README.md) | Mental model, API overview, integration, local dev, CI/CD summary |
 | [CONTRIBUTING.md](./CONTRIBUTING.md#deployment) | Deployment pipeline as it exists today (`ci.yml` / `release.yml`) |
 | [docs/lld/iam-lld-audit-log-service.md](./docs/lld/iam-lld-audit-log-service.md) | The runtime contract in full: §5 API, §7 events and taxonomy, §12 configuration, §16 open-question register, §17 error taxonomy, §25 name inventory |

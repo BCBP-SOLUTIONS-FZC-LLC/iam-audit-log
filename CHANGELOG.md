@@ -4,6 +4,10 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-16
+
+First published release. Same service code as `0.1.0`; only the release pipeline changed. The `v0.1.0` tag never produced a GitHub release or a signed image, because its release scripts were broken and every release job runs the scripts checked out at the tag. **Not deployed** (D-29): this release ships a signed, scanned image and Helm chart `0.1.1` only.
+
 ### Fixed — release pipeline: provenance export, release notes, image revision (2026-11-16)
 
 - `export-image-provenance.sh` reads the BuildKit-native SLSA provenance with `docker buildx imagetools inspect`, as iam-authz-enrichment does. `cosign download attestation` only finds attestations made by `cosign attest`, so the v0.1.0 re-run failed with "found no attestations".
@@ -12,11 +16,11 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ### Fixed — release pipeline: reusable validate jobs get secrets (2026-11-16)
 
-- `release.yml` now passes `secrets: inherit` to `validate-test.yml` and `validate-quality.yml`, as `ci.yml` does. Without it `GO_PRIVATE_TOKEN` was empty inside the reusable workflow, so the v0.1.0 tag run failed installing `platform-schemagov`. The v0.1.0 release is re-run via `workflow_dispatch` with `tag: v0.1.0`.
+- `release.yml` now passes `secrets: inherit` to `validate-test.yml` and `validate-quality.yml`, as `ci.yml` does. Without it `GO_PRIVATE_TOKEN` was empty inside the reusable workflow, so the v0.1.0 tag run failed installing `platform-schemagov`. The v0.1.0 run was then re-run via `workflow_dispatch` (`tag: v0.1.0`) and failed in the release scripts fixed above.
 
 ## [0.1.0] - 2026-11-16
 
-First tagged release. **Not deployed:** the release pipeline's deploy gate is opt-in (D-29) and no cluster is configured yet, so this tag ships a signed, scanned image and Helm chart `0.1.0` only. Before a first deployment, complete `docs/implementation/RELEASE_CHECKLIST.md` (Terraform roles incl. gap 34, Object Lock bucket, Istio, KMS ARN, `iam` namespace).
+First tagged release. **Tag only, never published:** its release run failed in the pipeline's own scripts (fixed in `0.1.1`), so there is no GitHub release or signed image for `0.1.0`; use `0.1.1`. The deploy gate is opt-in (D-29) and no cluster is configured yet. Before a first deployment, complete `docs/implementation/RELEASE_CHECKLIST.md` (Terraform roles incl. gap 34, Object Lock bucket, Istio, KMS ARN, `iam` namespace).
 
 What it is: the platform's audit system of record, built through Phases 0–8 (LLD rev 0.34).
 - **Ingest:** 12 SQS audit queues and the mesh-only direct-write API (AL-5/AL-6).
