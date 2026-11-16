@@ -136,6 +136,10 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6.2.0
         with:
+          # context: git reads the revision from the checked-out tag. The
+          # default (workflow context) uses github.sha, which on a
+          # workflow_dispatch re-run is main's HEAD, not the tag's commit.
+          context: git
           images: ${{ env.IMAGE_NAME }}
           # Produces: vMAJOR.MINOR.PATCH, vMAJOR.MINOR, vMAJOR (non-pre-releases).
           # Also tags 'latest' for stable releases (no pre-release suffix).
