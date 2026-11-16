@@ -4,6 +4,30 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-16
+
+First tagged release. **Not deployed:** the release pipeline's deploy gate is opt-in (D-29) and no cluster is configured yet, so this tag ships a signed, scanned image and Helm chart `0.1.0` only. Before a first deployment, complete `docs/implementation/RELEASE_CHECKLIST.md` (Terraform roles incl. gap 34, Object Lock bucket, Istio, KMS ARN, `iam` namespace).
+
+What it is: the platform's audit system of record, built through Phases 0–8 (LLD rev 0.34).
+- **Ingest:** 12 SQS audit queues and the mesh-only direct-write API (AL-5/AL-6).
+- **Query and export:** tenant-admin query and export (AL-1..AL-4), plus the compliance read AL-7.
+- **Reconciler:** archive to S3 with Object Lock, partition drop gated on verified archives, GDPR redaction.
+- **Taxonomy:** 100 entry types, published as `api/taxonomy.json`.
+
+Contract notes for callers, from the latest changes below:
+- AL-5/AL-6 also accept the `commercial-system` role.
+- The AL-6 `Idempotency-Key` header is optional.
+- AL-6 per-entry codes are UPPER_SNAKE.
+- Responses carry `X-Max-Metadata-Bytes`.
+
+### Changed — release pipeline: opt-in deploy gate (D-29) (2026-11-16)
+
+- `release.yml`'s `deploy-gate` runs only when the repository variable `DEPLOY_GATE_ENABLED` is `true`, as in iam-realm-provisioner. `publish` accepts a skipped gate, so a tag releases the signed image without a cluster; a gate that runs and fails still blocks the release. Helm chart `appVersion` `"1.0.0"` → `"0.1.0"`.
+
+### Changed — platform-events/v2 v2.3.0, platform-gincommon/v2 v2.6.0 (2026-11-16)
+
+- **platform-events v2.2.1 → v2.3.0, platform-gincommon → v2.6.0** (governance decision PA-D34): the outbox oldest-pending-age gauge is now `platform_outbox_oldest_pending_age_seconds`. v2.3.0 emits it alongside the deprecated `platform_outbox_oldest_pending_age` (same value) until the sunset (not before 2026-12-15); gincommon v2.6.0's registry has the new entry and flags the old name as deprecated. `docs/observability/metric-registry.md` regenerated (`make metrics-inventory`).
+
 ### Fixed — documentation consistency with D-25..D-28 and the code (2026-11-15)
 
 - **New `.claude/agents/docs-consistency-reviewer.md`:** a read-only agent that checks the docs a diff touches, or should have touched, against the code and the other docs. Its first run on this PR found the fixes below.
@@ -99,7 +123,6 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ### Changed — platform-events/v2 v2.2.1 (2026-10-22)
 
-- **platform-events v2.2.1 → v2.3.0, platform-gincommon → v2.6.0** (governance decision PA-D34): the outbox oldest-pending-age gauge is now `platform_outbox_oldest_pending_age_seconds`. v2.3.0 emits it alongside the deprecated `platform_outbox_oldest_pending_age` (same value) until the sunset (not before 2026-12-15); gincommon v2.6.0's registry has the new entry and flags the old name as deprecated. `docs/observability/metric-registry.md` regenerated (`make metrics-inventory`).
 - **`platform-events/v2` v2.1.0 → v2.2.1**: handler-initiated dead-letters are settled once — after a successful `SendToDLQ` (handler ctx) the consumer deletes the message whatever the handler returns; a nil return after a *failed* `SendToDLQ` now leaves the message visible for retry (`platform_messages_failed_total{reason="dead_letter_error"}`) instead of deleting it; a message forwarded to the DLQ whose `DeleteMessage` fails is retried 3× and, if still undeleted, its redelivery to the same replica is deleted (12 h memory) instead of being forwarded again. v2.2.1 is the same code released with the go1.26.10 toolchain. This service never calls `SendToDLQ` itself — it relies on `WithDLQForwarding` after its dead-letter handler, which now also gets the delete retry. No code change.
 
 ### Changed — deploy: platform namespace names gateway / observability (2026-10-22)
