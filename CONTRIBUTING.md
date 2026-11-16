@@ -2,11 +2,11 @@
 
 This is an internal IAM microservice for the XpertPMS platform: the platform's compliance system of record. This guide covers development setup, how to extend the service, test requirements, and the PR process for `iam-audit-log`.
 
-The LLD (`docs/lld/iam-lld-audit-log-service.md`) is the single source of truth. In the PR, cite the section or ID you implement (AL-INV-\*, AL-EVT-\*, AL-D\*, AL-1..AL-7, D-n). Do not diverge from the LLD in code; raise a spec gap in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) §C instead (decisions D-1..D-28, gaps 1–46).
+The LLD (`docs/lld/iam-lld-audit-log-service.md`) is the single source of truth. In the PR, cite the section or ID you implement (AL-INV-\*, AL-EVT-\*, AL-D\*, AL-1..AL-7, D-n). Do not diverge from the LLD in code; raise a spec gap in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) §C instead (decisions D-1..D-29, gaps 1–46).
 
 ## Prerequisites
 
-- Go 1.26.10+ (matches `go.mod`)
+- Go 1.26.11+ (matches `go.mod`)
 - Docker (required for the PostgreSQL 15 + floci integration tests via `testcontainers-go`)
 - `golangci-lint` and `swag` are managed as Go tools (`go tool golangci-lint`, `go tool swag`), so no separate install is needed
 - `GOPRIVATE=github.com/BCBP-SOLUTIONS-FZC-LLC/*` (private module access; also `GONOSUMDB` for the same prefix)
@@ -286,7 +286,7 @@ docs: update the Environment variables table for OPS_STATS_INTERVAL
 
 ## Deployment
 
-This service is deployed as a containerised microservice: 3 replicas by default, and an optional HPA (`autoscaling.enabled`, 3–6 replicas on CPU 70% / memory 80%, plus opt-in RPS and audit-queue-depth metrics via `deploy/monitoring/prometheus-adapter-rule.yaml`). Releases go through the CI/CD pipeline:
+This service deploys as a containerised microservice: 3 replicas by default, and an optional HPA (`autoscaling.enabled`, 3–6 replicas on CPU 70% / memory 80%, plus opt-in RPS and audit-queue-depth metrics via `deploy/monitoring/prometheus-adapter-rule.yaml`). Releases go through the CI/CD pipeline:
 
 **On push / PR (`ci.yml`):**
 1. `validate-test` (race detector + the 95% coverage gate, go-arch-lint, swagger drift) and `validate-quality` (fmt/tidy/vet/lint/vuln/mod-verify plus every invariant script) run in parallel.
@@ -294,6 +294,6 @@ This service is deployed as a containerised microservice: 3 replicas by default,
 3. The Trivy CVE scan and smoke tests (`smoke-tests.sh`, once per binary) run, gated on `validate-test` + `build-image`.
 4. `pr-summary` posts the results on PRs; on `main` the image is pushed.
 
-**On a `v*` tag (`release.yml`):** validate → build (CHANGELOG gate) → docker (CVE scan + CycloneDX SBOM + provenance + Cosign signing) → `deploy-gate` (under the `production-data-migrations` environment, since the server self-migrates the `audit` DB at startup) → publish (GitHub Release with the SBOM and SLSA provenance).
+**On a `v*` tag (`release.yml`):** validate → build (CHANGELOG gate) → docker (CVE scan + CycloneDX SBOM + provenance + Cosign signing) → `deploy-gate` (opt-in via `vars.DEPLOY_GATE_ENABLED`, D-29; when enabled it runs under the `production-data-migrations` environment, since the server self-migrates the `audit` DB at startup) → publish (GitHub Release with the SBOM and SLSA provenance; also runs when the gate is skipped).
 
 The Helm chart in `deploy/helm/` renders one Deployment plus the 4 CronJobs, all from the same image (`command: ["/iam-audit-log-reconciler"]`, `args: ["--job=<name>"]`). Before the first AWS deploy, complete [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md): the Terraform role membership for migration `000007`, the bucket settings, the `iam` namespace and CronJob-failure alerting. Notify the platform team if a migration or breaking env-var change needs a coordinated rollout.

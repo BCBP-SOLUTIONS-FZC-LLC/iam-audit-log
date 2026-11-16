@@ -1052,7 +1052,7 @@ graph LR
 | [`.claude/operations.md`](.claude/operations.md) | Configuration, CronJobs, metrics and alerts, local dev, troubleshooting |
 | [`docs/architecture/README.md`](docs/architecture/README.md) | Standalone Mermaid diagram index (the 14 `.mmd` files embedded above) |
 | [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | Full LLD (rev 0.34): §16 open questions, §17 error taxonomy, §22 decision register, §25 name inventory |
-| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → enforcement → test map, decisions D-1..D-28, gaps 1–46 |
+| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → enforcement → test map, decisions D-1..D-29, gaps 1–46 |
 | [`docs/observability/`](docs/observability/README.md) | Observability standard as implemented, generated metric inventory, migration, per-alert runbooks |
 | [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites outside this repo (Terraform role grant, bucket, namespace, CronJob alerting) |
 | [`docs/runbook.md`](docs/runbook.md) | RB-1..RB-10 operational runbooks |

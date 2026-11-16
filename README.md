@@ -4,9 +4,9 @@ The Audit Log Service is the **compliance system of record** for the Tender Mana
 
 **Repository:** `github.com/BCBP-SOLUTIONS-FZC-LLC/iam-audit-log`
 **Module:** Go 1.26.11 · private module · deployed as two binaries from one image (`cmd/server`, `cmd/reconciler`)
-**Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.34** (as-built through Phase 8, the platform-library / observability-standard alignment, production-readiness hardening, Commercial Phase 1 taxonomy additions IAM-7/IAM-8/IAM-11, and the platform-audit open items D-25..D-28). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-28) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
+**Design:** Refines the IAM HLD (§5.7 charter, §6.6 plan-gated query window, §9.1/§9.4 topology and event catalogue, §13 retention/GDPR). The LLD is `docs/lld/iam-lld-audit-log-service.md`; it is at **rev 0.34** (as-built through Phase 8, the platform-library / observability-standard alignment, production-readiness hardening, Commercial Phase 1 taxonomy additions IAM-7/IAM-8/IAM-11, and the platform-audit open items D-25..D-28). Where the LLD and HLD disagree, the HLD is authoritative. Build decisions (D-1..D-29) and the spec-gap register (gaps 1–46) are in [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md). Phases 0–8 are implemented.
 
-**Status:** shared libraries at their latest releases (platform-gincommon/v2 v2.1.0, platform-events/v2 v2.2.1, platform-pgcommon/v2 v2.0.2); merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
+**Status:** **v0.1.0** released 2026-11-16 (signed image and chart; not yet deployed: the release deploy gate is opt-in, D-29). Shared libraries: platform-gincommon/v2 v2.6.0, platform-events/v2 v2.3.0, platform-pgcommon/v2 v2.0.2; merged test coverage **96.5%** (gate 95%); deployment prerequisites outside this repo (Terraform roles, Istio, the KMS key ARN, the Object Lock bucket) are tracked in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md).
 ---
 
 ## Mental model
@@ -179,7 +179,7 @@ iam-audit-log/
 ├── api/asyncapi.yaml                  # 12 consumed channels, receive-only
 ├── docs/
 │   ├── lld/                           # The spec: §17 error taxonomy, §16 open questions, §22 decisions
-│   ├── implementation/                # BUILD_PLAN.md (phases, D-1..D-28, gaps), RELEASE_CHECKLIST.md
+│   ├── implementation/                # BUILD_PLAN.md (phases, D-1..D-29, gaps), RELEASE_CHECKLIST.md
 │   ├── architecture/                  # Mermaid diagrams
 │   ├── swagger/                       # Generated REST contract (make swag)
 │   ├── observability/                 # Observability standard here, generated metric inventory, migration, per-alert runbooks
@@ -227,9 +227,9 @@ iam-audit-log/
 
 | Library | Version | Purpose | Confinement rule (CI) |
 |---|---|---|---|
-| `platform-gincommon` | v1.6.0 | HTTP middleware, Zap logger, tracing API (`InitTracingWithConfig`, `NewSpanTracer`, `SpanTraceID`), the Prometheus registry, `MetricsHandler`, registry-built `NewShared*Vec` and validating Tier-3 constructors | **All logs, metrics and traces go through gincommon only**. Nothing imports OpenTelemetry or promhttp (gap 43, `check-observability-confinement.sh`). |
-| `platform-pgcommon/v2` | v2.0.1 | pgx/v5 pools, `ConfigFromEnv`, GUC injection, transactions, error classification, migrations | **Every DB connection, config value and operation goes through pgcommon only** (gap 44, `arch-lint.sh`) |
-| `platform-events/v2` | v2.2.1 | SQS consumer, envelope, `config.LoadSQS`, dedup | **Events, SQS config and dedup go through platform-events only**, with no publisher or outbox APIs (gap 45, `check-forbidden-events-bypass.sh`, `check-outbox-access.sh`) |
+| `platform-gincommon/v2` | v2.6.0 | HTTP middleware, Zap logger, tracing API (`InitTracingWithConfig`, `NewSpanTracer`, `SpanTraceID`), the Prometheus registry, `MetricsHandler`, registry-built `NewShared*Vec` and validating Tier-3 constructors | **All logs, metrics and traces go through gincommon only**. Nothing imports OpenTelemetry or promhttp (gap 43, `check-observability-confinement.sh`). |
+| `platform-pgcommon/v2` | v2.0.2 | pgx/v5 pools, `ConfigFromEnv`, GUC injection, transactions, error classification, migrations | **Every DB connection, config value and operation goes through pgcommon only** (gap 44, `arch-lint.sh`) |
+| `platform-events/v2` | v2.3.0 | SQS consumer, envelope, `config.LoadSQS`, dedup | **Events, SQS config and dedup go through platform-events only**, with no publisher or outbox APIs (gap 45, `check-forbidden-events-bypass.sh`, `check-outbox-access.sh`) |
 
 ---
 
@@ -919,7 +919,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, extending the taxo
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Detailed architecture narrative |
 | [`docs/architecture/`](docs/architecture/README.md) | Mermaid diagrams |
 | [`docs/lld/iam-lld-audit-log-service.md`](docs/lld/iam-lld-audit-log-service.md) | The LLD: §5 API, §7 events, §11 observability, §17 error taxonomy, §22 decisions |
-| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → test map, D-1..D-28, gaps |
+| [`docs/implementation/BUILD_PLAN.md`](docs/implementation/BUILD_PLAN.md) | Phase plan, invariant → test map, D-1..D-29, gaps |
 | [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites outside this repo |
 | [`docs/runbook.md`](docs/runbook.md) | RB-1..RB-10 |
 | [`docs/observability/`](docs/observability/README.md) | Observability standard as implemented here, metric inventory, migration, per-alert runbooks |

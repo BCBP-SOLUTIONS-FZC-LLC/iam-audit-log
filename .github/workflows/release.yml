@@ -1,5 +1,5 @@
 # Triggered by version tags (e.g. v1.0.0 or v1.1.0-rc.1).
-# Pipeline: validate → build (CHANGELOG gate) → docker (CVE scan + SBOM) → deploy-gate → publish
+# Pipeline: validate → build (CHANGELOG gate) → docker (CVE scan + SBOM) → deploy-gate (opt-in: vars.DEPLOY_GATE_ENABLED, D-29) → publish
 #
 # Mirrors iam-org-membership's release.yml, with the service-specific deltas:
 #   - TWO binaries ship (iam-audit-log-server + iam-audit-log-reconciler), so
@@ -239,18 +239,24 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${{ env.IMAGE_NAME }}@${{ steps.pushed.outputs.digest }}"
 
-  # Post-deploy health gate — always runs; requires KUBECONFIG_B64 secret to be set.
+  # Post-deploy health gate — opt-in (vars.DEPLOY_GATE_ENABLED == 'true', D-29); when enabled it requires the KUBECONFIG_B64 secret.
   # Deploys the image with Helm, waits for rollout, verifies the deployed digest
   # matches what was pushed, then checks the error rate for 2 minutes.
   # On failure, automatically rolls back and fails the release.
   # Requires: KUBECONFIG_B64 secret, K8S_NAMESPACE var (optional), PROMETHEUS_URL var (optional).
-  # If KUBECONFIG_B64 is not configured this job fails immediately — set it before tagging releases.
+  # When enabled and KUBECONFIG_B64 is not configured, this job fails immediately.
   deploy-gate:
     name: Post-deploy health gate
     runs-on: ubuntu-latest
     needs: [build, docker]
+    # Opt-in (D-29), as in iam-realm-provisioner: runs only when the
+    # repository variable DEPLOY_GATE_ENABLED is 'true'. Unset → skipped, and
+    # publish still releases the signed image with no deployment. `secrets`
+    # can't be read in a job-level `if:`, hence the `vars` toggle; the
+    # in-job KUBECONFIG_B64 check below stays as the second safety net.
     # `audit` DB migrations require the stricter manual-approval environment
     # (LLD §4.4/§19, HLD §15.6) — the server migrates on start.
+    if: vars.DEPLOY_GATE_ENABLED == 'true'
     environment: production-data-migrations
     steps:
       - name: Checkout
@@ -346,10 +352,14 @@ jobs:
   publish:
     name: GitHub Release
     runs-on: ubuntu-latest
-    # deploy-gate must succeed — a skipped gate means the release was never
-    # deployed to production and downstream consumers must not pin the tag.
+    # deploy-gate must succeed OR be skipped (DEPLOY_GATE_ENABLED unset: no
+    # cluster configured yet, D-29). A gate that ran and failed (health check,
+    # digest verification) still blocks publish. A release published with a
+    # skipped gate was not deployed anywhere.
     needs: [build, docker, deploy-gate]
-    if: needs.build.result == 'success' && needs.docker.result == 'success' && needs.deploy-gate.result == 'success'
+    # !cancelled(): without a status function GitHub adds an implicit
+    # success(), which skips this job whenever deploy-gate was skipped.
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.docker.result == 'success' && (needs.deploy-gate.result == 'success' || needs.deploy-gate.result == 'skipped') }}
     permissions:
       contents: write
     steps:

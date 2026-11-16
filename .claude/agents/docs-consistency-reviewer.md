@@ -60,7 +60,7 @@ Where the LLD and a BUILD_PLAN decision disagree, the decision is the implemente
    - the roles each internal route accepts;
    - what `[Unreleased]` holds;
    - the open items in RELEASE_CHECKLIST.
-4. **Shipped vs unreleased.** Check VERSIONING.md and the CHANGELOG for the current release state. Today the service has no Git tag and has never been deployed. A document must not:
+4. **Shipped vs unreleased.** Check VERSIONING.md and the CHANGELOG for the current release state. Today the service's only tag is `v0.1.0` (published with the deploy gate skipped, D-29), and it has never been deployed. A document must not:
    - describe a release, tag, image or deployment that does not exist;
    - call something "pending" that the CHANGELOG or BUILD_PLAN already records as done;
    - say "deployed" or "in production" of anything.

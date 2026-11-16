@@ -45,7 +45,7 @@ This service holds **no third-party admin-API client** to track in a compatibili
 
 ### Guarantees
 
-- **Pre-`v1.0.0` (current status):** per [SemVer §4](https://semver.org/#spec-item-4), anything may change at any time while the major version is `0`. This service has **never been deployed** to any environment (no Git tag, no live deployment) and has not yet committed to a stable *service* contract through a tag. That is why, for example, the gap-46 metric relabelling could be applied directly without a compatibility period on unchanged names. The table above still indicates what is *more* disruptive than what within `v0.x`: a MINOR bump is still meant to signal "safer than a MAJOR bump would have been". But a producer or caller should not yet assume `v0.x` compatibility across a MINOR bump the way it could once `v1` ships.
+- **Pre-`v1.0.0` (current status):** per [SemVer §4](https://semver.org/#spec-item-4), anything may change at any time while the major version is `0`. This service has **never been deployed** to any environment (first tag v0.1.0, published with the deploy gate skipped, D-29; no live deployment) and has not yet committed to a stable *service* contract through a tag. That is why, for example, the gap-46 metric relabelling could be applied directly without a compatibility period on unchanged names. The table above still indicates what is *more* disruptive than what within `v0.x`: a MINOR bump is still meant to signal "safer than a MAJOR bump would have been". But a producer or caller should not yet assume `v0.x` compatibility across a MINOR bump the way it could once `v1` ships.
 - **MAJOR (once `v1` ships):** we avoid breaking changes to the runtime contract within `v1.x`. A breaking change ships as `v2.0.0` with migration notes in the CHANGELOG. Retention tiers never shorten, in any version (AL-INV-6).
 - **MINOR:** safe to redeploy without changing producer topics, caller URLs, or Helm values, unless you opt into a new capability.
 - **PATCH:** drop-in image replacement; upgrade recommended for security fixes (every image is CVE-scanned, see below).
@@ -54,10 +54,10 @@ This service holds **no third-party admin-API client** to track in a compatibili
 
 | Version | Status | Image tag | Notes |
 |---------|--------|-----------|-------|
-| *(none tagged)* | **Unreleased** | — | [CHANGELOG.md](CHANGELOG.md) is entirely `[Unreleased]` (Phases 0–8 plus the platform-library and observability-standard alignment). The Helm chart `version` is `0.1.0` and `appVersion` is `"1.0.0"`. Bump both in lockstep with the first Git tag, and set `appVersion` to the tagged version: do not treat the current `appVersion` as a published release. No live deployment yet, so no support window has started |
+| `v0.1.0` (2026-11-16) | **Released, not deployed** | `0.1.0` | First tagged release: Phases 0–8, the platform-library and observability-standard alignment, and the platform-audit open items (LLD rev 0.34). Helm chart `version` / `appVersion` `0.1.0`. Published with the deploy gate skipped (D-29), so it has not run in any environment and no support window has started |
 | `< v0.1.0` | — | — | No tagged Git releases |
 
-**This service is not yet safe to release even once `make ci` is green.** First complete the deployment prerequisites in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md):
+**This service is not yet safe to deploy even once `make ci` is green.** Before enabling the deploy gate (`DEPLOY_GATE_ENABLED`, D-29) or running any `helm install`, complete the deployment prerequisites in [`docs/implementation/RELEASE_CHECKLIST.md`](docs/implementation/RELEASE_CHECKLIST.md):
 - Terraform grants `audit_migrator` membership in `audit_reconciler`; without it, migration `000007` fails at startup (gap 34);
 - the archive bucket has no default Object Lock retention, and has an `exports/` lifecycle expiry (gap 30);
 - the service is deployed in the `iam` namespace, so the CAT-I2 poller can reach Catalog;
@@ -134,7 +134,7 @@ helm upgrade iam-audit-log ./deploy/helm \
 
 `image.tag` (`deploy/helm/values.yaml`) falls back to the chart's own `appVersion` (`Chart.yaml`) when unset. Chart `version`/`appVersion` are bumped manually alongside the Git tag (see the maintainer process below); no workflow derives them from the tag today. **Each composition root has its own Secret** (implementation rule 5): the server's never contains `RECONCILER_DATABASE_URL`, and the reconciler's never contains `DATABASE_URL`. `test/unit/deploy_contract_test.go` enforces this.
 
-The chart deploys **one** `Deployment` (`iam-audit-log`: the HTTP API on both route prefixes, the 11-queue consumer fleet, the CAT-I2 plan poller, the export worker and the ops monitor) plus **4** `CronJob`s:
+The chart deploys **one** `Deployment` (`iam-audit-log`: the HTTP API on both route prefixes, the 12-queue consumer fleet, the CAT-I2 plan poller, the export worker and the ops monitor) plus **4** `CronJob`s:
 
 | CronJob | Schedule |
 |---|---|
@@ -147,11 +147,11 @@ All run from the same image, which carries both the `iam-audit-log-server` (`ENT
 
 ## Maintainer release process
 
-`.github/workflows/release.yml` implements the validate → build → docker (CVE scan/sign) → **deploy-gate** → publish pipeline, modeled on the IAM siblings. Know before you tag that **the deploy-gate here is not optional**: the job fails immediately if the `KUBECONFIG_B64` secret isn't set, and the final `publish` job (the one that creates the GitHub Release) requires `deploy-gate` to have *succeeded*, not merely run. It runs under the **`production-data-migrations`** environment, because the server self-migrates the `audit` DB at startup (LLD §4.4), so a deploy **is** a migration. In practice, you cannot complete a tagged release of this service without a real cluster to deploy to.
+`.github/workflows/release.yml` implements the validate → build → docker (CVE scan/sign) → **deploy-gate** → publish pipeline, modeled on the IAM siblings. **The deploy-gate is opt-in (D-29, as in iam-realm-provisioner):** it runs only when the repository variable `DEPLOY_GATE_ENABLED` is `true`. Unset, it is skipped and `publish` still creates the GitHub Release, so the tag ships a signed image that has run nowhere. Enabled, it fails immediately without the `KUBECONFIG_B64` secret, and it runs under the **`production-data-migrations`** environment, because the server self-migrates the `audit` DB at startup (LLD §4.4), so a deploy **is** a migration. A gate that runs and fails still blocks `publish`. Set `DEPLOY_GATE_ENABLED=true` (with the secret and the environment) once a cluster exists.
 
 When cutting a tagged release:
 
-1. **Merge** all changes for the release to `main`. Confirm the deployment prerequisites in the Supported releases section above are met in the target environment before proceeding. Tagging over them ships a build whose first migration will fail.
+1. **Merge** all changes for the release to `main`. If `DEPLOY_GATE_ENABLED` is `true`, first confirm the deployment prerequisites in the Supported releases section above are met in the target environment: a gated release deploys, and its first migration fails without them.
 
 2. **Update `CHANGELOG.md`:** move `[Unreleased]` entries into a new `## [X.Y.Z] - YYYY-MM-DD` section. `release.yml`'s `build` job runs `.github/scripts/verify-changelog-entry.sh`, which fails the release if this section is missing, so cut it *before* tagging.
 
@@ -177,12 +177,12 @@ When cutting a tagged release:
      - cross-compiles **both** binaries, `server` (`./cmd/server`) and `reconciler` (`./cmd/reconciler`), for 5 platforms (linux/darwin amd64+arm64, windows amd64) with `prepare-release-binary.sh`.
      The cross-platform binaries are a convenience for non-Docker runs; the primary distribution artifact is the container image.
    - **`docker`:** builds and pushes the semver-tagged image (see the tag scheme above), CVE-scans it (the release fails on CRITICAL/HIGH), generates a CycloneDX SBOM and SLSA provenance, signs with Cosign, then verifies the signature.
-   - **`deploy-gate`** (requires `KUBECONFIG_B64`; **not skippable**, runs under `production-data-migrations`):
+   - **`deploy-gate`** (only when `vars.DEPLOY_GATE_ENABLED == 'true'`; then requires `KUBECONFIG_B64` and runs under `production-data-migrations`):
      - a live `helm upgrade --install --wait --atomic` with the per-root existing Secrets;
      - deployed-digest verification against what was pushed, then `kubectl rollout status`;
      - a Prometheus-backed error-rate check (`platform_http_requests_total{status_class="5xx"}`, this service's own platform-gincommon HTTP metric) that auto-rolls back via `helm rollback` on failure.
      The error-rate check is skipped (not failed) if `PROMETHEUS_URL` isn't set, but the job as a whole still requires `KUBECONFIG_B64`.
-   - **`publish`:** creates the GitHub Release with the CHANGELOG section as notes, plus the binaries, checksums, SBOM and provenance. Runs only if `build`, `docker` **and** `deploy-gate` all succeeded.
+   - **`publish`:** creates the GitHub Release with the CHANGELOG section as notes, plus the binaries, checksums, SBOM and provenance. Runs only if `build` and `docker` succeeded and `deploy-gate` succeeded **or was skipped**.
 
 7. **Notify dependants** with upgrade notes if the release is MINOR or MAJOR:
    - the direct-write callers (Realm Provisioner, Catalog / Admin Config, Group Mapping, Tender ACL, Org & Membership);
@@ -205,7 +205,7 @@ Both match `release.yml`'s `v*` tag trigger and produce a signed, scanned image,
 
 | iam-audit-log | Go (`go.mod`) | Shared platform libraries | Local AWS emulator |
 |---|---|---|---|
-| Unreleased (`main`) | `1.26.10` | `platform-gincommon/v2` v2.1.0, `platform-events/v2` v2.2.1, `platform-pgcommon/v2` v2.0.2 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
+| `v0.1.0` | `1.26.11` | `platform-gincommon/v2` v2.6.0, `platform-events/v2` v2.3.0, `platform-pgcommon/v2` v2.0.2 | `floci/floci:2.1.0-compat` (Object Lock behavior pinned by `TestReconciler_FlociObjectLockSupport`, gap 16) |
 
 None of those libraries is re-exported. A consumer of this *service* never needs them as a direct dependency of *this* module: producers and callers depend on the HTTP/event contract, not on any Go package here. Every log, metric and trace goes through platform-gincommon; every database connection, configuration and operation through platform-pgcommon; and every event consumption, SQS setting and dedup through platform-events (BUILD_PLAN gaps 43–45, CI-enforced). A bump of any of the three is therefore a change to review for contract impact, even though it is usually a PATCH. Runtime infrastructure (PostgreSQL 15 on RDS, S3 with Object Lock, SQS/SNS, Glue Schema Registry) is platform-provided and invisible to this matrix.
 
@@ -213,12 +213,12 @@ None of those libraries is re-exported. A consumer of this *service* never needs
 
 | File | Purpose |
 |------|---------|
-| [CHANGELOG.md](./CHANGELOG.md) | User-facing history per version; currently entirely `[Unreleased]` |
+| [CHANGELOG.md](./CHANGELOG.md) | User-facing history per version (`[0.1.0]` is the first tagged release) |
 | [README.md](./README.md) | Mental model, API overview, integration, local dev, CI/CD summary |
 | [CONTRIBUTING.md](./CONTRIBUTING.md#deployment) | Deployment pipeline as it exists today (`ci.yml` / `release.yml`) |
 | [docs/lld/iam-lld-audit-log-service.md](./docs/lld/iam-lld-audit-log-service.md) | The runtime contract in full: §5 API, §7 events and taxonomy, §12 configuration, §16 open-question register, §17 error taxonomy, §25 name inventory |
-| [docs/implementation/BUILD_PLAN.md](./docs/implementation/BUILD_PLAN.md) | Build decisions D-1..D-28 and the spec-gap register (gaps 1–46) |
-| [docs/implementation/RELEASE_CHECKLIST.md](./docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites that must be met before the first tagged release |
+| [docs/implementation/BUILD_PLAN.md](./docs/implementation/BUILD_PLAN.md) | Build decisions D-1..D-29 and the spec-gap register (gaps 1–46) |
+| [docs/implementation/RELEASE_CHECKLIST.md](./docs/implementation/RELEASE_CHECKLIST.md) | Deployment prerequisites that must be met before the first deployment |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | Layer model, flows, key invariants, threat model |
 | [deploy/monitoring/metric-registry.yaml](./deploy/monitoring/metric-registry.yaml) | The metric contract: tiers, label vocabulary, deprecations with replacement and sunset |
 | [.github/workflows/ci.yml](./.github/workflows/ci.yml) | Current image build / Trivy / Cosign-on-`main` pipeline |
