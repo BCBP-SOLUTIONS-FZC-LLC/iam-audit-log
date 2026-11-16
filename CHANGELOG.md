@@ -4,6 +4,10 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — release pipeline: reusable validate jobs get secrets (2026-11-16)
+
+- `release.yml` now passes `secrets: inherit` to `validate-test.yml` and `validate-quality.yml`, as `ci.yml` does. Without it `GO_PRIVATE_TOKEN` was empty inside the reusable workflow, so the v0.1.0 tag run failed installing `platform-schemagov`. The v0.1.0 release is re-run via `workflow_dispatch` with `tag: v0.1.0`.
+
 ## [0.1.0] - 2026-11-16
 
 First tagged release. **Not deployed:** the release pipeline's deploy gate is opt-in (D-29) and no cluster is configured yet, so this tag ships a signed, scanned image and Helm chart `0.1.0` only. Before a first deployment, complete `docs/implementation/RELEASE_CHECKLIST.md` (Terraform roles incl. gap 34, Object Lock bucket, Istio, KMS ARN, `iam` namespace).

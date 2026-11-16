@@ -46,12 +46,14 @@ jobs:
     uses: ./.github/workflows/validate-test.yml
     with:
       ref: ${{ github.event.inputs.tag || github.ref }}
+    secrets: inherit
 
   validate-quality:
     name: Validate / Quality
     uses: ./.github/workflows/validate-quality.yml
     with:
       ref: ${{ github.event.inputs.tag || github.ref }}
+    secrets: inherit
 
   build:
     name: Build
