@@ -4,6 +4,12 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — release pipeline: provenance export, release notes, image revision (2026-11-16)
+
+- `export-image-provenance.sh` reads the BuildKit-native SLSA provenance with `docker buildx imagetools inspect`, as iam-authz-enrichment does. `cosign download attestation` only finds attestations made by `cosign attest`, so the v0.1.0 re-run failed with "found no attestations".
+- `extract-release-notes.sh` writes with `>` instead of `| tee … | true`, which under `pipefail` exits 141 and leaves the notes file empty on Linux.
+- `release.yml`'s Docker metadata step uses `context: git`, so the image's `org.opencontainers.image.revision` is the tag's commit on a `workflow_dispatch` re-run, not main's HEAD.
+
 ### Fixed — release pipeline: reusable validate jobs get secrets (2026-11-16)
 
 - `release.yml` now passes `secrets: inherit` to `validate-test.yml` and `validate-quality.yml`, as `ci.yml` does. Without it `GO_PRIVATE_TOKEN` was empty inside the reusable workflow, so the v0.1.0 tag run failed installing `platform-schemagov`. The v0.1.0 release is re-run via `workflow_dispatch` with `tag: v0.1.0`.
