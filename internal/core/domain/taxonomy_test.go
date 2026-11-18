@@ -83,6 +83,7 @@ var lldDirectWrite = map[string]RetentionTier{
 	"config.department.created":                     TierSecurity3y,
 	"config.department.updated":                     TierSecurity3y,
 	"config.plan.updated":                           TierSecurity3y,
+	"config.plan.trial_profile.updated":             TierSecurity3y,
 	"config.group_mapping.department_roles.changed": TierSecurity3y,
 	"config.group_mapping.departments.changed":      TierSecurity3y,
 	"config.group_mapping.tenant_roles.changed":     TierSecurity3y,
@@ -170,8 +171,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 100 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 100 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 101 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 101 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 

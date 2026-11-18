@@ -41,7 +41,7 @@ func TestLoadServer_Defaults(t *testing.T) {
 		"AUDIT_WRITABLE_TRAILING_MONTHS":  {c.WritableTrailingMonths, 3},
 		"AUDIT_DEFAULT_QUERY_WINDOW_DAYS": {c.DefaultQueryWindowDays, 365},
 		"ARCHIVE_READ_CONCURRENCY":        {c.ArchiveReadConcurrency, 2},
-		"CATALOG_BASE_URL":                {c.CatalogBaseURL, "http://iam-catalog-admin.iam.svc.cluster.local:8080"},
+		"CATALOG_BASE_URL":                {c.CatalogBaseURL, "http://iam-catalog-admin.iam.svc.cluster.local:8081"},
 		"CATALOG_PLANS_POLL_INTERVAL":     {c.CatalogPollInterval, 600 * time.Second},
 		"CATALOG_PLANS_POLL_TIMEOUT":      {c.CatalogPollTimeout, 3 * time.Second},
 		"MAX_INGEST_BATCH":                {c.MaxIngestBatch, 500},

@@ -119,7 +119,8 @@ serverEnv:
   WF_WORKFLOW_AUDIT_QUEUE_URL: ""
   WF_TEMPLATE_AUDIT_QUEUE_URL: ""
   AUDIT_DEFAULT_QUERY_WINDOW_DAYS: "365"
-  CATALOG_BASE_URL: "http://iam-catalog-admin.iam.svc.cluster.local:8080"
+  # iam-catalog-admin's Service and pods listen on 8081 (its APP_PORT).
+  CATALOG_BASE_URL: "http://iam-catalog-admin.iam.svc.cluster.local:8081"
   CATALOG_PLANS_POLL_INTERVAL: "600s"
   CATALOG_PLANS_POLL_TIMEOUT: "3s"
   MAX_INGEST_BATCH: "500"
@@ -268,9 +269,12 @@ networkPolicy:
         matchLabels:
           app.kubernetes.io/name: commercial-billing       # billing.* operator actions (AL-5; BL-OQ-10, rev 0.34)
   allowNoInternalCallers: false
-  # Egress for the CAT-I2 plans poll (port 8080): Catalog Admin's pods only.
+  # Egress for the CAT-I2 plans poll: Catalog Admin's pods only, on its
+  # container port (APP_PORT 8081, iam-catalog-admin chart). Keep it equal to
+  # CATALOG_BASE_URL's port.
   catalogPodLabels:
     app.kubernetes.io/name: iam-catalog-admin
+  catalogPort: 8081
   additionalIngressRules: []
   additionalEgressRules: []
 

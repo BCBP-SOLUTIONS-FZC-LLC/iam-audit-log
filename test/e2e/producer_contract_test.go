@@ -77,6 +77,7 @@ func TestProducerContract_Catalog(t *testing.T) {
 		{"config.department.created", "DepartmentCreated", "department"},
 		{"config.department.updated", "DepartmentUpdated", "department"},
 		{"config.plan.updated", "PlanUpdated", "plan"},
+		{"config.plan.trial_profile.updated", "TrialProfileUpdated", "plan_trial_profile"},
 	} {
 		body := `{"tenant_id":"` + platformTen + `","entry_type":"` + tc.entryType + `","action":"update",
 		  "actor":{"type":"user","id":"` + adminUser + `"},

@@ -17,6 +17,14 @@ Documentation only; no code, contract or taxonomy change. Group Mapping adopted 
 - **`.env-example` documents the direct-write callers' side**, with iam-tender-acl (platform-audit outbox mode) as the example: its `AUDIT_LOG_BASE_URL`, `AUDIT_SOURCE_SERVICE`, `config.tender_acl.*` types and chart admission (already present in `deploy/helm/values.yaml`).
 - README's local `curl` examples use 8088; `make docs-serve` prints URLs on `APP_PORT`.
 
+### Added — `config.plan.trial_profile.updated` (2026-11-18, LLD rev 0.36)
+
+- **New direct-write entry type `config.plan.trial_profile.updated`** (`security_3y`), for Catalog's CAT-5a trial-profile edits (Catalog CD-51, `source_event_type` `TrialProfileUpdated`, platform tenant). Catalog already sends it; until now Audit Log answered 422 `UNKNOWN_ENTRY_TYPE`, so the entries waited at Catalog as `skew`. Vocabulary 100 → 101; `api/taxonomy.json` regenerated (`make taxonomy-json`); `TestProducerContract_Catalog` covers it.
+
+### Fixed — CAT-I2 plans poller pointed at the wrong Catalog port (2026-11-18)
+
+- **`CATALOG_BASE_URL` default and Helm value `…iam-catalog-admin.iam.svc.cluster.local:8080` → `:8081`.** iam-catalog-admin's Service and pods listen on 8081 (`APP_PORT`), so the plans poller (AL-D15) could never reach it and every tenant fell back to `AUDIT_DEFAULT_QUERY_WINDOW_DAYS`. The NetworkPolicy egress rule to Catalog opened 8080 too; its port is now `networkPolicy.catalogPort` (default 8081). The local `.env-example` `CATALOG_BASE_URL` pointed at `localhost:8085` (iam-group-mapping's local port); it is now `localhost:8081`, Catalog's `APP_PORT`.
+
 ## [0.1.1] - 2026-11-16
 
 First published release. Same service code as `0.1.0`; only the release pipeline changed. The `v0.1.0` tag never produced a GitHub release or a signed image, because its release scripts were broken and every release job runs the scripts checked out at the tag. **Not deployed** (D-29): this release ships a signed, scanned image and Helm chart `0.1.1` only.
