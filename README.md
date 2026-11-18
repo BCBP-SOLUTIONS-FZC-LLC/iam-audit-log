@@ -82,7 +82,7 @@ The caller's identity is checked by the mesh, not by a header. The chart's Istio
 | # | Method & Path | Caller | Purpose |
 |---|---|---|---|
 | AL-5 | `POST /internal/audit-entries` | Direct-write producers (via `platform-audit`) | Record one direct-write entry. **`Idempotency-Key` header required.** Returns `201` for a new entry or `200` for an idempotent replay. |
-| AL-6 | `POST /internal/audit-entries:batch` | Direct-write producers (for example Group Mapping reconciles) | Up to `MAX_INGEST_BATCH` (500) entries. Each entry's `idempotency_key` is required and is the dedup key (D-4); the `Idempotency-Key` header is optional and, if sent, 1–256 chars (D-26). The response is **always `207`** with a per-index `{index, status, id \| code, message}`, where `code` is the UPPER_SNAKE `errorCode` (D-27). Rate-limited per tenant (D-5). |
+| AL-6 | `POST /internal/audit-entries:batch` | Direct-write producers sending several entries at once (for example Tender ACL cascades) | Up to `MAX_INGEST_BATCH` (500) entries. Each entry's `idempotency_key` is required and is the dedup key (D-4); the `Idempotency-Key` header is optional and, if sent, 1–256 chars (D-26). The response is **always `207`** with a per-index `{index, status, id \| code, message}`, where `code` is the UPPER_SNAKE `errorCode` (D-27). Rate-limited per tenant (D-5). |
 | AL-7 | `GET /internal/audit/events?tenant_id=` | Compliance and verification callers | Provenance read for an explicit `tenant_id`. RLS-scoped to that tenant, **no plan clamp**. Returns `422 range_too_large` instead of `202` when the archived range exceeds the D-10 bounds (D-14). |
 
 AL-6's path contains a literal colon. Gin routes it with an escaped segment (`/audit-entries\:batch`), so callers send `…/audit-entries:batch` as written.
@@ -854,7 +854,7 @@ Hot-path writes (AL-5/AL-6 and bus ingest) depend on **Postgres only**.
 | Caller | Endpoints used | Purpose |
 |---|---|---|
 | **Catalog / Admin Config** | AL-5 | `config.department.*`, `config.plan.updated`, `config.plan.trial_profile.updated` (platform tenant) |
-| **Group Mapping / JIT Config** | AL-6 | `config.group_mapping.*` reconciles |
+| **Group Mapping / JIT Config** | AL-5 | `config.group_mapping.*`: one entry per reconcile `PUT` (`source_event_type` `GroupMappingChanged`) and per tenant-purge cascade (`GroupMappingsPurged`), through `platform-audit`'s outbox |
 | **Tender ACL** | AL-5 / AL-6 | `config.tender_acl.*` grants, revokes and cascades |
 | **Org & Membership** | AL-5 | `config.tenant_setting.changed`, `invitation.*` |
 | **Realm Provisioner** | AL-5 | `config.idp.changed`, `legal.terms.accepted` |

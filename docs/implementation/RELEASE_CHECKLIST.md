@@ -90,9 +90,10 @@ workspace that owns the `iam-audit-archive` bucket.
       with the five core IAM callers (Catalog Admin, Realm Provisioner, Org &
       Membership, Group Mapping, Tender ACL), Commercial Entitlements (ns
       `commercial`) and Commercial Billing (ns `billing`), using their
-      conventional service account names. Tender ACL and Group Mapping derive
-      the ServiceAccount from the Helm release name unless
-      `serviceAccount.name` is set; ask them to set it explicitly.
+      conventional service account names. Tender ACL derives the
+      ServiceAccount from the Helm release name unless `serviceAccount.name`
+      is set; ask it to set it explicitly. Group Mapping's chart now sets
+      `serviceAccount.name: iam-group-mapping` explicitly (2026-11-18).
       **Action needed:** confirm each name matches the actual `ServiceAccount`
       names in your cluster, then add Platform cross-tenant jobs via `networkPolicy.additionalIngressRules` and
       `mesh.authorizationPolicy.additionalRules` once those services deploy.

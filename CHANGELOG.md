@@ -4,7 +4,14 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-### Added — `config.plan.trial_profile.updated` (2026-11-18, LLD rev 0.35)
+### Changed — docs: Group Mapping as built (LLD rev 0.35, 2026-11-18)
+
+Documentation only; no code, contract or taxonomy change. Group Mapping adopted `platform-audit` v0.1.0 (outbox mode).
+- LLD §7.1: GM-2/GM-4/GM-5 `source_event_type` is `GroupMappingChanged`, the value Group Mapping confirmed and froze; the three per-table names proposed earlier are withdrawn. `source_event_type` is stored verbatim and not validated, so ingest is unaffected.
+- Group Mapping sends one AL-5 entry per reconcile `PUT`, not AL-6: README (AL-6 example and producer table), the `networkPolicy.internalCallers` comment in `deploy/helm/values.yaml`, and LLD §18.2, which now records the entry shape, key and admission identity.
+- `RELEASE_CHECKLIST.md`: Group Mapping's chart now sets `serviceAccount.name: iam-group-mapping`, matching the admitted principal.
+
+### Added — `config.plan.trial_profile.updated` (2026-11-18, LLD rev 0.36)
 
 - **New direct-write entry type `config.plan.trial_profile.updated`** (`security_3y`), for Catalog's CAT-5a trial-profile edits (Catalog CD-51, `source_event_type` `TrialProfileUpdated`, platform tenant). Catalog already sends it; until now Audit Log answered 422 `UNKNOWN_ENTRY_TYPE`, so the entries waited at Catalog as `skew`. Vocabulary 100 → 101; `api/taxonomy.json` regenerated (`make taxonomy-json`); `TestProducerContract_Catalog` covers it.
 

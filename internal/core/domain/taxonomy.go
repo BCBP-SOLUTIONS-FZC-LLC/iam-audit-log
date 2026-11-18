@@ -147,7 +147,7 @@ var entryTypes = map[string]taxonomyEntry{
 	"config.department.created":     {tier: TierSecurity3y, directWrite: true},
 	"config.department.updated":     {tier: TierSecurity3y, directWrite: true},
 	"config.plan.updated":           {tier: TierSecurity3y, directWrite: true},
-	// Catalog CAT-5a (CD-51): a plan's trial-profile limits changed (rev 0.35).
+	// Catalog CAT-5a (CD-51): a plan's trial-profile limits changed (rev 0.36).
 	"config.plan.trial_profile.updated":             {tier: TierSecurity3y, directWrite: true},
 	"config.group_mapping.department_roles.changed": {tier: TierSecurity3y, directWrite: true},
 	"config.group_mapping.departments.changed":      {tier: TierSecurity3y, directWrite: true},
