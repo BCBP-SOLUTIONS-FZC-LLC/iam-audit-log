@@ -4,6 +4,10 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-18
+
+> **Versioning:** MINOR. A new taxonomy row (`config.plan.trial_profile.updated`, vocabulary 101) and a new optional Helm value (`networkPolicy.catalogPort`) are backward-compatible additions; the Catalog port correction is a fix. No route, schema, migration, queue or metric change. Producers on platform-audit should move their pinned Audit Log release to `v0.2.0` to pick up the new type.
+
 ### Changed — docs: Group Mapping as built (LLD rev 0.35, 2026-11-18)
 
 Documentation only; no code, contract or taxonomy change. Group Mapping adopted `platform-audit` v0.1.0 (outbox mode).
