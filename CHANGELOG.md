@@ -11,6 +11,12 @@ Documentation only; no code, contract or taxonomy change. Group Mapping adopted 
 - Group Mapping sends one AL-5 entry per reconcile `PUT`, not AL-6: README (AL-6 example and producer table), the `networkPolicy.internalCallers` comment in `deploy/helm/values.yaml`, and LLD §18.2, which now records the entry shape, key and admission identity.
 - `RELEASE_CHECKLIST.md`: Group Mapping's chart now sets `serviceAccount.name: iam-group-mapping`, matching the admitted principal.
 
+### Changed — local port for side-by-side runs with direct-write callers (2026-11-18)
+
+- **`.env-example` `APP_PORT` 8080 → 8088, compose host port `8088:8080`.** Locally this service collided with iam-org-membership on 8080 (its `APP_PORT`). 8088 is free next to every direct-write caller (catalog-admin 8081, group-mapping 8085, tender-acl 8086) and is the URL iam-org-membership and iam-tender-acl already use for `AUDIT_LOG_BASE_URL`. The code and Helm default stays 8080 (in-cluster base URL unchanged).
+- **`.env-example` documents the direct-write callers' side**, with iam-tender-acl (platform-audit outbox mode) as the example: its `AUDIT_LOG_BASE_URL`, `AUDIT_SOURCE_SERVICE`, `config.tender_acl.*` types and chart admission (already present in `deploy/helm/values.yaml`).
+- README's local `curl` examples use 8088; `make docs-serve` prints URLs on `APP_PORT`.
+
 ## [0.1.1] - 2026-11-16
 
 First published release. Same service code as `0.1.0`; only the release pipeline changed. The `v0.1.0` tag never produced a GitHub release or a signed image, because its release scripts were broken and every release job runs the scripts checked out at the tag. **Not deployed** (D-29): this release ships a signed, scanned image and Helm chart `0.1.1` only.

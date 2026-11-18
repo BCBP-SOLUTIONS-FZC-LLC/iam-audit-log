@@ -516,5 +516,5 @@ swag-check:
 .PHONY: docs-serve
 docs-serve: run
 	@echo "Docs will be available at:"
-	@echo "  http://localhost:8080/asyncapi       — AsyncAPI (Events)"
-	@echo "  http://localhost:8080/asyncapi.yaml  — raw AsyncAPI spec"
+	@echo "  http://localhost:$${APP_PORT:-8080}/asyncapi       — AsyncAPI (Events)"
+	@echo "  http://localhost:$${APP_PORT:-8080}/asyncapi.yaml  — raw AsyncAPI spec"
