@@ -251,7 +251,7 @@ networkPolicy:
           app.kubernetes.io/name: iam-org-membership      # invitation.* / tenant.* direct-write
     - podSelector:
         matchLabels:
-          app.kubernetes.io/name: group-mapping           # config.group_mapping.* (AL-6)
+          app.kubernetes.io/name: group-mapping           # config.group_mapping.* (AL-5)
     - podSelector:
         matchLabels:
           app.kubernetes.io/name: tender-acl              # config.tender_acl.* (AL-5/AL-6)

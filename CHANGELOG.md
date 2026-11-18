@@ -4,6 +4,13 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — docs: Group Mapping as built (LLD rev 0.35, 2026-11-18)
+
+Documentation only; no code, contract or taxonomy change. Group Mapping adopted `platform-audit` v0.1.0 (outbox mode).
+- LLD §7.1: GM-2/GM-4/GM-5 `source_event_type` is `GroupMappingChanged`, the value Group Mapping confirmed and froze; the three per-table names proposed earlier are withdrawn. `source_event_type` is stored verbatim and not validated, so ingest is unaffected.
+- Group Mapping sends one AL-5 entry per reconcile `PUT`, not AL-6: README (AL-6 example and producer table), the `networkPolicy.internalCallers` comment in `deploy/helm/values.yaml`, and LLD §18.2, which now records the entry shape, key and admission identity.
+- `RELEASE_CHECKLIST.md`: Group Mapping's chart now sets `serviceAccount.name: iam-group-mapping`, matching the admitted principal.
+
 ### Changed — local port for side-by-side runs with direct-write callers (2026-11-18)
 
 - **`.env-example` `APP_PORT` 8080 → 8088, compose host port `8088:8080`.** Locally this service collided with iam-org-membership on 8080 (its `APP_PORT`). 8088 is free next to every direct-write caller (catalog-admin 8081, group-mapping 8085, tender-acl 8086) and is the URL iam-org-membership and iam-tender-acl already use for `AUDIT_LOG_BASE_URL`. The code and Helm default stays 8080 (in-cluster base URL unchanged).
