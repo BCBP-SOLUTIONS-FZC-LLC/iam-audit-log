@@ -85,7 +85,7 @@ spec:
             matchLabels:
               {{- toYaml .Values.networkPolicy.catalogPodLabels | nindent 14 }}
       ports:
-        - port: 8080
+        - port: {{ .Values.networkPolicy.catalogPort | default 8081 }}
           protocol: TCP
     # OTLP traces.
     - ports:

@@ -270,7 +270,7 @@ This path is for audit facts that have no bus event (AL-D1). The **caller invari
 
 | Producer | `entry_type`s |
 |---|---|
-| Catalog / Admin Config | `config.department.created`, `config.department.updated`, `config.plan.updated`. These are platform-wide, so they are recorded under the reserved platform tenant `00000000-0000-0000-0000-0000000000b1` (AL-D14), which no real tenant can see. |
+| Catalog / Admin Config | `config.department.created`, `config.department.updated`, `config.plan.updated`, `config.plan.trial_profile.updated` (CAT-5a). These are platform-wide, so they are recorded under the reserved platform tenant `00000000-0000-0000-0000-0000000000b1` (AL-D14), which no real tenant can see. |
 | Group Mapping / JIT Config | `config.group_mapping.departments.changed`, `…department_roles.changed`, `…tenant_roles.changed`; `config.group_mapping.purged` (tenant-purge cascade, accepted only from `iam-group-mapping`) |
 | Tender ACL | `config.tender_acl.granted`, `.revoked`, `.cascade` |
 | Org & Membership | `config.tenant_setting.changed`, `invitation.created`, `.revoked`, `.expired` |
@@ -610,7 +610,7 @@ These come from `internal/config/config.go`, with defaults as coded. `.env-examp
 | `AUDIT_ARCHIVE_OBJECT_LOCK_MODE` | `COMPLIANCE` | `COMPLIANCE` or `GOVERNANCE`. Must be `COMPLIANCE` outside dev. |
 | `AUDIT_HOT_WINDOW_DAYS` / `AUDIT_PRECREATE_MONTHS` / `AUDIT_WRITABLE_TRAILING_MONTHS` | `90` / `3` / `3` | Archival eligibility, partition look-ahead, and how many trailing months stay writable |
 | `AUDIT_DEFAULT_QUERY_WINDOW_DAYS` | `365` | Plan-window fallback when the CAT-I2 map has no entry |
-| `CATALOG_BASE_URL` | `http://iam-catalog-admin.iam.svc.cluster.local:8080` | CAT-I2 base URL; must be absolute `http(s)` |
+| `CATALOG_BASE_URL` | `http://iam-catalog-admin.iam.svc.cluster.local:8081` | CAT-I2 base URL; must be absolute `http(s)` |
 | `CATALOG_PLANS_POLL_INTERVAL` / `CATALOG_PLANS_POLL_TIMEOUT` | `600s` / `3s` | Poller cadence. The timeout must be > 0 and shorter than the interval. |
 | `MAX_INGEST_BATCH` / `MAX_METADATA_BYTES` | `500` / `8192` | AL-6 batch cap / metadata cap (compact bytes) |
 | `INGEST_BATCH_RATE_LIMIT_RPS` / `INGEST_BATCH_RATE_LIMIT_BURST` | `10` / `20` | AL-6 per-tenant bucket (D-5) |
@@ -830,7 +830,7 @@ AUDIT_ARCHIVE_KMS_KEY=alias/iam-audit-archive
 AUDIT_ARCHIVE_OBJECT_LOCK_MODE=COMPLIANCE
 
 # CAT-I2
-CATALOG_BASE_URL=http://iam-catalog-admin.iam.svc.cluster.local:8080
+CATALOG_BASE_URL=http://iam-catalog-admin.iam.svc.cluster.local:8081
 ```
 
 ---
@@ -853,7 +853,7 @@ Hot-path writes (AL-5/AL-6 and bus ingest) depend on **Postgres only**.
 
 | Caller | Endpoints used | Purpose |
 |---|---|---|
-| **Catalog / Admin Config** | AL-5 | `config.department.*`, `config.plan.updated` (platform tenant) |
+| **Catalog / Admin Config** | AL-5 | `config.department.*`, `config.plan.updated`, `config.plan.trial_profile.updated` (platform tenant) |
 | **Group Mapping / JIT Config** | AL-6 | `config.group_mapping.*` reconciles |
 | **Tender ACL** | AL-5 / AL-6 | `config.tender_acl.*` grants, revokes and cascades |
 | **Org & Membership** | AL-5 | `config.tenant_setting.changed`, `invitation.*` |

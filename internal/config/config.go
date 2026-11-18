@@ -210,7 +210,7 @@ func LoadServer(buildVersion string) (Server, error) {
 		MetricsPort:            envOr("METRICS_PORT", "9090"),
 		GlueRegistryRegion:     envOr("GLUE_REGISTRY_REGION", "ap-south-1"),
 		DefaultQueryWindowDays: envInt("AUDIT_DEFAULT_QUERY_WINDOW_DAYS", 365),
-		CatalogBaseURL:         envOr("CATALOG_BASE_URL", "http://iam-catalog-admin.iam.svc.cluster.local:8080"),
+		CatalogBaseURL:         envOr("CATALOG_BASE_URL", "http://iam-catalog-admin.iam.svc.cluster.local:8081"),
 		CatalogPollInterval:    envDuration("CATALOG_PLANS_POLL_INTERVAL", 600*time.Second),
 		CatalogPollTimeout:     envDuration("CATALOG_PLANS_POLL_TIMEOUT", 3*time.Second),
 		MaxIngestBatch:         envInt("MAX_INGEST_BATCH", 500),

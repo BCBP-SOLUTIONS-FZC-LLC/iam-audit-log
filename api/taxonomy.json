@@ -214,6 +214,12 @@
       "producers": []
     },
     {
+      "entry_type": "config.plan.trial_profile.updated",
+      "tier": "security_3y",
+      "direct_write": true,
+      "producers": []
+    },
+    {
       "entry_type": "config.plan.updated",
       "tier": "security_3y",
       "direct_write": true,
