@@ -154,6 +154,9 @@ func TestTaxonomy_DirectWriteRowsExact_D6(t *testing.T) {
 // a bus row or is a direct-write row, and has a tier.
 func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 	reached := map[string]bool{}
+	for _, et := range PayloadRefinedEntryTypes() {
+		reached[et] = true
+	}
 	for _, m := range BusMappings() {
 		reached[m.EntryType] = true
 		if _, ok := TierFor(m.EntryType); !ok {
@@ -171,8 +174,8 @@ func TestTaxonomy_VocabularyShapeAndCoverage(t *testing.T) {
 			t.Errorf("%s is neither reachable from a topic nor direct-write", et)
 		}
 	}
-	if len(EntryTypes()) != 101 {
-		t.Errorf("vocabulary size %d; LLD §25 lists 101 (excluding <domain>.unknown)", len(EntryTypes()))
+	if len(EntryTypes()) != 102 {
+		t.Errorf("vocabulary size %d; LLD §25 lists 102 (excluding <domain>.unknown)", len(EntryTypes()))
 	}
 }
 
@@ -285,5 +288,32 @@ func TestTaxonomy_GroupMappingPurgedProducerRestricted(t *testing.T) {
 		if DirectWriteProducerAllowed(et, src) {
 			t.Errorf("%q must not be allowed to write %s", src, et)
 		}
+	}
+}
+
+// BL-OQ-23: Billing's TenantQuotaAddOnChanged is classified by data.reason.
+func TestTaxonomy_TokenAddOnReasonRefinement(t *testing.T) {
+	cases := map[string]struct {
+		payload map[string]any
+		want    string
+	}{
+		"purchase":       {map[string]any{"reason": "purchase"}, "billing.token_addon.purchased"},
+		"refund":         {map[string]any{"reason": "refund"}, "billing.token_addon.refunded"},
+		"missing_reason": {map[string]any{}, "billing.token_addon.purchased"},
+		"new_reason":     {map[string]any{"reason": "something_new"}, "billing.token_addon.purchased"},
+		"nil_payload":    {nil, "billing.token_addon.purchased"},
+	}
+	for name, c := range cases {
+		et, tier, known := ClassifyBusPayload(TopicBilling, "TenantQuotaAddOnChanged", c.payload)
+		if !known || et != c.want || tier != TierSecurity3y {
+			t.Errorf("%s → (%s,%s,%v), want (%s,security_3y,true)", name, et, tier, known, c.want)
+		}
+	}
+	// Only Billing's event is refined: the same field on another type is ignored.
+	if et, _, _ := ClassifyBusPayload(TopicBilling, "TenantPlanChanged", map[string]any{"reason": "refund"}); et != "tenant.plan_changed" {
+		t.Errorf("TenantPlanChanged refined to %s", et)
+	}
+	if IsDirectWriteEntryType("billing.token_addon.refunded") {
+		t.Error("billing.token_addon.refunded is bus-sourced, not direct-write (D-6)")
 	}
 }

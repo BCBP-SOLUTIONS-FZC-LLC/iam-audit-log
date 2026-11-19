@@ -125,6 +125,7 @@ var entryTypes = map[string]taxonomyEntry{
 	"tenant.subscription_cancelled": {tier: TierSecurity3y},
 	"tenant.seats_changed":          {tier: TierSecurity3y}, // CD-21: Billing TenantSeatsChanged (Commercial HLD §9.1)
 	"billing.token_addon.purchased": {tier: TierSecurity3y}, // IAM-7: Billing TenantQuotaAddOnChanged (CD-55; Commercial HLD §8.6.2/§9.4)
+	"billing.token_addon.refunded":  {tier: TierSecurity3y}, // Billing BL-OQ-23: TenantQuotaAddOnChanged with reason "refund" (payload refinement, ClassifyBusPayload)
 	// usage.events
 	"usage.quota.warning":  {tier: TierAccess90d},
 	"usage.quota.exceeded": {tier: TierAccess90d},
@@ -338,6 +339,50 @@ func DirectWriteProducerAllowed(entryType, sourceService string) bool {
 		}
 	}
 	return false
+}
+
+// payloadRefinements override a bus row's entry_type by one payload field,
+// for events whose single wire type covers more than one business action.
+// Today only Billing's TenantQuotaAddOnChanged: reason "purchase" keeps the
+// bus row (billing.token_addon.purchased), reason "refund" is the add-on
+// refund (Billing LLD rev 0.8 BIL-ADD-4, BL-OQ-23). Any other or missing
+// reason keeps the bus row, so a new reason is never dropped.
+var payloadRefinements = map[busKey]struct {
+	field string
+	byVal map[string]string
+}{
+	{TopicBilling, "TenantQuotaAddOnChanged"}: {field: "reason", byVal: map[string]string{"refund": "billing.token_addon.refunded"}},
+}
+
+// ClassifyBusPayload is ClassifyBus refined by the decoded payload
+// (payloadRefinements). BuildBusEntry calls it.
+func ClassifyBusPayload(topic, sourceEventType string, payload map[string]any) (entryType string, tier RetentionTier, known bool) {
+	entryType, tier, known = ClassifyBus(topic, sourceEventType)
+	if !known {
+		return entryType, tier, known
+	}
+	r, ok := payloadRefinements[busKey{topic, sourceEventType}]
+	if !ok {
+		return entryType, tier, known
+	}
+	if v, ok := payload[r.field].(string); ok && v != "" {
+		if et, ok := r.byVal[v]; ok {
+			return et, entryTypes[et].tier, true
+		}
+	}
+	return entryType, tier, known
+}
+
+// PayloadRefinedEntryTypes returns the entry types reachable only through
+// payloadRefinements (for tests and docs).
+func PayloadRefinedEntryTypes() []string {
+	var out []string
+	for _, r := range payloadRefinements {
+		for _, et := range r.byVal {
+			out = append(out, et)
+		}
+	}
+	return out
 }
 
 // ClassifyBus maps a consumed event to its entry_type and tier. An

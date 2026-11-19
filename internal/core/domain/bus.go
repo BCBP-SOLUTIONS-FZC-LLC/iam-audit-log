@@ -58,9 +58,8 @@ func BuildBusEntry(ev BusEvent, maxMetadataBytes int, now time.Time) (entry Audi
 	if !IsUUID(ev.TenantID) {
 		return AuditEntry{}, false, NewError(ErrInvalidRequest, "envelope tenant_id "+quote(ev.TenantID)+" is not a UUID")
 	}
-	entryType, tier, known := ClassifyBus(ev.Topic, ev.Type)
-
 	payload, isObject := decodeObject(ev.Payload)
+	entryType, tier, known := ClassifyBusPayload(ev.Topic, ev.Type, payload)
 	markers := map[string]any{}
 
 	actor, ip := deriveActor(ev, payload, markers)

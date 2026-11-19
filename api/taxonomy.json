@@ -116,6 +116,12 @@
       "producers": []
     },
     {
+      "entry_type": "billing.token_addon.refunded",
+      "tier": "security_3y",
+      "direct_write": false,
+      "producers": []
+    },
+    {
       "entry_type": "billing.token_addon.revoked",
       "tier": "security_3y",
       "direct_write": true,

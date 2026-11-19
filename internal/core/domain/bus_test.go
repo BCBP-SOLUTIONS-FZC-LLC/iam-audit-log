@@ -297,3 +297,31 @@ func TestBuildBusEntry_CommercialSources_CD17(t *testing.T) {
 		})
 	}
 }
+
+// BL-OQ-23: Billing's add-on refund (reason "refund", negative delta) is
+// stored as billing.token_addon.refunded with action "refunded"; a purchase
+// stays billing.token_addon.purchased.
+func TestBuildBusEntry_TokenAddOnRefund_BLOQ23(t *testing.T) {
+	refund := ev(TopicBilling, "TenantQuotaAddOnChanged", uid,
+		`{"tenant_id":"`+tA+`","resource":"llm_tokens","delta":-5000000,"reason":"refund","billing_ref":"0193a8f0-1c2d-7e3f-9a4b-5c6d7e8f9a0c","purchase_ref":"0193a8f0-1c2d-7e3f-9a4b-5c6d7e8f9a0b"}`)
+	e, known, err := BuildBusEntry(refund, 8192, t0)
+	if err != nil || !known {
+		t.Fatalf("known=%v err=%v", known, err)
+	}
+	if e.EntryType != "billing.token_addon.refunded" || e.Action != "refunded" || e.RetentionTier != TierSecurity3y {
+		t.Errorf("refund → (%s,%s,%s)", e.EntryType, e.Action, e.RetentionTier)
+	}
+	if e.SourceEventType != "TenantQuotaAddOnChanged" {
+		t.Errorf("source_event_type %q must stay verbatim (AL-INV-5)", e.SourceEventType)
+	}
+	if m := meta(t, e); m["purchase_ref"] != "0193a8f0-1c2d-7e3f-9a4b-5c6d7e8f9a0b" {
+		t.Errorf("metadata lost purchase_ref: %v", m)
+	}
+
+	purchase := ev(TopicBilling, "TenantQuotaAddOnChanged", uid,
+		`{"tenant_id":"`+tA+`","resource":"llm_tokens","delta":5000000,"reason":"purchase","billing_ref":"0193a8f0-1c2d-7e3f-9a4b-5c6d7e8f9a0b"}`)
+	e, _, _ = BuildBusEntry(purchase, 8192, t0)
+	if e.EntryType != "billing.token_addon.purchased" {
+		t.Errorf("purchase → %s", e.EntryType)
+	}
+}
