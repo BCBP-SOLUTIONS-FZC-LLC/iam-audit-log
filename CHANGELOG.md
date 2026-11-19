@@ -4,6 +4,13 @@ All notable changes to this service. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added (2026-11-19 — token add-on refund, Billing BL-OQ-23)
+
+- **New entry type `billing.token_addon.refunded`** (`security_3y`, bus-sourced, not direct-write). Billing's `TenantQuotaAddOnChanged` on `billing.events` now carries `reason: purchase | refund` (Billing LLD rev 0.8, TL decision BL-OQ-20); a refund has a negative `delta` and a `purchase_ref`. Vocabulary 101 → 102.
+- **Payload refinement** (`ClassifyBusPayload`, used by `BuildBusEntry`): for `TenantQuotaAddOnChanged`, `data.reason == "refund"` maps to `billing.token_addon.refunded`; `purchase`, a missing or any other reason keeps `billing.token_addon.purchased`, so a new reason is never dropped. `source_event_type` stays verbatim (AL-INV-5).
+- `api/taxonomy.json` regenerated. Tests: `TestTaxonomy_TokenAddOnReasonRefinement`, `TestBuildBusEntry_TokenAddOnRefund_BLOQ23`.
+- No queue, filter, route, schema migration or metric change. `billing-audit-q` already receives every `billing.events` type (no filter policy, AL-EVT-2).
+
 ## [0.2.0] - 2026-11-18
 
 > **Versioning:** MINOR. A new taxonomy row (`config.plan.trial_profile.updated`, vocabulary 101) and a new optional Helm value (`networkPolicy.catalogPort`) are backward-compatible additions; the Catalog port correction is a fix. No route, schema, migration, queue or metric change. Producers on platform-audit should move their pinned Audit Log release to `v0.2.0` to pick up the new type.

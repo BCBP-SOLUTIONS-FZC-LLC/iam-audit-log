@@ -1290,7 +1290,7 @@ components:
         status: active
       name: TenantQuotaAddOnChanged
       title: TenantQuotaAddOnChanged
-      summary: TenantQuotaAddOnChanged on billing.events → entry_type billing.token_addon.purchased (security_3y; IAM-7/CD-55).
+      summary: TenantQuotaAddOnChanged on billing.events → entry_type billing.token_addon.purchased, or billing.token_addon.refunded when data.reason is "refund" (security_3y; IAM-7/CD-55, Billing BL-OQ-23).
       tags:
       - $ref: '#/components/tags/consumed'
       contentType: application/json
